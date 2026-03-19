@@ -1,54 +1,44 @@
 import { useEffect, useState } from "react";
-import init, {
-  ts_to_rust_ptr,
-  ts_to_rust_len,
-  rust_to_ts_ptr,
-  rust_to_ts_len,
-  sync,
-} from "wasm-lib";
+import { WasmDb } from "./wasmdb.ts";
 
-interface WasmInstance {
-  memory: WebAssembly.Memory;
-}
-
-function getView(wasm: WasmInstance, ptr: number, len: number): Uint8Array {
-  return new Uint8Array(wasm.memory.buffer, ptr, len);
-}
+type Tables = Record<string, Record<string, Record<string, string>>>;
 
 export function App() {
-  const [state, setState] = useState<{
-    tsWrote: number;
-    tsReadBack: number;
-  } | null>(null);
+  const [db, setDb] = useState<WasmDb | null>(null);
+  const [tables, setTables] = useState<Tables>({});
 
   useEffect(() => {
-    init().then((wasm) => {
-      const tsToRust = getView(wasm, ts_to_rust_ptr(), ts_to_rust_len());
-      const rustToTs = getView(wasm, rust_to_ts_ptr(), rust_to_ts_len());
-
-      // TypeScript writes 0xAA into ts_to_rust
-      tsToRust[0] = 0xaa;
-
-      // Rust spiegelt ts_to_rust → rust_to_ts
-      sync();
-
-      // TypeScript liest das gespiegelte Byte aus rust_to_ts
-      const tsReadsByte = rustToTs[0];
-
-      setState({ tsWrote: 0xaa, tsReadBack: tsReadsByte });
-    });
+    WasmDb.init().then(setDb);
   }, []);
+
+  function addSampleData() {
+    if (!db) return;
+
+    db.add("users", "1", { name: "Alice", role: "admin" });
+    db.add("users", "2", { name: "Bob", role: "viewer" });
+    db.add("products", "a", { title: "Widget", price: "9.99" });
+    setTables(db.sync());
+  }
+
+  function updateAlice() {
+    if (!db) return;
+
+    db.add("users", "1", { name: "Alice", role: "superadmin" });
+    setTables(db.sync());
+  }
 
   return (
     <div style={{ fontFamily: "monospace", padding: 32 }}>
-      <h1>wasmdb - shared buffers</h1>
-
-      <p>TS schreibt <code>0xAA</code> → ts_to_rust[0]</p>
-      <p>Rust sync: ts_to_rust → rust_to_ts</p>
-      <p>
-        TS liest rust_to_ts[0] zurück:{" "}
-        <code>{state ? `0x${state.tsReadBack.toString(16)}` : "..."}</code>
-      </p>
+      <h1>wasmdb</h1>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={addSampleData} disabled={!db}>
+          add sample data
+        </button>
+        <button onClick={updateAlice} disabled={!db}>
+          update alice → superadmin
+        </button>
+      </div>
+      <pre>{JSON.stringify(tables, null, 2)}</pre>
     </div>
   );
 }
