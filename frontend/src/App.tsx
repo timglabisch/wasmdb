@@ -1,38 +1,53 @@
 import { useEffect, useState } from "react";
 import init, {
-  buffer_ptr,
-  buffer_len,
-  read_first_byte_from_rust,
+  ts_to_rust_ptr,
+  ts_to_rust_len,
+  rust_to_ts_ptr,
+  rust_to_ts_len,
+  sync,
 } from "wasm-lib";
 
+interface WasmInstance {
+  memory: WebAssembly.Memory;
+}
+
+function getView(wasm: WasmInstance, ptr: number, len: number): Uint8Array {
+  return new Uint8Array(wasm.memory.buffer, ptr, len);
+}
+
 export function App() {
-  const [rustByte, setRustByte] = useState<number | null>(null);
-  const [tsByte, setTsByte] = useState<number | null>(null);
+  const [state, setState] = useState<{
+    tsWrote: number;
+    tsReadBack: number;
+  } | null>(null);
 
   useEffect(() => {
     init().then((wasm) => {
-      // Rust reads the first byte
-      const fromRust = read_first_byte_from_rust();
-      setRustByte(fromRust);
+      const tsToRust = getView(wasm, ts_to_rust_ptr(), ts_to_rust_len());
+      const rustToTs = getView(wasm, rust_to_ts_ptr(), rust_to_ts_len());
 
-      // TypeScript reads the same first byte via shared memory
-      const ptr = buffer_ptr();
-      const len = buffer_len();
-      const view = new Uint8Array(wasm.memory.buffer, ptr, len);
-      const fromTs = view[0];
-      setTsByte(fromTs);
+      // TypeScript writes 0xAA into ts_to_rust
+      tsToRust[0] = 0xaa;
+
+      // Rust spiegelt ts_to_rust → rust_to_ts
+      sync();
+
+      // TypeScript liest das gespiegelte Byte aus rust_to_ts
+      const tsReadsByte = rustToTs[0];
+
+      setState({ tsWrote: 0xaa, tsReadBack: tsReadsByte });
     });
   }, []);
 
   return (
     <div style={{ fontFamily: "monospace", padding: 32 }}>
-      <h1>wasmdb - shared buffer</h1>
+      <h1>wasmdb - shared buffers</h1>
+
+      <p>TS schreibt <code>0xAA</code> → ts_to_rust[0]</p>
+      <p>Rust sync: ts_to_rust → rust_to_ts</p>
       <p>
-        <strong>Rust</strong> reads first byte: <code>{rustByte ?? "..."}</code>
-      </p>
-      <p>
-        <strong>TypeScript</strong> reads first byte (shared memory):{" "}
-        <code>{tsByte ?? "..."}</code>
+        TS liest rust_to_ts[0] zurück:{" "}
+        <code>{state ? `0x${state.tsReadBack.toString(16)}` : "..."}</code>
       </p>
     </div>
   );
