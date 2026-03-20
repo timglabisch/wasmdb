@@ -124,11 +124,10 @@ export class WasmDb {
     wasmUnregisterProjection(id);
   }
 
-  sync(): Record<string, Record<string, Row>> {
+  sync(): void {
     this.version = wasmSync(this.version);
     const diffs = this.readDiffs();
     this.applyDiffs(diffs);
-    return this.tables;
   }
 
   private applyDiffs(diffs: Diff[]): void {
