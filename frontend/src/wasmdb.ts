@@ -3,6 +3,7 @@ import { z } from "zod";
 import init, {
   add as wasmAdd,
   sync as wasmSync,
+  reset as wasmReset,
   register_projection as wasmRegisterProjection,
   unregister_projection as wasmUnregisterProjection,
   rust_to_ts_ptr,
@@ -122,6 +123,12 @@ export class WasmDb {
 
   unregisterProjection(id: number): void {
     wasmUnregisterProjection(id);
+  }
+
+  reset(): void {
+    wasmReset();
+    this.version = 1;
+    this.tables = {};
   }
 
   sync(): void {

@@ -73,6 +73,11 @@ pub fn unregister_projection(id: u32) {
 }
 
 #[wasm_bindgen]
+pub fn reset() {
+    log().reset();
+}
+
+#[wasm_bindgen]
 pub fn sync(since_version: u32) -> u32 {
     let diffs = log().since(since_version);
     let json = serde_json::to_vec(diffs).unwrap_or_default();

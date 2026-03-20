@@ -98,6 +98,14 @@ impl DiffLog {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.diffs.clear();
+        self.next_version = 1;
+        self.db.clear();
+        self.projections.clear();
+        self.next_projection_id = 0;
+    }
+
     pub fn flush_projections(&mut self) {
         let ids: Vec<u32> = self.projections.keys().cloned().collect();
         for proj_id in &ids {

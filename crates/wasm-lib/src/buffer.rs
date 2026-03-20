@@ -1,6 +1,6 @@
 use std::cell::UnsafeCell;
 
-pub const BUFFER_SIZE: usize = 64 * 1024;
+pub const BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
 pub struct SharedBuffer(UnsafeCell<[u8; BUFFER_SIZE]>);
 unsafe impl Sync for SharedBuffer {}
