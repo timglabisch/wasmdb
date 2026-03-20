@@ -8,6 +8,8 @@ import init, {
   rust_to_ts_len,
 } from "wasm-lib";
 
+const wasm = await init();
+
 // --- Table ---
 
 export class Table<T extends Record<string, string>> {
@@ -60,18 +62,9 @@ export type ProjectionData<T> = Record<string, T>;
 // --- WasmDb ---
 
 export class WasmDb {
-  private memory: WebAssembly.Memory;
+  private memory = wasm.memory;
   private version = 1;
   private tables: Record<string, Record<string, Row>> = {};
-
-  private constructor(memory: WebAssembly.Memory) {
-    this.memory = memory;
-  }
-
-  static async init(): Promise<WasmDb> {
-    const wasm = await init();
-    return new WasmDb(wasm.memory);
-  }
 
   add<T extends Record<string, string>>(
     table: Table<T>,

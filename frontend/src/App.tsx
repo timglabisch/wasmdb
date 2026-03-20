@@ -14,8 +14,9 @@ const productsTable = new Table(
 
 type UserWithId = z.infer<typeof usersTable.schema> & { _id: string };
 
+const db = new WasmDb();
+
 export function App() {
-  const [db, setDb] = useState<WasmDb | null>(null);
   const [tables, setTables] = useState<
     Record<string, Record<string, Record<string, string>>>
   >({});
@@ -23,31 +24,27 @@ export function App() {
   const projIdRef = useRef<number | null>(null);
 
   useEffect(() => {
-    WasmDb.init().then((db) => {
-      projIdRef.current = db.registerProjection(
-        {
-          table: usersTable,
-          query: {
-            bool: {
-              must: [{ term: { role: "admin" } }],
-            },
+    projIdRef.current = db.registerProjection(
+      {
+        table: usersTable,
+        query: {
+          bool: {
+            must: [{ term: { role: "admin" } }],
           },
-          fields: ["_id", "name", "role"] as const,
         },
-        setAdmins,
-      );
-      setDb(db);
-    });
+        fields: ["_id", "name", "role"] as const,
+      },
+      setAdmins,
+    );
 
     return () => {
-      if (db && projIdRef.current !== null) {
+      if (projIdRef.current !== null) {
         db.unregisterProjection(projIdRef.current);
       }
     };
   }, []);
 
   function addSampleData() {
-    if (!db) return;
     db.add(usersTable, "1", { name: "Alice", role: "admin" });
     db.add(usersTable, "2", { name: "Bob", role: "viewer" });
     db.add(usersTable, "3", { name: "Charlie", role: "admin" });
@@ -56,7 +53,6 @@ export function App() {
   }
 
   function updateAlice() {
-    if (!db) return;
     db.add(usersTable, "1", { name: "Alice", role: "superadmin" });
     setTables(db.sync());
   }
