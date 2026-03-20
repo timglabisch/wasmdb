@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import init, {
   add as wasmAdd,
@@ -75,25 +76,14 @@ export class WasmDb {
     wasmAdd(table.name, id, data);
   }
 
-  // With fields
   registerProjection<
     T extends Record<string, string>,
-    F extends keyof WithId<T>,
+    F extends keyof WithId<T> = keyof WithId<T>,
   >(
-    config: { table: Table<T>; query: Query<T>; fields: readonly F[] },
+    config: { table: Table<T>; query: Query<T>; fields?: readonly F[] },
     onChanged: (data: ProjectionData<Pick<WithId<T>, F>>) => void,
-  ): number;
-  // Without fields
-  registerProjection<T extends Record<string, string>>(
-    config: { table: Table<T>; query: Query<T> },
-    onChanged: (data: ProjectionData<WithId<T>>) => void,
-  ): number;
-  // Implementation
-  registerProjection(
-    config: { table: Table<any>; query: any; fields?: readonly string[] },
-    onChanged: (data: any) => void,
   ): number {
-    const data: Record<string, Row> = {};
+    const data = {} as Record<string, Row>;
 
     // Wrap query with _table filter
     const wrappedQuery = {
@@ -124,7 +114,7 @@ export class WasmDb {
           if (Object.keys(row).length === 0) delete data[id];
         }
       }
-      onChanged({ ...data });
+      onChanged({ ...data } as ProjectionData<Pick<WithId<T>, F>>);
     };
 
     return wasmRegisterProjection(wasmConfig, callback);
@@ -171,4 +161,28 @@ export class WasmDb {
     const json = new TextDecoder().decode(buf.slice(4, 4 + len));
     return JSON.parse(json);
   }
+}
+
+// --- Singleton + Hook ---
+
+export const db = new WasmDb();
+
+export function useProjection<
+  T extends Record<string, string>,
+  F extends keyof WithId<T> = keyof WithId<T>,
+>(config: {
+  table: Table<T>;
+  query: Query<T>;
+  fields?: readonly F[];
+}): ProjectionData<Pick<WithId<T>, F>> {
+  const [data, setData] = useState<ProjectionData<Pick<WithId<T>, F>>>(
+    {} as ProjectionData<Pick<WithId<T>, F>>,
+  );
+
+  useEffect(() => {
+    const id = db.registerProjection(config, setData);
+    return () => db.unregisterProjection(id);
+  }, []);
+
+  return data;
 }

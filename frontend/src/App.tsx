@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { z } from "zod";
-import { WasmDb, Table, ProjectionData } from "./wasmdb.ts";
+import { Table, db, useProjection } from "./wasmdb.ts";
 
 const usersTable = new Table(
   "users",
@@ -12,37 +12,21 @@ const productsTable = new Table(
   z.object({ title: z.string(), price: z.string() }),
 );
 
-type UserWithId = z.infer<typeof usersTable.schema> & { _id: string };
-
-const db = new WasmDb();
-
 export function App() {
   const [tables, setTables] = useState<
     Record<string, Record<string, Record<string, string>>>
   >({});
-  const [admins, setAdmins] = useState<ProjectionData<UserWithId>>({});
-  const projIdRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    projIdRef.current = db.registerProjection(
-      {
-        table: usersTable,
-        query: {
-          bool: {
-            must: [{ term: { role: "admin" } }],
-          },
-        },
-        fields: ["_id", "name", "role"] as const,
+  const admins = useProjection({
+    table: usersTable,
+    query: {
+      bool: {
+        must: [{ term: { role: "admin" } }],
       },
-      setAdmins,
-    );
+    },
+    fields: ["_id", "name", "role"] as const,
+  });
 
-    return () => {
-      if (projIdRef.current !== null) {
-        db.unregisterProjection(projIdRef.current);
-      }
-    };
-  }, []);
 
   function addSampleData() {
     db.add(usersTable, "1", { name: "Alice", role: "admin" });
@@ -61,12 +45,8 @@ export function App() {
     <div style={{ fontFamily: "monospace", padding: 32 }}>
       <h1>wasmdb</h1>
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={addSampleData} disabled={!db}>
-          add sample data
-        </button>
-        <button onClick={updateAlice} disabled={!db}>
-          update alice &rarr; superadmin
-        </button>
+        <button onClick={addSampleData}>add sample data</button>
+        <button onClick={updateAlice}>update alice &rarr; superadmin</button>
       </div>
       <h2>all data</h2>
       <pre>{JSON.stringify(tables, null, 2)}</pre>
