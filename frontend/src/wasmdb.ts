@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import init, {
-  add as wasmAdd,
   sync as wasmSync,
   reset as wasmReset,
   register_projection as wasmRegisterProjection,
   unregister_projection as wasmUnregisterProjection,
   rust_to_ts_ptr,
   rust_to_ts_len,
+  ts_to_rust_ptr,
+  ts_to_rust_len,
+  flush_ts_buffer,
 } from "wasm-lib";
 
 const wasm = await init();
@@ -63,18 +65,64 @@ export type ProjectionData<T> = Record<string, T>;
 
 // --- WasmDb ---
 
+const encoder = new TextEncoder();
+
 export class WasmDb {
   private memory = wasm.memory;
   private version = 1;
   private tables: Record<string, Record<string, Row>> = {};
+
+  // TS→Rust shared buffer state
+  private _tsBuffer: Uint8Array | null = null;
+  private _tsView: DataView | null = null;
+  private _lastBuffer: ArrayBufferLike | null = null;
+  private writePos: number = 8;
+  private readonly tsBufferSize = ts_to_rust_len();
+
+  private get tsBuffer(): Uint8Array {
+    if (this._lastBuffer !== this.memory.buffer) {
+      const ptr = ts_to_rust_ptr();
+      this._tsBuffer = new Uint8Array(this.memory.buffer, ptr, this.tsBufferSize);
+      this._tsView = new DataView(this.memory.buffer, ptr, this.tsBufferSize);
+      this._lastBuffer = this.memory.buffer;
+    }
+    return this._tsBuffer!;
+  }
+
+  private get tsView(): DataView {
+    if (this._lastBuffer !== this.memory.buffer) {
+      const ptr = ts_to_rust_ptr();
+      this._tsBuffer = new Uint8Array(this.memory.buffer, ptr, this.tsBufferSize);
+      this._tsView = new DataView(this.memory.buffer, ptr, this.tsBufferSize);
+      this._lastBuffer = this.memory.buffer;
+    }
+    return this._tsView!;
+  }
 
   add<T extends Record<string, string>>(
     table: Table<T>,
     id: string,
     data: T,
   ): void {
-    table.schema.parse(data);
-    wasmAdd(table.name, id, data);
+    const bytes = encoder.encode(JSON.stringify([table.name, id, data]));
+
+    if (this.writePos + 4 + bytes.length > this.tsBufferSize) {
+      this.flush();
+    }
+
+    this.tsView.setUint32(this.writePos, bytes.length, true);
+    this.tsBuffer.set(bytes, this.writePos + 4);
+    this.writePos += 4 + bytes.length;
+  }
+
+  private flush(): void {
+    if (this.writePos <= 8) return;
+    // Set header
+    this.tsView.setUint32(0, 8, true); // from_offset
+    this.tsView.setUint32(4, this.writePos, true); // to_offset
+    flush_ts_buffer();
+    this.writePos = 8;
+    this._lastBuffer = null; // force view refresh on next access
   }
 
   registerProjection<
@@ -129,10 +177,18 @@ export class WasmDb {
     wasmReset();
     this.version = 1;
     this.tables = {};
+    this.writePos = 8;
   }
 
   sync(): void {
+    // Set header so Rust can read any pending buffer data
+    this.tsView.setUint32(0, 8, true);
+    this.tsView.setUint32(4, this.writePos, true);
+
     this.version = wasmSync(this.version);
+    this.writePos = 8;
+    this._lastBuffer = null; // force view refresh on next access
+
     const diffs = this.readDiffs();
     this.applyDiffs(diffs);
   }

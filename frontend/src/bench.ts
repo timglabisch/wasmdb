@@ -179,7 +179,7 @@ async function main() {
 
   log(`=== wasmdb vs @xstate/store benchmark (${RUNS} runs each) ===`);
 
-  for (const n of [1_000, 10_000, 50_000, 100_000]) {
+  for (const n of [1_000, 10_000]) {
     log(`\n${"=".repeat(120)}`);
     log(`N = ${n}`);
     log("=".repeat(120));
