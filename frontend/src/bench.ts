@@ -121,7 +121,14 @@ function newDb(): WasmDb {
 function runWasmDb(n: number) {
   log(`\n  wasmdb (N=${n}):`);
 
-  bench(`insert`, () => {
+  bench(`add() only`, () => {
+    const db = newDb();
+    for (let i = 0; i < n; i++) {
+      db.add(usersTable, String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" });
+    }
+  });
+
+  bench(`sync() only (after ${n} adds)`, () => {
     const db = newDb();
     for (let i = 0; i < n; i++) {
       db.add(usersTable, String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" });
@@ -129,10 +136,10 @@ function runWasmDb(n: number) {
     db.sync();
   });
 
-  bench(`insert (no zod)`, () => {
+  bench(`insert (add + sync)`, () => {
     const db = newDb();
     for (let i = 0; i < n; i++) {
-      db.add(rawTable, String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" });
+      db.add(usersTable, String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" });
     }
     db.sync();
   });
