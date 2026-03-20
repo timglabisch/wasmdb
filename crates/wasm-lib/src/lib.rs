@@ -12,10 +12,8 @@ use buffer::SharedBuffer;
 use query::{ProjectionConfig, Row};
 use difflog::DiffLog;
 
-const RUST_TO_TS_SIZE: usize = 16 * 1024 * 1024;
 const TS_TO_RUST_SIZE: usize = 1024 * 1024;
 
-static RUST_TO_TS: SharedBuffer<RUST_TO_TS_SIZE> = SharedBuffer::new();
 static TS_TO_RUST: SharedBuffer<TS_TO_RUST_SIZE> = SharedBuffer::new();
 
 struct State(UnsafeCell<Option<DiffLog>>);
@@ -44,36 +42,38 @@ fn process_ts_buffer() {
     }
 
     let mut pos = from;
+    let mut records: Vec<(String, String, Row)> = Vec::new();
 
     while pos + 4 <= to {
         let json_len = read_u32_le(buf, pos) as usize;
         pos += 4;
-
         if pos + json_len > to { break; }
-
-        if let Ok((table, id, new_row)) =
+        if let Ok(record) =
             serde_json::from_slice::<(String, String, Row)>(&buf[pos..pos + json_len])
         {
-            let old_row: Row = log().get_row(&table, &id)
-                .cloned()
-                .unwrap_or_default();
+            records.push(record);
+        }
+        pos += json_len;
+    }
 
-            for (key, old_val) in &old_row {
-                if new_row.get(key) != Some(old_val) {
-                    log().append(&table, &id, key, "", -1);
-                }
+    for (table, id, new_row) in &records {
+        let old_row: Row = log().get_row(table.as_str(), id.as_str())
+            .cloned()
+            .unwrap_or_default();
+
+        for (key, old_val) in &old_row {
+            if new_row.get(key) != Some(old_val) {
+                log().append(table, id, key, "", -1);
             }
-
-            for (key, value) in &new_row {
-                if old_row.get(key) != Some(value) {
-                    log().append(&table, &id, key, value, 1);
-                }
-            }
-
-            log().evaluate_projections(&table, &id, &old_row, &new_row);
         }
 
-        pos += json_len;
+        for (key, value) in new_row {
+            if old_row.get(key) != Some(value) {
+                log().append(table, id, key, value, 1);
+            }
+        }
+
+        log().evaluate_projections(table, id, &old_row, new_row);
     }
 
     // Reset buffer header
@@ -83,16 +83,6 @@ fn process_ts_buffer() {
 }
 
 // --- WASM exports ---
-
-#[wasm_bindgen]
-pub fn rust_to_ts_ptr() -> *const u8 {
-    RUST_TO_TS.ptr()
-}
-
-#[wasm_bindgen]
-pub fn rust_to_ts_len() -> usize {
-    RUST_TO_TS_SIZE
-}
 
 #[wasm_bindgen]
 pub fn ts_to_rust_ptr() -> *const u8 {
@@ -108,30 +98,6 @@ pub fn ts_to_rust_len() -> usize {
 pub fn flush_ts_buffer() -> *const u8 {
     process_ts_buffer();
     TS_TO_RUST.ptr()
-}
-
-#[wasm_bindgen]
-pub fn add(table: &str, id: &str, data: JsValue) -> Result<(), JsError> {
-    let new_row: Row = serde_wasm_bindgen::from_value(data)?;
-    let old_row: Row = log().get_row(table, id)
-        .cloned()
-        .unwrap_or_default();
-
-    for (key, old_val) in &old_row {
-        if new_row.get(key) != Some(old_val) {
-            log().append(table, id, key, "", -1);
-        }
-    }
-
-    for (key, value) in &new_row {
-        if old_row.get(key) != Some(value) {
-            log().append(table, id, key, value, 1);
-        }
-    }
-
-    log().evaluate_projections(table, id, &old_row, &new_row);
-
-    Ok(())
 }
 
 #[wasm_bindgen]
@@ -155,9 +121,7 @@ pub fn reset() {
 #[wasm_bindgen]
 pub fn sync(since_version: u32) -> u32 {
     process_ts_buffer();
-    let diffs = log().since(since_version);
-    let json = serde_json::to_vec(diffs).unwrap_or_default();
-    RUST_TO_TS.write_bytes(&json);
+
     let next = log().next_version();
     log().flush_projections();
     next

@@ -15,11 +15,4 @@ impl<const N: usize> SharedBuffer<N> {
     pub fn as_slice(&self) -> &[u8] {
         unsafe { &(*self.0.get()) }
     }
-
-    pub fn write_bytes(&self, data: &[u8]) {
-        let len = data.len().min(N - 4);
-        let buf = unsafe { &mut *self.0.get() };
-        buf[..4].copy_from_slice(&(len as u32).to_le_bytes());
-        buf[4..4 + len].copy_from_slice(&data[..len]);
-    }
 }

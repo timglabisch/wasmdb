@@ -5,8 +5,6 @@ import init, {
   reset as wasmReset,
   register_projection as wasmRegisterProjection,
   unregister_projection as wasmUnregisterProjection,
-  rust_to_ts_ptr,
-  rust_to_ts_len,
   ts_to_rust_ptr,
   ts_to_rust_len,
   flush_ts_buffer,
@@ -57,8 +55,6 @@ interface Diff {
   diff: number;
 }
 
-type Row = Record<string, string>;
-
 // --- Projection ---
 
 export type ProjectionData<T> = Record<string, T>;
@@ -70,7 +66,6 @@ const encoder = new TextEncoder();
 export class WasmDb {
   private memory = wasm.memory;
   private version = 1;
-  private tables: Record<string, Record<string, Row>> = {};
 
   // TS→Rust shared buffer state
   private _tsBuffer: Uint8Array | null = null;
@@ -132,7 +127,7 @@ export class WasmDb {
     config: { table: Table<T>; query: Query<T>; fields?: readonly F[] },
     onChanged: (data: ProjectionData<Pick<WithId<T>, F>>) => void,
   ): number {
-    const data = {} as Record<string, Row>;
+    const data = {} as Record<string, Record<string, string>>;
 
     // Wrap query with _table filter
     const wrappedQuery = {
@@ -176,7 +171,6 @@ export class WasmDb {
   reset(): void {
     wasmReset();
     this.version = 1;
-    this.tables = {};
     this.writePos = 8;
   }
 
@@ -188,40 +182,6 @@ export class WasmDb {
     this.version = wasmSync(this.version);
     this.writePos = 8;
     this._lastBuffer = null; // force view refresh on next access
-
-    const diffs = this.readDiffs();
-    this.applyDiffs(diffs);
-  }
-
-  private applyDiffs(diffs: Diff[]): void {
-    for (const d of diffs) {
-      if (d.diff > 0) {
-        this.tables[d.table] ??= {};
-        this.tables[d.table][d.id] ??= {};
-        this.tables[d.table][d.id][d.key] = d.value;
-      } else {
-        const table = this.tables[d.table];
-        if (!table) continue;
-        const row = table[d.id];
-        if (!row) continue;
-        delete row[d.key];
-        if (Object.keys(row).length === 0) delete table[d.id];
-        if (Object.keys(table).length === 0) delete this.tables[d.table];
-      }
-    }
-  }
-
-  private readDiffs(): Diff[] {
-    const buf = new Uint8Array(
-      this.memory.buffer,
-      rust_to_ts_ptr(),
-      rust_to_ts_len(),
-    );
-    const len =
-      buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24);
-    if (len === 0) return [];
-    const json = new TextDecoder().decode(buf.slice(4, 4 + len));
-    return JSON.parse(json);
   }
 }
 
