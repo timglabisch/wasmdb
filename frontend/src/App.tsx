@@ -1,28 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import { WasmDb, ProjectionData } from "./wasmdb.ts";
+import { z } from "zod";
+import { WasmDb, Table, ProjectionData } from "./wasmdb.ts";
 
-type Row = Record<string, string>;
-type Tables = Record<string, Record<string, Row>>;
+const usersTable = new Table(
+  "users",
+  z.object({ name: z.string(), role: z.string() }),
+);
+
+const productsTable = new Table(
+  "products",
+  z.object({ title: z.string(), price: z.string() }),
+);
+
+type UserWithId = z.infer<typeof usersTable.schema> & { _id: string };
 
 export function App() {
   const [db, setDb] = useState<WasmDb | null>(null);
-  const [tables, setTables] = useState<Tables>({});
-  const [admins, setAdmins] = useState<ProjectionData>({});
+  const [tables, setTables] = useState<
+    Record<string, Record<string, Record<string, string>>>
+  >({});
+  const [admins, setAdmins] = useState<ProjectionData<UserWithId>>({});
   const projIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     WasmDb.init().then((db) => {
-      projIdRef.current = db.registerProjection({
-        query: {
-          bool: {
-            must: [
-              { term: { _table: "users" } },
-              { term: { role: "admin" } },
-            ],
+      projIdRef.current = db.registerProjection(
+        {
+          table: usersTable,
+          query: {
+            bool: {
+              must: [{ term: { role: "admin" } }],
+            },
           },
+          fields: ["_id", "name", "role"] as const,
         },
-        fields: ["_id", "name", "role"],
-      }, setAdmins);
+        setAdmins,
+      );
       setDb(db);
     });
 
@@ -35,16 +48,16 @@ export function App() {
 
   function addSampleData() {
     if (!db) return;
-    db.add("users", "1", { name: "Alice", role: "admin" });
-    db.add("users", "2", { name: "Bob", role: "viewer" });
-    db.add("users", "3", { name: "Charlie", role: "admin" });
-    db.add("products", "a", { title: "Widget", price: "9.99" });
+    db.add(usersTable, "1", { name: "Alice", role: "admin" });
+    db.add(usersTable, "2", { name: "Bob", role: "viewer" });
+    db.add(usersTable, "3", { name: "Charlie", role: "admin" });
+    db.add(productsTable, "a", { title: "Widget", price: "9.99" });
     setTables(db.sync());
   }
 
   function updateAlice() {
     if (!db) return;
-    db.add("users", "1", { name: "Alice", role: "superadmin" });
+    db.add(usersTable, "1", { name: "Alice", role: "superadmin" });
     setTables(db.sync());
   }
 
@@ -56,7 +69,7 @@ export function App() {
           add sample data
         </button>
         <button onClick={updateAlice} disabled={!db}>
-          update alice → superadmin
+          update alice &rarr; superadmin
         </button>
       </div>
       <h2>all data</h2>

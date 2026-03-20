@@ -1,3 +1,4 @@
+import { z } from "zod";
 import init, {
   add as wasmAdd,
   sync as wasmSync,
@@ -7,9 +8,39 @@ import init, {
   rust_to_ts_len,
 } from "wasm-lib";
 
-type Row = Record<string, string>;
-type Table = Record<string, Row>;
-type Tables = Record<string, Table>;
+// --- Table ---
+
+export class Table<T extends Record<string, string>> {
+  readonly fieldNames: string[];
+
+  constructor(
+    public readonly name: string,
+    public readonly schema: z.ZodType<T>,
+  ) {
+    const shape = (schema as any).shape;
+    this.fieldNames =
+      shape && typeof shape === "object" ? Object.keys(shape) : [];
+  }
+}
+
+// --- Query DSL (typed per table) ---
+
+type WithId<T> = T & { _id: string };
+
+interface TermQuery<T> {
+  term: Partial<WithId<T>>;
+}
+
+interface BoolQuery<T> {
+  bool: {
+    must?: Query<T>[];
+    must_not?: Query<T>[];
+  };
+}
+
+export type Query<T> = TermQuery<T> | BoolQuery<T>;
+
+// --- Internal types ---
 
 interface Diff {
   version: number;
@@ -20,30 +51,18 @@ interface Diff {
   diff: number;
 }
 
-interface TermQuery {
-  term: Record<string, string>;
-}
+type Row = Record<string, string>;
 
-interface BoolQuery {
-  bool: {
-    must?: Query[];
-    must_not?: Query[];
-  };
-}
+// --- Projection ---
 
-type Query = TermQuery | BoolQuery;
+export type ProjectionData<T> = Record<string, T>;
 
-export interface ProjectionConfig {
-  query: Query;
-  fields?: string[];
-}
-
-export type ProjectionData = Record<string, Row>;
+// --- WasmDb ---
 
 export class WasmDb {
   private memory: WebAssembly.Memory;
   private version = 1;
-  private tables: Tables = {};
+  private tables: Record<string, Record<string, Row>> = {};
 
   private constructor(memory: WebAssembly.Memory) {
     this.memory = memory;
@@ -54,39 +73,75 @@ export class WasmDb {
     return new WasmDb(wasm.memory);
   }
 
-  add(table: string, id: string, data: Row): void {
-    wasmAdd(table, id, data);
+  add<T extends Record<string, string>>(
+    table: Table<T>,
+    id: string,
+    data: T,
+  ): void {
+    table.schema.parse(data);
+    wasmAdd(table.name, id, data);
   }
 
+  // With fields
+  registerProjection<
+    T extends Record<string, string>,
+    F extends keyof WithId<T>,
+  >(
+    config: { table: Table<T>; query: Query<T>; fields: readonly F[] },
+    onChanged: (data: ProjectionData<Pick<WithId<T>, F>>) => void,
+  ): number;
+  // Without fields
+  registerProjection<T extends Record<string, string>>(
+    config: { table: Table<T>; query: Query<T> },
+    onChanged: (data: ProjectionData<WithId<T>>) => void,
+  ): number;
+  // Implementation
   registerProjection(
-    config: ProjectionConfig,
-    onChanged: (data: ProjectionData) => void,
+    config: { table: Table<any>; query: any; fields?: readonly string[] },
+    onChanged: (data: any) => void,
   ): number {
-    const data: ProjectionData = {};
+    const data: Record<string, Row> = {};
 
+    // Wrap query with _table filter
+    const wrappedQuery = {
+      bool: {
+        must: [{ term: { _table: config.table.name } }, config.query],
+      },
+    };
+
+    // Compute fields: user-specified or all schema fields + _id
+    const fields = config.fields
+      ? [...config.fields]
+      : [...config.table.fieldNames, "_id"];
+
+    const wasmConfig = { query: wrappedQuery, fields };
+
+    const prefix = config.table.name + ":";
     const callback = (diffs: Diff[]) => {
       for (const d of diffs) {
+        // Strip table prefix from composite ID: "users:1" -> "1"
+        const id = d.id.startsWith(prefix) ? d.id.slice(prefix.length) : d.id;
         if (d.diff > 0) {
-          data[d.id] ??= {};
-          data[d.id][d.key] = d.value;
+          data[id] ??= {};
+          data[id][d.key] = d.value;
         } else {
-          const row = data[d.id];
+          const row = data[id];
           if (!row) continue;
           delete row[d.key];
-          if (Object.keys(row).length === 0) delete data[d.id];
+          if (Object.keys(row).length === 0) delete data[id];
         }
       }
       onChanged({ ...data });
     };
 
-    return wasmRegisterProjection(config, callback);
+    return wasmRegisterProjection(wasmConfig, callback);
   }
 
   unregisterProjection(id: number): void {
     wasmUnregisterProjection(id);
   }
 
-  sync(): Tables {
+  sync(): Record<string, Record<string, Row>> {
     this.version = wasmSync(this.version);
     const diffs = this.readDiffs();
     this.applyDiffs(diffs);
