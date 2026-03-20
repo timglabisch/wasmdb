@@ -1,6 +1,8 @@
 import init, {
   add as wasmAdd,
   sync as wasmSync,
+  register_projection as wasmRegisterProjection,
+  unregister_projection as wasmUnregisterProjection,
   rust_to_ts_ptr,
   rust_to_ts_len,
 } from "wasm-lib";
@@ -15,8 +17,28 @@ interface Diff {
   id: string;
   key: string;
   value: string;
-  diff: number; // +1 or -1
+  diff: number;
 }
+
+interface TermQuery {
+  term: Record<string, string>;
+}
+
+interface BoolQuery {
+  bool: {
+    must?: Query[];
+    must_not?: Query[];
+  };
+}
+
+type Query = TermQuery | BoolQuery;
+
+export interface ProjectionConfig {
+  query: Query;
+  fields?: string[];
+}
+
+export type ProjectionData = Record<string, Row>;
 
 export class WasmDb {
   private memory: WebAssembly.Memory;
@@ -34,6 +56,34 @@ export class WasmDb {
 
   add(table: string, id: string, data: Row): void {
     wasmAdd(table, id, data);
+  }
+
+  registerProjection(
+    config: ProjectionConfig,
+    onChanged: (data: ProjectionData) => void,
+  ): number {
+    const data: ProjectionData = {};
+
+    const callback = (diffs: Diff[]) => {
+      for (const d of diffs) {
+        if (d.diff > 0) {
+          data[d.id] ??= {};
+          data[d.id][d.key] = d.value;
+        } else {
+          const row = data[d.id];
+          if (!row) continue;
+          delete row[d.key];
+          if (Object.keys(row).length === 0) delete data[d.id];
+        }
+      }
+      onChanged({ ...data });
+    };
+
+    return wasmRegisterProjection(config, callback);
+  }
+
+  unregisterProjection(id: number): void {
+    wasmUnregisterProjection(id);
   }
 
   sync(): Tables {
