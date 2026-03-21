@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use js_sys::Function;
 use wasm_bindgen::JsValue;
 use crate::diff::Diff;
-use crate::query::{Query, Row};
+use crate::query::{ResolvedQuery, Row, FIELD_TABLE, FIELD_ID};
 
 pub struct Projection {
-    query: Query,
-    fields: Option<Vec<String>>,
+    query: ResolvedQuery,
+    fields: Option<Vec<u16>>,
+    field_names: Vec<String>,           // global field_id → name snapshot
     materialized: HashMap<String, Row>,
     diffs: Vec<Diff>,
     next_version: u32,
@@ -15,10 +16,16 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn new(query: Query, fields: Option<Vec<String>>, callback: Function) -> Self {
+    pub fn new(
+        query: ResolvedQuery,
+        fields: Option<Vec<u16>>,
+        field_names: Vec<String>,
+        callback: Function,
+    ) -> Self {
         Self {
             query,
             fields,
+            field_names,
             materialized: HashMap::new(),
             diffs: Vec::new(),
             next_version: 1,
@@ -31,7 +38,7 @@ impl Projection {
         match &self.fields {
             None => full_row.clone(),
             Some(fields) => fields.iter()
-                .filter_map(|f| full_row.get(f).map(|v| (f.clone(), v.clone())))
+                .filter_map(|&fid| full_row.get(&fid).map(|v| (fid, v.clone())))
                 .collect(),
         }
     }
@@ -40,12 +47,12 @@ impl Projection {
         let composite_id = format!("{}:{}", table, id);
 
         let mut old_full = old_row.clone();
-        old_full.insert("_table".to_string(), table.to_string());
-        old_full.insert("_id".to_string(), id.to_string());
+        old_full.insert(FIELD_TABLE, table.to_string());
+        old_full.insert(FIELD_ID, id.to_string());
 
         let mut new_full = new_row.clone();
-        new_full.insert("_table".to_string(), table.to_string());
-        new_full.insert("_id".to_string(), id.to_string());
+        new_full.insert(FIELD_TABLE, table.to_string());
+        new_full.insert(FIELD_ID, id.to_string());
 
         let was_in = !old_row.is_empty() && self.query.matches(&old_full);
         let is_in = !new_row.is_empty() && self.query.matches(&new_full);
@@ -54,15 +61,31 @@ impl Projection {
             (false, false) => {}
             (false, true) => {
                 let projected = self.project(&new_full);
-                for (key, value) in &projected {
-                    self.append(&composite_id, key, value, 1);
+                for (&field_id, value) in &projected {
+                    self.diffs.push(Diff {
+                        version: self.next_version,
+                        table: String::new(),
+                        id: composite_id.clone(),
+                        key: self.field_names[field_id as usize].clone(),
+                        value: value.clone(),
+                        diff: 1,
+                    });
+                    self.next_version += 1;
                 }
                 self.materialized.insert(composite_id, projected);
             }
             (true, false) => {
                 if let Some(old_projected) = self.materialized.remove(&composite_id) {
-                    for (key, _) in &old_projected {
-                        self.append(&composite_id, key, "", -1);
+                    for (&field_id, _) in &old_projected {
+                        self.diffs.push(Diff {
+                            version: self.next_version,
+                            table: String::new(),
+                            id: composite_id.clone(),
+                            key: self.field_names[field_id as usize].clone(),
+                            value: String::new(),
+                            diff: -1,
+                        });
+                        self.next_version += 1;
                     }
                 }
             }
@@ -72,33 +95,37 @@ impl Projection {
                     .cloned()
                     .unwrap_or_default();
 
-                for (key, old_val) in &old_projected {
-                    if new_projected.get(key) != Some(old_val) {
-                        self.append(&composite_id, key, "", -1);
+                for (&field_id, old_val) in &old_projected {
+                    if new_projected.get(&field_id) != Some(old_val) {
+                        self.diffs.push(Diff {
+                            version: self.next_version,
+                            table: String::new(),
+                            id: composite_id.clone(),
+                            key: self.field_names[field_id as usize].clone(),
+                            value: String::new(),
+                            diff: -1,
+                        });
+                        self.next_version += 1;
                     }
                 }
 
-                for (key, value) in &new_projected {
-                    if old_projected.get(key) != Some(value) {
-                        self.append(&composite_id, key, value, 1);
+                for (&field_id, value) in &new_projected {
+                    if old_projected.get(&field_id) != Some(value) {
+                        self.diffs.push(Diff {
+                            version: self.next_version,
+                            table: String::new(),
+                            id: composite_id.clone(),
+                            key: self.field_names[field_id as usize].clone(),
+                            value: value.clone(),
+                            diff: 1,
+                        });
+                        self.next_version += 1;
                     }
                 }
 
                 self.materialized.insert(composite_id, new_projected);
             }
         }
-    }
-
-    fn append(&mut self, id: &str, key: &str, value: &str, diff: i8) {
-        self.diffs.push(Diff {
-            version: self.next_version,
-            table: String::new(),
-            id: id.to_string(),
-            key: key.to_string(),
-            value: value.to_string(),
-            diff,
-        });
-        self.next_version += 1;
     }
 
     fn since(&self, version: u32) -> &[Diff] {

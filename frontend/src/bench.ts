@@ -118,45 +118,6 @@ function newDb(): WasmDb {
   return db;
 }
 
-function runAddBreakdown(n: number) {
-  log(`\n  add() breakdown (N=${n}):`);
-  const encoder = new TextEncoder();
-
-  bench(`JSON.stringify only`, () => {
-    for (let i = 0; i < n; i++) {
-      JSON.stringify(["users", String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" }]);
-    }
-  });
-
-  bench(`JSON.stringify + encode (alloc)`, () => {
-    for (let i = 0; i < n; i++) {
-      encoder.encode(JSON.stringify(["users", String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" }]));
-    }
-  });
-
-  const encodeBuffer = new Uint8Array(1024 * 1024);
-  bench(`JSON.stringify + encodeInto (no alloc)`, () => {
-    for (let i = 0; i < n; i++) {
-      const json = JSON.stringify(["users", String(i), { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" }]);
-      encoder.encodeInto(json, encodeBuffer);
-    }
-  });
-
-  bench(`object creation only`, () => {
-    for (let i = 0; i < n; i++) {
-      const _obj = { name: `User${i}`, role: i % 3 === 0 ? "admin" : "viewer" };
-    }
-  });
-
-  bench(`String(i) + template literals`, () => {
-    for (let i = 0; i < n; i++) {
-      const _id = String(i);
-      const _name = `User${i}`;
-      const _role = i % 3 === 0 ? "admin" : "viewer";
-    }
-  });
-}
-
 function runWasmDb(n: number) {
   log(`\n  wasmdb (N=${n}):`);
 
@@ -231,7 +192,6 @@ async function main() {
     log("=".repeat(120));
 
     runXState(n);
-    runAddBreakdown(n);
     runWasmDb(n);
   }
 

@@ -5,6 +5,7 @@ import init, {
   reset as wasmReset,
   register_projection as wasmRegisterProjection,
   unregister_projection as wasmUnregisterProjection,
+  register_table as wasmRegisterTable,
   ts_to_rust_ptr,
   ts_to_rust_len,
   flush_ts_buffer,
@@ -16,9 +17,8 @@ const wasm = await init();
 
 export class Table<T extends Record<string, string>> {
   readonly fieldNames: string[];
-  readonly encodedName: Uint8Array;
-  readonly encodedFieldNames: Uint8Array[];
-  readonly fixedSize: number; // pre-computed: tableName + numFields header + all key names
+  readonly tableId: number;
+  readonly fixedSize: number; // pre-computed: table_id + id_len prefix + val_len prefixes
 
   constructor(
     public readonly name: string,
@@ -27,15 +27,9 @@ export class Table<T extends Record<string, string>> {
     const shape = (schema as any).shape;
     this.fieldNames =
       shape && typeof shape === "object" ? Object.keys(shape) : [];
-    this.encodedName = encoder.encode(name);
-    this.encodedFieldNames = this.fieldNames.map((f) => encoder.encode(f));
-    // 2+tableName + 2(id placeholder) + 2(numFields) + sum(2+keyLen+2(val placeholder))
-    this.fixedSize =
-      2 +
-      this.encodedName.length +
-      2 +
-      2 +
-      this.encodedFieldNames.reduce((s, e) => s + 2 + e.length + 2, 0);
+    this.tableId = wasmRegisterTable(name, this.fieldNames);
+    // 2(table_id) + 2(id_len) + 2*numFields(val_len prefixes)
+    this.fixedSize = 2 + 2 + 2 * this.fieldNames.length;
   }
 }
 
@@ -72,8 +66,6 @@ interface Diff {
 export type ProjectionData<T> = Record<string, T>;
 
 // --- WasmDb ---
-
-const encoder = new TextEncoder();
 
 export class WasmDb {
   private memory = wasm.memory;
@@ -122,13 +114,10 @@ export class WasmDb {
     const buf = this.tsBuffer;
     let pos = this.writePos;
 
-    // Table name (pre-encoded)
-    const tn = table.encodedName;
-    buf[pos] = tn.length;
-    buf[pos + 1] = tn.length >> 8;
+    // Table ID (2 bytes)
+    buf[pos] = table.tableId;
+    buf[pos + 1] = table.tableId >> 8;
     pos += 2;
-    buf.set(tn, pos);
-    pos += tn.length;
 
     // ID
     buf[pos] = id.length;
@@ -138,22 +127,8 @@ export class WasmDb {
       buf[pos++] = id.charCodeAt(i);
     }
 
-    // Num fields
-    buf[pos] = table.fieldNames.length;
-    buf[pos + 1] = table.fieldNames.length >> 8;
-    pos += 2;
-
-    // Fields
+    // Values only (in schema order)
     for (let fi = 0; fi < table.fieldNames.length; fi++) {
-      // Key (pre-encoded)
-      const ek = table.encodedFieldNames[fi];
-      buf[pos] = ek.length;
-      buf[pos + 1] = ek.length >> 8;
-      pos += 2;
-      buf.set(ek, pos);
-      pos += ek.length;
-
-      // Value
       const val = (data[table.fieldNames[fi] as keyof T] as string) ?? "";
       buf[pos] = val.length;
       buf[pos + 1] = val.length >> 8;

@@ -1,38 +1,66 @@
 use std::collections::HashMap;
 use js_sys::Function;
 use crate::projection::Projection;
-use crate::query::{ProjectionConfig, Row};
+use crate::query::{ProjectionConfig, ResolvedQuery, Row};
 
-type Db = HashMap<String, HashMap<String, Row>>;
+pub struct TableDef {
+    pub name: String,
+    pub field_ids: Vec<u16>,
+}
 
 pub struct DiffLog {
-    db: Db,
+    db: Vec<HashMap<String, Row>>,  // table_id → (row_id → Row)
     projections: HashMap<u32, Projection>,
     next_projection_id: u32,
+    pub tables: Vec<TableDef>,
+    pub field_names: Vec<String>,
+    field_ids: HashMap<String, u16>,
 }
 
 impl DiffLog {
     pub fn new() -> Self {
-        Self {
-            db: HashMap::new(),
+        let mut s = Self {
+            db: Vec::new(),
             projections: HashMap::new(),
             next_projection_id: 0,
-        }
+            tables: Vec::new(),
+            field_names: Vec::new(),
+            field_ids: HashMap::new(),
+        };
+        s.intern_field("_table"); // FIELD_TABLE = 0
+        s.intern_field("_id");    // FIELD_ID = 1
+        s
     }
 
-    pub fn set_row(&mut self, table: String, id: String, new_row: Row) {
+    fn intern_field(&mut self, name: &str) -> u16 {
+        if let Some(&id) = self.field_ids.get(name) {
+            return id;
+        }
+        let id = self.field_names.len() as u16;
+        self.field_names.push(name.to_string());
+        self.field_ids.insert(name.to_string(), id);
+        id
+    }
+
+    pub fn register_table(&mut self, name: String, fields: Vec<String>) -> u16 {
+        let field_ids: Vec<u16> = fields.iter().map(|f| self.intern_field(f)).collect();
+        let id = self.tables.len() as u16;
+        self.tables.push(TableDef { name, field_ids });
+        self.db.push(HashMap::new());
+        id
+    }
+
+    pub fn set_row(&mut self, table_id: u16, id: String, new_row: Row) {
         if self.projections.is_empty() {
-            // Fast path: no projections, move everything, zero clones
-            self.db.entry(table).or_default().insert(id, new_row);
+            self.db[table_id as usize].insert(id, new_row);
         } else {
-            let old_row = self.db
-                .entry(table.clone())
-                .or_default()
+            let table_name = self.tables[table_id as usize].name.clone();
+            let old_row = self.db[table_id as usize]
                 .insert(id.clone(), new_row)
                 .unwrap_or_default();
-            let new_row_ref = &self.db[&table][&id];
+            let new_row_ref = &self.db[table_id as usize][&id];
             for proj in self.projections.values_mut() {
-                proj.evaluate(&table, &id, &old_row, new_row_ref);
+                proj.evaluate(&table_name, &id, &old_row, new_row_ref);
             }
         }
     }
@@ -41,12 +69,21 @@ impl DiffLog {
         let id = self.next_projection_id;
         self.next_projection_id += 1;
 
-        let mut proj = Projection::new(config.query, config.fields, callback);
+        let resolved_query = ResolvedQuery::resolve(&config.query, &self.field_ids);
+        let resolved_fields = config.fields.map(|fields| {
+            fields.iter()
+                .map(|f| self.field_ids.get(f.as_str()).copied().unwrap_or(u16::MAX))
+                .collect::<Vec<_>>()
+        });
+        let field_names_snapshot = self.field_names.clone();
 
-        for (table, rows) in &self.db {
+        let mut proj = Projection::new(resolved_query, resolved_fields, field_names_snapshot, callback);
+
+        for (table_idx, rows) in self.db.iter().enumerate() {
+            let table_name = &self.tables[table_idx].name;
             for (row_id, row) in rows {
-                let empty = HashMap::new();
-                proj.evaluate(table, row_id, &empty, row);
+                let empty = Row::default();
+                proj.evaluate(table_name, row_id, &empty, row);
             }
         }
 
@@ -59,7 +96,9 @@ impl DiffLog {
     }
 
     pub fn reset(&mut self) {
-        self.db.clear();
+        for table_rows in &mut self.db {
+            table_rows.clear();
+        }
         self.projections.clear();
         self.next_projection_id = 0;
     }

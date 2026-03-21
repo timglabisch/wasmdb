@@ -9,7 +9,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use buffer::SharedBuffer;
-use query::{ProjectionConfig, Row};
+use query::{ProjectionConfig, new_row};
 use difflog::DiffLog;
 
 const TS_TO_RUST_SIZE: usize = 1024 * 1024;
@@ -57,21 +57,22 @@ fn process_ts_buffer() {
 
     let mut pos = from;
     while pos < to {
-        let table = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
-        let id = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
-
         if pos + 2 > to { break; }
-        let num_fields = read_u16_le(buf, pos) as usize;
+        let table_id = read_u16_le(buf, pos);
         pos += 2;
 
-        let mut row = Row::with_capacity(num_fields);
-        for _ in 0..num_fields {
-            let key = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
+        let id = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
+
+        // Copy field_ids (Vec<u16>, cheap) to avoid borrow conflict with set_row
+        let field_ids = log().tables[table_id as usize].field_ids.clone();
+
+        let mut row = new_row(field_ids.len());
+        for fi in 0..field_ids.len() {
             let value = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
-            row.insert(key, value);
+            row.insert(field_ids[fi], value);
         }
 
-        log().set_row(table, id, row);
+        log().set_row(table_id, id, row);
     }
 
     // Reset buffer header
@@ -109,6 +110,12 @@ pub fn register_projection(config: JsValue, callback: JsValue) -> Result<u32, Js
 #[wasm_bindgen]
 pub fn unregister_projection(id: u32) {
     log().unregister_projection(id);
+}
+
+#[wasm_bindgen]
+pub fn register_table(table_name: &str, field_names: JsValue) -> u16 {
+    let fields: Vec<String> = serde_wasm_bindgen::from_value(field_names).unwrap();
+    log().register_table(table_name.to_string(), fields)
 }
 
 #[wasm_bindgen]
