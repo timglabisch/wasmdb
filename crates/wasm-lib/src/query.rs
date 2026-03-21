@@ -73,40 +73,4 @@ impl ResolvedQuery {
         }
     }
 
-    pub fn extract_index_key(&self) -> crate::projection::ProjectionIndexKey {
-        let mut table_id: Option<u16> = None;
-        let mut row_id: Option<String> = None;
-        self.collect_term_constraints(&mut table_id, &mut row_id);
-        match (table_id, row_id) {
-            (Some(tid), Some(rid)) => crate::projection::ProjectionIndexKey::ExactId { table_id: tid, row_id: rid },
-            (Some(tid), None) => crate::projection::ProjectionIndexKey::TableBroadcast { table_id: tid },
-            _ => crate::projection::ProjectionIndexKey::GlobalBroadcast,
-        }
-    }
-
-    fn collect_term_constraints(&self, table_id: &mut Option<u16>, row_id: &mut Option<String>) {
-        match self {
-            ResolvedQuery::Term(pairs) => {
-                for &(fid, ref val) in pairs {
-                    if fid == FIELD_TABLE {
-                        *table_id = val.parse().ok();
-                    }
-                    if fid == FIELD_ID {
-                        *row_id = Some(val.clone());
-                    }
-                }
-            }
-            ResolvedQuery::Bool { must, .. } => {
-                for q in must {
-                    q.collect_term_constraints(table_id, row_id);
-                }
-            }
-        }
-    }
-}
-
-#[derive(Deserialize)]
-pub struct ProjectionConfig {
-    pub query: Query,
-    pub fields: Option<Vec<String>>,
 }

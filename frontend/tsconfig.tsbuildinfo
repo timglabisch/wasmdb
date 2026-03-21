@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/bench.ts","./src/main.tsx","./src/wasmdb.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/bench-nav.ts","./src/bench-projections.tsx","./src/bench-wasmdb.tsx","./src/bench-xstate.tsx","./src/bench.ts","./src/main.tsx","./src/wasmdb.ts"],"errors":true,"version":"5.9.3"}

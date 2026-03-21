@@ -52,9 +52,8 @@ export type Query<T> = TermQuery<T> | BoolQuery<T>;
 
 // --- Internal types ---
 
-interface Diff {
+interface ProjectionChange {
   version: number;
-  table: string;
   id: string;
   key: string;
   value: string;
@@ -69,6 +68,7 @@ export type ProjectionData<T> = Record<string, T>;
 
 export class WasmDb {
   private memory = wasm.memory;
+  private encoder = new TextEncoder();
 
   // TS→Rust shared buffer state
   private _tsBuffer: Uint8Array | null = null;
@@ -77,24 +77,25 @@ export class WasmDb {
   private writePos: number = 8;
   private readonly tsBufferSize = ts_to_rust_len();
 
-  private get tsBuffer(): Uint8Array {
+  private ensureViews(): void {
     if (this._lastBuffer !== this.memory.buffer) {
       const ptr = ts_to_rust_ptr();
       this._tsBuffer = new Uint8Array(this.memory.buffer, ptr, this.tsBufferSize);
       this._tsView = new DataView(this.memory.buffer, ptr, this.tsBufferSize);
       this._lastBuffer = this.memory.buffer;
     }
-    return this._tsBuffer!;
   }
 
-  private get tsView(): DataView {
-    if (this._lastBuffer !== this.memory.buffer) {
-      const ptr = ts_to_rust_ptr();
-      this._tsBuffer = new Uint8Array(this.memory.buffer, ptr, this.tsBufferSize);
-      this._tsView = new DataView(this.memory.buffer, ptr, this.tsBufferSize);
-      this._lastBuffer = this.memory.buffer;
-    }
-    return this._tsView!;
+  private get tsBuffer(): Uint8Array { this.ensureViews(); return this._tsBuffer!; }
+  private get tsView(): DataView { this.ensureViews(); return this._tsView!; }
+
+  private writeStr(buf: Uint8Array, pos: number, str: string): number {
+    const encoded = this.encoder.encode(str);
+    buf[pos] = encoded.length;
+    buf[pos + 1] = encoded.length >> 8;
+    pos += 2;
+    buf.set(encoded, pos);
+    return pos + encoded.length;
   }
 
   add<T extends Record<string, string>>(
@@ -102,10 +103,10 @@ export class WasmDb {
     id: string,
     data: T,
   ): void {
-    // Size check: fixed parts + variable parts (id + values)
-    let varLen = id.length;
+    // Conservative size check: UTF-8 can use up to 3x char count
+    let varLen = id.length * 3;
     for (let i = 0; i < table.fieldNames.length; i++) {
-      varLen += (data[table.fieldNames[i] as keyof T] as string)?.length ?? 0;
+      varLen += ((data[table.fieldNames[i] as keyof T] as string)?.length ?? 0) * 3;
     }
     if (this.writePos + table.fixedSize + varLen > this.tsBufferSize) {
       this.flush();
@@ -120,22 +121,12 @@ export class WasmDb {
     pos += 2;
 
     // ID
-    buf[pos] = id.length;
-    buf[pos + 1] = id.length >> 8;
-    pos += 2;
-    for (let i = 0; i < id.length; i++) {
-      buf[pos++] = id.charCodeAt(i);
-    }
+    pos = this.writeStr(buf, pos, id);
 
     // Values only (in schema order)
     for (let fi = 0; fi < table.fieldNames.length; fi++) {
       const val = (data[table.fieldNames[fi] as keyof T] as string) ?? "";
-      buf[pos] = val.length;
-      buf[pos + 1] = val.length >> 8;
-      pos += 2;
-      for (let i = 0; i < val.length; i++) {
-        buf[pos++] = val.charCodeAt(i);
-      }
+      pos = this.writeStr(buf, pos, val);
     }
 
     this.writePos = pos;
@@ -175,7 +166,7 @@ export class WasmDb {
     const wasmConfig = { query: wrappedQuery, fields };
 
     const prefix = config.table.tableId + ":";
-    const callback = (diffs: Diff[]) => {
+    const callback = (diffs: ProjectionChange[]) => {
       for (const d of diffs) {
         // Strip table_id prefix from composite ID: "0:1" -> "1"
         const id = d.id.startsWith(prefix) ? d.id.slice(prefix.length) : d.id;
