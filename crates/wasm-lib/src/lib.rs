@@ -126,6 +126,16 @@ pub fn reset() {
 #[wasm_bindgen]
 pub fn sync(since_version: u32) -> u32 {
     process_ts_buffer();
-    log().flush_projections();
+    log().sync();
     since_version
+}
+
+#[wasm_bindgen]
+pub fn begin_tx() -> u64 {
+    log().begin_tx()
+}
+
+#[wasm_bindgen]
+pub fn revert_tx(tx_id: u64) {
+    log().revert_tx(tx_id);
 }
