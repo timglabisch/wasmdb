@@ -43,15 +43,16 @@ impl Projection {
         }
     }
 
-    pub fn evaluate(&mut self, table: &str, id: &str, old_row: &Row, new_row: &Row) {
-        let composite_id = format!("{}:{}", table, id);
+    pub fn evaluate(&mut self, table_id: u16, id: &str, old_row: &Row, new_row: &Row) {
+        let composite_id = format!("{}:{}", table_id, id);
+        let table_id_str = table_id.to_string();
 
         let mut old_full = old_row.clone();
-        old_full.insert(FIELD_TABLE, table.to_string());
+        old_full.insert(FIELD_TABLE, table_id_str.clone());
         old_full.insert(FIELD_ID, id.to_string());
 
         let mut new_full = new_row.clone();
-        new_full.insert(FIELD_TABLE, table.to_string());
+        new_full.insert(FIELD_TABLE, table_id_str);
         new_full.insert(FIELD_ID, id.to_string());
 
         let was_in = !old_row.is_empty() && self.query.matches(&old_full);

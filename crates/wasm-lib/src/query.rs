@@ -34,16 +34,31 @@ pub enum ResolvedQuery {
 }
 
 impl ResolvedQuery {
-    pub fn resolve(query: &Query, field_ids: &HashMap<String, u16>) -> Self {
+    pub fn resolve(
+        query: &Query,
+        field_ids: &HashMap<String, u16>,
+        table_name_to_id: &HashMap<String, u16>,
+    ) -> Self {
         match query {
             Query::Term(map) => ResolvedQuery::Term(
                 map.iter()
-                    .map(|(k, v)| (field_ids.get(k).copied().unwrap_or(u16::MAX), v.clone()))
+                    .map(|(k, v)| {
+                        let fid = field_ids.get(k).copied().unwrap_or(u16::MAX);
+                        let resolved_v = if fid == FIELD_TABLE {
+                            // Convert table name "users" → table_id "0"
+                            table_name_to_id.get(v)
+                                .map(|tid| tid.to_string())
+                                .unwrap_or_else(|| v.clone())
+                        } else {
+                            v.clone()
+                        };
+                        (fid, resolved_v)
+                    })
                     .collect()
             ),
             Query::Bool { must, must_not } => ResolvedQuery::Bool {
-                must: must.iter().map(|q| Self::resolve(q, field_ids)).collect(),
-                must_not: must_not.iter().map(|q| Self::resolve(q, field_ids)).collect(),
+                must: must.iter().map(|q| Self::resolve(q, field_ids, table_name_to_id)).collect(),
+                must_not: must_not.iter().map(|q| Self::resolve(q, field_ids, table_name_to_id)).collect(),
             },
         }
     }

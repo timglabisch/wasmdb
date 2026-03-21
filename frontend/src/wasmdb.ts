@@ -174,10 +174,10 @@ export class WasmDb {
 
     const wasmConfig = { query: wrappedQuery, fields };
 
-    const prefix = config.table.name + ":";
+    const prefix = config.table.tableId + ":";
     const callback = (diffs: Diff[]) => {
       for (const d of diffs) {
-        // Strip table prefix from composite ID: "users:1" -> "1"
+        // Strip table_id prefix from composite ID: "0:1" -> "1"
         const id = d.id.startsWith(prefix) ? d.id.slice(prefix.length) : d.id;
         if (d.diff > 0) {
           data[id] ??= {};

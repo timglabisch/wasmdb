@@ -15,6 +15,7 @@ pub struct DiffLog {
     pub tables: Vec<TableDef>,
     pub field_names: Vec<String>,
     field_ids: HashMap<String, u16>,
+    table_name_to_id: HashMap<String, u16>,
 }
 
 impl DiffLog {
@@ -26,6 +27,7 @@ impl DiffLog {
             tables: Vec::new(),
             field_names: Vec::new(),
             field_ids: HashMap::new(),
+            table_name_to_id: HashMap::new(),
         };
         s.intern_field("_table"); // FIELD_TABLE = 0
         s.intern_field("_id");    // FIELD_ID = 1
@@ -45,6 +47,7 @@ impl DiffLog {
     pub fn register_table(&mut self, name: String, fields: Vec<String>) -> u16 {
         let field_ids: Vec<u16> = fields.iter().map(|f| self.intern_field(f)).collect();
         let id = self.tables.len() as u16;
+        self.table_name_to_id.insert(name.clone(), id);
         self.tables.push(TableDef { name, field_ids });
         self.db.push(HashMap::new());
         id
@@ -54,13 +57,12 @@ impl DiffLog {
         if self.projections.is_empty() {
             self.db[table_id as usize].insert(id, new_row);
         } else {
-            let table_name = self.tables[table_id as usize].name.clone();
             let old_row = self.db[table_id as usize]
                 .insert(id.clone(), new_row)
                 .unwrap_or_default();
             let new_row_ref = &self.db[table_id as usize][&id];
             for proj in self.projections.values_mut() {
-                proj.evaluate(&table_name, &id, &old_row, new_row_ref);
+                proj.evaluate(table_id, &id, &old_row, new_row_ref);
             }
         }
     }
@@ -69,7 +71,7 @@ impl DiffLog {
         let id = self.next_projection_id;
         self.next_projection_id += 1;
 
-        let resolved_query = ResolvedQuery::resolve(&config.query, &self.field_ids);
+        let resolved_query = ResolvedQuery::resolve(&config.query, &self.field_ids, &self.table_name_to_id);
         let resolved_fields = config.fields.map(|fields| {
             fields.iter()
                 .map(|f| self.field_ids.get(f.as_str()).copied().unwrap_or(u16::MAX))
@@ -80,10 +82,9 @@ impl DiffLog {
         let mut proj = Projection::new(resolved_query, resolved_fields, field_names_snapshot, callback);
 
         for (table_idx, rows) in self.db.iter().enumerate() {
-            let table_name = &self.tables[table_idx].name;
             for (row_id, row) in rows {
                 let empty = Row::default();
-                proj.evaluate(table_name, row_id, &empty, row);
+                proj.evaluate(table_idx as u16, row_id, &empty, row);
             }
         }
 
