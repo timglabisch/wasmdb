@@ -27,8 +27,22 @@ fn log() -> &'static mut DiffLog {
 
 // --- Buffer parsing ---
 
+fn read_u16_le(buf: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([buf[offset], buf[offset + 1]])
+}
+
 fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3]])
+}
+
+fn read_str(buf: &[u8], pos: &mut usize, end: usize) -> Option<String> {
+    if *pos + 2 > end { return None; }
+    let len = read_u16_le(buf, *pos) as usize;
+    *pos += 2;
+    if *pos + len > end { return None; }
+    let s = unsafe { String::from_utf8_unchecked(buf[*pos..*pos + len].to_vec()) };
+    *pos += len;
+    Some(s)
 }
 
 fn process_ts_buffer() {
@@ -42,38 +56,22 @@ fn process_ts_buffer() {
     }
 
     let mut pos = from;
-    let mut records: Vec<(String, String, Row)> = Vec::new();
+    while pos < to {
+        let table = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
+        let id = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
 
-    while pos + 4 <= to {
-        let json_len = read_u32_le(buf, pos) as usize;
-        pos += 4;
-        if pos + json_len > to { break; }
-        if let Ok(record) =
-            serde_json::from_slice::<(String, String, Row)>(&buf[pos..pos + json_len])
-        {
-            records.push(record);
-        }
-        pos += json_len;
-    }
+        if pos + 2 > to { break; }
+        let num_fields = read_u16_le(buf, pos) as usize;
+        pos += 2;
 
-    for (table, id, new_row) in &records {
-        let old_row: Row = log().get_row(table.as_str(), id.as_str())
-            .cloned()
-            .unwrap_or_default();
-
-        for (key, old_val) in &old_row {
-            if new_row.get(key) != Some(old_val) {
-                log().append(table, id, key, "", -1);
-            }
+        let mut row = Row::with_capacity(num_fields);
+        for _ in 0..num_fields {
+            let key = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
+            let value = match read_str(buf, &mut pos, to) { Some(s) => s, None => break };
+            row.insert(key, value);
         }
 
-        for (key, value) in new_row {
-            if old_row.get(key) != Some(value) {
-                log().append(table, id, key, value, 1);
-            }
-        }
-
-        log().evaluate_projections(table, id, &old_row, new_row);
+        log().set_row(table, id, row);
     }
 
     // Reset buffer header
@@ -121,8 +119,6 @@ pub fn reset() {
 #[wasm_bindgen]
 pub fn sync(since_version: u32) -> u32 {
     process_ts_buffer();
-
-    let next = log().next_version();
     log().flush_projections();
-    next
+    since_version
 }

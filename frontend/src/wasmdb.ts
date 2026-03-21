@@ -16,6 +16,9 @@ const wasm = await init();
 
 export class Table<T extends Record<string, string>> {
   readonly fieldNames: string[];
+  readonly encodedName: Uint8Array;
+  readonly encodedFieldNames: Uint8Array[];
+  readonly fixedSize: number; // pre-computed: tableName + numFields header + all key names
 
   constructor(
     public readonly name: string,
@@ -24,6 +27,15 @@ export class Table<T extends Record<string, string>> {
     const shape = (schema as any).shape;
     this.fieldNames =
       shape && typeof shape === "object" ? Object.keys(shape) : [];
+    this.encodedName = encoder.encode(name);
+    this.encodedFieldNames = this.fieldNames.map((f) => encoder.encode(f));
+    // 2+tableName + 2(id placeholder) + 2(numFields) + sum(2+keyLen+2(val placeholder))
+    this.fixedSize =
+      2 +
+      this.encodedName.length +
+      2 +
+      2 +
+      this.encodedFieldNames.reduce((s, e) => s + 2 + e.length + 2, 0);
   }
 }
 
@@ -65,7 +77,6 @@ const encoder = new TextEncoder();
 
 export class WasmDb {
   private memory = wasm.memory;
-  private version = 1;
 
   // TS→Rust shared buffer state
   private _tsBuffer: Uint8Array | null = null;
@@ -99,15 +110,60 @@ export class WasmDb {
     id: string,
     data: T,
   ): void {
-    const bytes = encoder.encode(JSON.stringify([table.name, id, data]));
-
-    if (this.writePos + 4 + bytes.length > this.tsBufferSize) {
+    // Size check: fixed parts + variable parts (id + values)
+    let varLen = id.length;
+    for (let i = 0; i < table.fieldNames.length; i++) {
+      varLen += (data[table.fieldNames[i] as keyof T] as string)?.length ?? 0;
+    }
+    if (this.writePos + table.fixedSize + varLen > this.tsBufferSize) {
       this.flush();
     }
 
-    this.tsView.setUint32(this.writePos, bytes.length, true);
-    this.tsBuffer.set(bytes, this.writePos + 4);
-    this.writePos += 4 + bytes.length;
+    const buf = this.tsBuffer;
+    let pos = this.writePos;
+
+    // Table name (pre-encoded)
+    const tn = table.encodedName;
+    buf[pos] = tn.length;
+    buf[pos + 1] = tn.length >> 8;
+    pos += 2;
+    buf.set(tn, pos);
+    pos += tn.length;
+
+    // ID
+    buf[pos] = id.length;
+    buf[pos + 1] = id.length >> 8;
+    pos += 2;
+    for (let i = 0; i < id.length; i++) {
+      buf[pos++] = id.charCodeAt(i);
+    }
+
+    // Num fields
+    buf[pos] = table.fieldNames.length;
+    buf[pos + 1] = table.fieldNames.length >> 8;
+    pos += 2;
+
+    // Fields
+    for (let fi = 0; fi < table.fieldNames.length; fi++) {
+      // Key (pre-encoded)
+      const ek = table.encodedFieldNames[fi];
+      buf[pos] = ek.length;
+      buf[pos + 1] = ek.length >> 8;
+      pos += 2;
+      buf.set(ek, pos);
+      pos += ek.length;
+
+      // Value
+      const val = (data[table.fieldNames[fi] as keyof T] as string) ?? "";
+      buf[pos] = val.length;
+      buf[pos + 1] = val.length >> 8;
+      pos += 2;
+      for (let i = 0; i < val.length; i++) {
+        buf[pos++] = val.charCodeAt(i);
+      }
+    }
+
+    this.writePos = pos;
   }
 
   private flush(): void {
@@ -170,7 +226,6 @@ export class WasmDb {
 
   reset(): void {
     wasmReset();
-    this.version = 1;
     this.writePos = 8;
   }
 
@@ -179,7 +234,7 @@ export class WasmDb {
     this.tsView.setUint32(0, 8, true);
     this.tsView.setUint32(4, this.writePos, true);
 
-    this.version = wasmSync(this.version);
+    wasmSync(0);
     this.writePos = 8;
     this._lastBuffer = null; // force view refresh on next access
   }
