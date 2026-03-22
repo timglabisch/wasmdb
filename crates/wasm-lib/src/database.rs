@@ -75,7 +75,7 @@ impl Database {
                 .map(|f| self.schema.field_ids.get(f.as_str()).copied().unwrap_or(u16::MAX))
                 .collect::<Vec<_>>()
         });
-        self.projection_manager.register(resolved_query, resolved_fields, callback)
+        self.projection_manager.register(query, resolved_fields, callback)
     }
 
     pub fn unregister_projection(&mut self, id: u32) {

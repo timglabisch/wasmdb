@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use buffer::{SharedBuffer, read_u32_le};
-use query::Query;
+use query::ProjectionQuery;
 use database::Database;
 
 const TS_TO_RUST_SIZE: usize = 1024 * 1024;
@@ -57,7 +57,7 @@ pub fn flush_ts_buffer() -> *const u8 {
 
 #[wasm_bindgen]
 pub fn register_projection(query: JsValue, fields: JsValue, callback: JsValue) -> Result<u32, JsError> {
-    let query: Query = serde_wasm_bindgen::from_value(query)?;
+    let query: ProjectionQuery = serde_wasm_bindgen::from_value(query)?;
     let fields: Option<Vec<String>> = serde_wasm_bindgen::from_value(fields)?;
     let callback: js_sys::Function = callback.dyn_into()
         .map_err(|_| JsError::new("callback must be a function"))?;
