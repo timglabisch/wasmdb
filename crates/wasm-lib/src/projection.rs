@@ -1,10 +1,10 @@
 use fnv::FnvHashMap;
 use js_sys::Function;
-use crate::query::ResolvedQuery;
+use crate::query::Query;
 
 pub struct Projection {
     pub id: u32,
-    pub query: ResolvedQuery,
+    pub query: Query,
     pub fields: Option<Vec<u16>>,
     pub callback: Function,
 }
@@ -22,7 +22,7 @@ impl ProjectionManager {
         }
     }
 
-    pub fn register(&mut self, query: ResolvedQuery, fields: Option<Vec<u16>>, callback: Function) -> u32 {
+    pub fn register(&mut self, query: Query, fields: Option<Vec<u16>>, callback: Function) -> u32 {
         let id = self.projection_counter;
         self.projection_counter += 1;
         self.projections.insert(id, Projection { id, query, fields, callback });
