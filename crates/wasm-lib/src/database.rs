@@ -14,10 +14,10 @@ pub struct Database {
     current: MaterializedView,
 
     // TX State
-    next_tx_id: u64,
-    auto_tx: Option<u64>,
+    current_tx: u64,
+    in_transaction: bool,
 
-    // Sync
+    // Projection sync
     last_synced_id: u64,
     pending_reeval: Vec<(u16, String)>,
 
@@ -34,25 +34,14 @@ impl Database {
             schema: Schema::new(),
             diff_log: DiffLog::new(),
             current: MaterializedView::new(),
-            next_tx_id: 0,
-            auto_tx: None,
+            current_tx: 0,
+            in_transaction: false,
             last_synced_id: 0,
             pending_reeval: Vec::new(),
             projections: HashMap::new(),
             next_projection_id: 0,
             pending_init: Vec::new(),
             index: ProjectionIndex::new(),
-        }
-    }
-
-    fn ensure_auto_tx(&mut self) -> u64 {
-        if let Some(id) = self.auto_tx {
-            id
-        } else {
-            let id = self.next_tx_id;
-            self.next_tx_id += 1;
-            self.auto_tx = Some(id);
-            id
         }
     }
 
@@ -63,11 +52,14 @@ impl Database {
     }
 
     pub fn set_row(&mut self, table_id: u16, id: String, new_row: Row) {
-        let tx_id = self.ensure_auto_tx();
+        let tx_id = self.current_tx;
         let old_row = self.current.tables[table_id as usize]
             .get(&id).cloned().unwrap_or_default();
         self.diff_log.emit_row_diffs(tx_id, table_id, &id, &old_row, &new_row);
         self.current.tables[table_id as usize].insert(id, new_row);
+        if !self.in_transaction {
+            self.current_tx += 1;
+        }
     }
 
     pub fn process_buffer(&mut self, buf: &[u8], to: usize) {
@@ -120,8 +112,8 @@ impl Database {
     pub fn reset(&mut self) {
         self.diff_log.clear();
         for t in &mut self.current.tables { t.clear(); }
-        self.next_tx_id = 0;
-        self.auto_tx = None;
+        self.current_tx = 0;
+        self.in_transaction = false;
         self.last_synced_id = 0;
         self.pending_reeval.clear();
         self.projections.clear();
@@ -154,9 +146,8 @@ impl Database {
             proj.flush();
         }
 
-        // 5. Advance sync position, consume auto-TX
+        // 5. Advance sync position
         self.last_synced_id = self.diff_log.next_id();
-        self.auto_tx = None;
     }
 
     fn init_pending(
@@ -216,9 +207,8 @@ impl Database {
     }
 
     pub fn begin_tx(&mut self) -> u64 {
-        let id = self.next_tx_id;
-        self.next_tx_id += 1;
-        id
+        self.in_transaction = true;
+        self.current_tx
     }
 
     pub fn revert_tx(&mut self, tx_id: u64) {
@@ -245,6 +235,9 @@ impl Database {
             self.pending_reeval.extend(affected);
         }
 
-        if self.auto_tx == Some(tx_id) { self.auto_tx = None; }
+        if self.in_transaction && self.current_tx == tx_id {
+            self.in_transaction = false;
+            self.current_tx += 1;
+        }
     }
 }
