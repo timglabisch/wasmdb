@@ -1,13 +1,6 @@
 use fnv::FnvHashMap;
 use js_sys::Function;
-use serde::Deserialize;
-use crate::query::{Query, ResolvedQuery};
-
-#[derive(Deserialize)]
-pub struct ProjectionConfig {
-    pub query: Query,
-    pub fields: Option<Vec<String>>,
-}
+use crate::query::ResolvedQuery;
 
 pub struct Projection {
     pub id: u32,

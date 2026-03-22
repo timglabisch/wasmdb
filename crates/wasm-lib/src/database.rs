@@ -3,8 +3,8 @@ use crate::buffer::{read_u16_le, read_str};
 use crate::schema::Schema;
 use crate::diff_log::DiffLog;
 use crate::view::MaterializedView;
-use crate::projection::{ProjectionConfig, ProjectionManager};
-use crate::query::{new_row, ResolvedQuery, Row};
+use crate::projection::ProjectionManager;
+use crate::query::{new_row, Query, ResolvedQuery, Row};
 
 pub struct Database {
     pub schema: Schema,
@@ -68,9 +68,9 @@ impl Database {
         }
     }
 
-    pub fn register_projection(&mut self, config: ProjectionConfig, callback: Function) -> u32 {
-        let resolved_query = ResolvedQuery::resolve(&config.query, &self.schema.field_ids, &self.schema.table_name_to_id);
-        let resolved_fields = config.fields.map(|fields| {
+    pub fn register_projection(&mut self, query: Query, fields: Option<Vec<String>>, callback: Function) -> u32 {
+        let resolved_query = ResolvedQuery::resolve(&query, &self.schema.field_ids, &self.schema.table_name_to_id);
+        let resolved_fields = fields.map(|fields| {
             fields.iter()
                 .map(|f| self.schema.field_ids.get(f.as_str()).copied().unwrap_or(u16::MAX))
                 .collect::<Vec<_>>()

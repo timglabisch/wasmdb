@@ -163,8 +163,6 @@ export class WasmDb {
       ? [...config.fields]
       : [...config.table.fieldNames, "_id"];
 
-    const wasmConfig = { query: wrappedQuery, fields };
-
     const prefix = config.table.tableId + ":";
     const callback = (diffs: ProjectionChange[]) => {
       for (const d of diffs) {
@@ -183,7 +181,7 @@ export class WasmDb {
       onChanged({ ...data } as ProjectionData<Pick<WithId<T>, F>>);
     };
 
-    return wasmRegisterProjection(wasmConfig, callback);
+    return wasmRegisterProjection(wrappedQuery, fields, callback);
   }
 
   unregisterProjection(id: number): void {
