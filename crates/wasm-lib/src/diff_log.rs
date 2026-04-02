@@ -1,5 +1,11 @@
 use std::collections::VecDeque;
+use fnv::FnvHashMap;
 use crate::query::Row;
+
+#[inline]
+pub fn tf_key(table_id: u16, field_id: u16) -> u32 {
+    (table_id as u32) << 16 | field_id as u32
+}
 
 pub struct DiffEntry {
     pub tx_id: u64,
@@ -12,7 +18,8 @@ pub struct DiffEntry {
 
 pub struct DiffLog {
     diffs: VecDeque<DiffEntry>,
-    start_id: u64, // global ID of diffs[0]; position of diff at index i = start_id + i
+    start_id: u64,
+    field_counts: FnvHashMap<u32, u32>,
 }
 
 impl DiffLog {
@@ -20,7 +27,33 @@ impl DiffLog {
         Self {
             diffs: VecDeque::new(),
             start_id: 0,
+            field_counts: FnvHashMap::default(),
         }
+    }
+
+    fn increment(&mut self, table_id: u16, field_id: u16) {
+        *self.field_counts.entry(tf_key(table_id, field_id)).or_default() += 1;
+    }
+
+    fn decrement(&mut self, table_id: u16, field_id: u16) {
+        let key = tf_key(table_id, field_id);
+        if let Some(count) = self.field_counts.get_mut(&key) {
+            *count -= 1;
+            if *count == 0 {
+                self.field_counts.remove(&key);
+            }
+        }
+    }
+
+    fn rebuild_field_counts(&mut self) {
+        self.field_counts.clear();
+        for d in &self.diffs {
+            *self.field_counts.entry(tf_key(d.table_id, d.field_id)).or_default() += 1;
+        }
+    }
+
+    pub fn has_changes(&self, key: u32) -> bool {
+        self.field_counts.contains_key(&key)
     }
 
     pub fn next_id(&self) -> u64 {
@@ -35,6 +68,7 @@ impl DiffLog {
                     tx_id, table_id, row_id: row_id.to_string(),
                     field_id, value: old_val.clone(), diff: -1,
                 });
+                self.increment(table_id, field_id);
             }
         }
         for (&field_id, new_val) in new {
@@ -43,6 +77,7 @@ impl DiffLog {
                     tx_id, table_id, row_id: row_id.to_string(),
                     field_id, value: new_val.clone(), diff: 1,
                 });
+                self.increment(table_id, field_id);
             }
         }
     }
@@ -61,15 +96,19 @@ impl DiffLog {
     }
 
     pub fn pop_back(&mut self) -> Option<DiffEntry> {
-        self.diffs.pop_back()
+        let entry = self.diffs.pop_back()?;
+        self.decrement(entry.table_id, entry.field_id);
+        Some(entry)
     }
 
     pub fn retain(&mut self, f: impl FnMut(&DiffEntry) -> bool) {
         self.diffs.retain(f);
+        self.rebuild_field_counts();
     }
 
     pub fn clear(&mut self) {
         self.diffs.clear();
+        self.field_counts.clear();
         self.start_id = 0;
     }
 }

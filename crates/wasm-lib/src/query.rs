@@ -62,6 +62,38 @@ impl Query {
         }
     }
 
+    pub fn extract_scope(&self) -> (Vec<u16>, Vec<u16>) {
+        let mut table_ids = Vec::new();
+        let mut field_ids = Vec::new();
+        self.collect_scope(&mut table_ids, &mut field_ids);
+        table_ids.sort_unstable();
+        table_ids.dedup();
+        field_ids.sort_unstable();
+        field_ids.dedup();
+        (table_ids, field_ids)
+    }
+
+    fn collect_scope(&self, table_ids: &mut Vec<u16>, field_ids: &mut Vec<u16>) {
+        match self {
+            Query::Term(pairs) => {
+                for &(fid, ref val) in pairs {
+                    if fid == FIELD_TABLE {
+                        if let Ok(tid) = val.parse::<u16>() {
+                            table_ids.push(tid);
+                        }
+                    } else if fid > FIELD_ID {
+                        field_ids.push(fid);
+                    }
+                }
+            }
+            Query::Bool { must, must_not } => {
+                for q in must.iter().chain(must_not.iter()) {
+                    q.collect_scope(table_ids, field_ids);
+                }
+            }
+        }
+    }
+
     pub fn matches(&self, row: &Row) -> bool {
         match self {
             Query::Term(pairs) => pairs.iter().all(|(id, v)| row.get(id) == Some(v)),

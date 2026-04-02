@@ -1,7 +1,7 @@
 use js_sys::Function;
 use crate::buffer::{read_u16_le, read_str};
 use crate::schema::Schema;
-use crate::diff_log::DiffLog;
+use crate::diff_log::{DiffLog, tf_key};
 use crate::view::MaterializedView;
 use crate::projection::ProjectionManager;
 use crate::query::{new_row, ProjectionQuery, Query, Row};
@@ -75,7 +75,23 @@ impl Database {
                 .map(|f| self.schema.field_ids.get(f.as_str()).copied().unwrap_or(u16::MAX))
                 .collect::<Vec<_>>()
         });
-        self.projection_manager.register(query, resolved_fields, callback)
+
+        let (table_ids, filter_field_ids) = query.extract_scope();
+        let mut relevant_keys = Vec::new();
+        for &tid in &table_ids {
+            for &fid in &filter_field_ids {
+                relevant_keys.push(tf_key(tid, fid));
+            }
+            if let Some(fids) = &resolved_fields {
+                for &fid in fids {
+                    relevant_keys.push(tf_key(tid, fid));
+                }
+            }
+        }
+        relevant_keys.sort_unstable();
+        relevant_keys.dedup();
+
+        self.projection_manager.register(query, resolved_fields, callback, relevant_keys)
     }
 
     pub fn unregister_projection(&mut self, id: u32) {
@@ -91,7 +107,12 @@ impl Database {
     }
 
     pub fn sync(&mut self) {
-        // TODO: projection evaluation
+        for proj in self.projection_manager.iter() {
+            if !proj.is_dirty(&self.diff_log) {
+                continue;
+            }
+            // TODO: evaluate projection against changed rows, invoke callback
+        }
     }
 
     pub fn begin_tx(&mut self) -> u64 {
