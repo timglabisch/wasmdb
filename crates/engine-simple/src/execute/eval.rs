@@ -123,88 +123,19 @@ fn cmp_cell(left: &CellValue, right: &CellValue, op: CmpOp) -> bool {
     }
 }
 
-/// Evaluate a join condition for a single (left_row, right_row) pair
-/// without materializing temporary columns.
-pub fn eval_join_condition(
-    left: &Columns,
-    right: &Columns,
-    l: usize,
-    r: usize,
-    on: &PlanFilterPredicate,
-) -> bool {
-    match on {
-        PlanFilterPredicate::None => true,
-        PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-            get_combined(left, right, l, r, *left_idx)
-                == get_combined(left, right, l, r, *right_idx)
-        }
-        PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-            get_combined(left, right, l, r, *left_idx)
-                != get_combined(left, right, l, r, *right_idx)
-        }
-        PlanFilterPredicate::Equals { column_idx, value } => {
-            let cell = get_combined(left, right, l, r, *column_idx);
-            cell == value_to_cell(value)
-        }
-        PlanFilterPredicate::And(a, b) => {
-            eval_join_condition(left, right, l, r, a)
-                && eval_join_condition(left, right, l, r, b)
-        }
-        PlanFilterPredicate::Or(a, b) => {
-            eval_join_condition(left, right, l, r, a)
-                || eval_join_condition(left, right, l, r, b)
-        }
-        // General fallback: build single-row Columns
-        other => {
-            let combined = build_single_row(left, right, l, r);
-            let mask = eval_predicate(&combined, other);
-            mask[0]
-        }
-    }
-}
-
-fn get_combined(
-    left: &Columns,
-    right: &Columns,
-    l: usize,
-    r: usize,
-    global_idx: usize,
-) -> CellValue {
-    if global_idx < left.len() {
-        left[global_idx][l].clone()
-    } else {
-        right[global_idx - left.len()][r].clone()
-    }
-}
-
-fn build_single_row(left: &Columns, right: &Columns, l: usize, r: usize) -> Columns {
-    let mut combined = Vec::with_capacity(left.len() + right.len());
-    for col in left {
-        combined.push(vec![col[l].clone()]);
-    }
-    for col in right {
-        combined.push(vec![col[r].clone()]);
-    }
-    combined
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_cols(data: Vec<Vec<CellValue>>) -> Columns {
-        data
-    }
-
     #[test]
     fn test_eval_equals_i64() {
-        let cols = make_cols(vec![vec![
+        let cols: Columns = vec![vec![
             CellValue::I64(1),
             CellValue::I64(2),
             CellValue::I64(3),
             CellValue::I64(2),
             CellValue::I64(5),
-        ]]);
+        ]];
         let pred = PlanFilterPredicate::Equals {
             column_idx: 0,
             value: Value::Int(2),
@@ -217,11 +148,11 @@ mod tests {
 
     #[test]
     fn test_eval_greater_than() {
-        let cols = make_cols(vec![vec![
+        let cols: Columns = vec![vec![
             CellValue::I64(1),
             CellValue::I64(5),
             CellValue::I64(3),
-        ]]);
+        ]];
         let pred = PlanFilterPredicate::GreaterThan {
             column_idx: 0,
             value: Value::Int(2),
@@ -231,35 +162,29 @@ mod tests {
 
     #[test]
     fn test_eval_is_null() {
-        let cols = make_cols(vec![vec![
+        let cols: Columns = vec![vec![
             CellValue::I64(1),
             CellValue::Null,
             CellValue::I64(3),
             CellValue::Null,
-        ]]);
+        ]];
         let pred = PlanFilterPredicate::IsNull { column_idx: 0 };
-        assert_eq!(
-            eval_predicate(&cols, &pred),
-            vec![false, true, false, true]
-        );
+        assert_eq!(eval_predicate(&cols, &pred), vec![false, true, false, true]);
 
         let pred = PlanFilterPredicate::IsNotNull { column_idx: 0 };
-        assert_eq!(
-            eval_predicate(&cols, &pred),
-            vec![true, false, true, false]
-        );
+        assert_eq!(eval_predicate(&cols, &pred), vec![true, false, true, false]);
     }
 
     #[test]
     fn test_eval_and() {
-        let cols = make_cols(vec![
+        let cols: Columns = vec![
             vec![CellValue::I64(1), CellValue::I64(5), CellValue::I64(3)],
             vec![
                 CellValue::Str("a".into()),
                 CellValue::Str("b".into()),
                 CellValue::Str("a".into()),
             ],
-        ]);
+        ];
         let pred = PlanFilterPredicate::And(
             Box::new(PlanFilterPredicate::GreaterThan {
                 column_idx: 0,
@@ -270,19 +195,16 @@ mod tests {
                 value: Value::Text("a".into()),
             }),
         );
-        // row0: 1>2=false AND "a"="a"=true → false
-        // row1: 5>2=true AND "b"="a"=false → false
-        // row2: 3>2=true AND "a"="a"=true → true
         assert_eq!(eval_predicate(&cols, &pred), vec![false, false, true]);
     }
 
     #[test]
     fn test_eval_or() {
-        let cols = make_cols(vec![vec![
+        let cols: Columns = vec![vec![
             CellValue::I64(1),
             CellValue::I64(5),
             CellValue::I64(3),
-        ]]);
+        ]];
         let pred = PlanFilterPredicate::Or(
             Box::new(PlanFilterPredicate::Equals {
                 column_idx: 0,
@@ -298,10 +220,10 @@ mod tests {
 
     #[test]
     fn test_eval_column_equals() {
-        let cols = make_cols(vec![
+        let cols: Columns = vec![
             vec![CellValue::I64(1), CellValue::I64(2), CellValue::I64(3)],
             vec![CellValue::I64(1), CellValue::I64(99), CellValue::I64(3)],
-        ]);
+        ];
         let pred = PlanFilterPredicate::ColumnEquals {
             left_idx: 0,
             right_idx: 1,
@@ -311,19 +233,17 @@ mod tests {
 
     #[test]
     fn test_null_comparison_returns_false() {
-        let cols = make_cols(vec![vec![
+        let cols: Columns = vec![vec![
             CellValue::I64(10),
             CellValue::Null,
             CellValue::I64(30),
-        ]]);
-        // NULL > 18 should be false (SQL semantics)
+        ]];
         let pred = PlanFilterPredicate::GreaterThan {
             column_idx: 0,
             value: Value::Int(18),
         };
         assert_eq!(eval_predicate(&cols, &pred), vec![false, false, true]);
 
-        // NULL = NULL should be false
         let pred = PlanFilterPredicate::Equals {
             column_idx: 0,
             value: Value::Null,
@@ -333,31 +253,10 @@ mod tests {
 
     #[test]
     fn test_eval_none_accepts_all() {
-        let cols = make_cols(vec![vec![
-            CellValue::I64(1),
-            CellValue::I64(2),
-        ]]);
+        let cols: Columns = vec![vec![CellValue::I64(1), CellValue::I64(2)]];
         assert_eq!(
             eval_predicate(&cols, &PlanFilterPredicate::None),
             vec![true, true]
         );
-    }
-
-    #[test]
-    fn test_join_condition_column_equals() {
-        let left = make_cols(vec![
-            vec![CellValue::I64(1), CellValue::I64(2)],
-        ]);
-        let right = make_cols(vec![
-            vec![CellValue::I64(2), CellValue::I64(3)],
-        ]);
-        let on = PlanFilterPredicate::ColumnEquals {
-            left_idx: 0,
-            right_idx: 1,
-        };
-        // left row 0 (val=1) vs right row 0 (val=2): 1 != 2 → false
-        assert!(!eval_join_condition(&left, &right, 0, 0, &on));
-        // left row 1 (val=2) vs right row 0 (val=2): 2 == 2 → true
-        assert!(eval_join_condition(&left, &right, 1, 0, &on));
     }
 }

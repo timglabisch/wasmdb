@@ -1,5 +1,9 @@
+pub mod aggregate;
 pub mod eval;
-pub mod operators;
+pub mod filter;
+pub mod join;
+pub mod project;
+pub mod scan;
 
 use std::collections::HashMap;
 
@@ -49,9 +53,9 @@ pub fn execute(
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-        let mut cols = operators::scan(table);
+        let mut cols = scan::scan(table);
         if !matches!(source.pre_filter, PlanFilterPredicate::None) {
-            cols = operators::filter(&cols, &source.pre_filter);
+            cols = filter::filter(&cols, &source.pre_filter);
         }
         scanned.push(cols);
     }
@@ -65,10 +69,10 @@ pub fn execute(
         match join {
             Some(join) => {
                 current =
-                    operators::nested_loop_join(&current, right, &join.on, join.join_type);
+                    join::nested_loop_join(&current, right, &join.on, join.join_type);
             }
             None => {
-                current = operators::nested_loop_join(
+                current = join::nested_loop_join(
                     &current,
                     right,
                     &PlanFilterPredicate::None,
@@ -80,17 +84,17 @@ pub fn execute(
 
     // Phase 3: Remaining WHERE filter
     if !matches!(plan.filter, PlanFilterPredicate::None) {
-        current = operators::filter(&current, &plan.filter);
+        current = filter::filter(&current, &plan.filter);
     }
 
     // Phase 4: Aggregate (if GROUP BY)
     if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
-        current = operators::aggregate(&current, &plan.group_by, &plan.aggregates);
+        current = aggregate::aggregate(&current, &plan.group_by, &plan.aggregates);
     }
 
     // Phase 5: Project
     let has_aggregates = !plan.aggregates.is_empty();
-    current = operators::project(&current, &plan.result_columns, &plan.group_by, has_aggregates);
+    current = project::project(&current, &plan.result_columns, &plan.group_by, has_aggregates);
 
     Ok(current)
 }
