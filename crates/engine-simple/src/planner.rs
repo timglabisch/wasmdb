@@ -1,8 +1,10 @@
+pub mod plan;
+
 use std::collections::HashMap;
 
-use crate::ast;
-use crate::plan::*;
-use crate::schema::Schema;
+use query_engine::ast;
+use query_engine::schema::Schema;
+use plan::*;
 
 #[derive(Debug)]
 pub enum PlanError {
@@ -258,8 +260,8 @@ fn plan_result_column(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
-    use crate::schema::ColumnDef;
+    use query_engine::ast::*;
+    use query_engine::schema::ColumnDef;
 
     fn users_schema() -> Schema {
         Schema::new(vec![

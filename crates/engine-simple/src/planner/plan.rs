@@ -1,5 +1,5 @@
-use crate::ast::{AggFunc, JoinType, Value};
-use crate::schema::Schema;
+use query_engine::ast::{AggFunc, JoinType, Value};
+use query_engine::schema::Schema;
 
 #[derive(Debug, Clone)]
 pub enum PlanFilterPredicate {
