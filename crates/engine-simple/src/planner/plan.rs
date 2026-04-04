@@ -1,36 +1,31 @@
 use query_engine::ast::{AggFunc, JoinType, Value};
 use query_engine::schema::Schema;
 
+/// Reference to a column: (source table index, column index within that table).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ColumnRef {
+    pub source: usize,
+    pub col: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum PlanFilterPredicate {
-    /// column == value
-    Equals { column_idx: usize, value: Value },
-    /// column != value
-    NotEquals { column_idx: usize, value: Value },
-    /// column > value
-    GreaterThan { column_idx: usize, value: Value },
-    /// column >= value
-    GreaterThanOrEqual { column_idx: usize, value: Value },
-    /// column < value
-    LessThan { column_idx: usize, value: Value },
-    /// column <= value
-    LessThanOrEqual { column_idx: usize, value: Value },
+    Equals { col: ColumnRef, value: Value },
+    NotEquals { col: ColumnRef, value: Value },
+    GreaterThan { col: ColumnRef, value: Value },
+    GreaterThanOrEqual { col: ColumnRef, value: Value },
+    LessThan { col: ColumnRef, value: Value },
+    LessThanOrEqual { col: ColumnRef, value: Value },
 
-    /// left_column == right_column
-    ColumnEquals { left_idx: usize, right_idx: usize },
-    /// left_column != right_column
-    ColumnNotEquals { left_idx: usize, right_idx: usize },
-    /// left_column > right_column
-    ColumnGreaterThan { left_idx: usize, right_idx: usize },
-    /// left_column >= right_column
-    ColumnGreaterThanOrEqual { left_idx: usize, right_idx: usize },
-    /// left_column < right_column
-    ColumnLessThan { left_idx: usize, right_idx: usize },
-    /// left_column <= right_column
-    ColumnLessThanOrEqual { left_idx: usize, right_idx: usize },
+    ColumnEquals { left: ColumnRef, right: ColumnRef },
+    ColumnNotEquals { left: ColumnRef, right: ColumnRef },
+    ColumnGreaterThan { left: ColumnRef, right: ColumnRef },
+    ColumnGreaterThanOrEqual { left: ColumnRef, right: ColumnRef },
+    ColumnLessThan { left: ColumnRef, right: ColumnRef },
+    ColumnLessThanOrEqual { left: ColumnRef, right: ColumnRef },
 
-    IsNull { column_idx: usize },
-    IsNotNull { column_idx: usize },
+    IsNull { col: ColumnRef },
+    IsNotNull { col: ColumnRef },
 
     And(Box<PlanFilterPredicate>, Box<PlanFilterPredicate>),
     Or(Box<PlanFilterPredicate>, Box<PlanFilterPredicate>),
@@ -43,11 +38,9 @@ pub enum PlanFilterPredicate {
 pub struct PlanSelect {
     pub sources: Vec<PlanSourceEntry>,
     pub filter: PlanFilterPredicate,
-    pub group_by: Vec<usize>,
+    pub group_by: Vec<ColumnRef>,
     pub aggregates: Vec<PlanAggregate>,
     pub result_columns: Vec<PlanResultColumn>,
-    /// Combined schema of all sources.
-    pub schema: Schema,
 }
 
 #[derive(Debug, Clone)]
@@ -67,18 +60,18 @@ pub struct PlanJoin {
 #[derive(Debug, Clone)]
 pub struct PlanAggregate {
     pub func: AggFunc,
-    pub column_idx: usize,
+    pub col: ColumnRef,
 }
 
 #[derive(Debug, Clone)]
 pub enum PlanResultColumn {
     Column {
-        column_idx: usize,
+        col: ColumnRef,
         alias: Option<String>,
     },
     Aggregate {
         func: AggFunc,
-        column_idx: usize,
+        col: ColumnRef,
         alias: Option<String>,
     },
 }

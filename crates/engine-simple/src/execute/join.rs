@@ -5,17 +5,14 @@ use query_engine::ast::JoinType;
 use super::eval;
 use super::RowSet;
 
-/// Join a RowSet with a new table, producing an extended RowSet.
-/// No data is copied — only row_id pairs are recorded.
 pub fn nested_loop_join<'a>(
     left: &RowSet<'a>,
     right_table: &'a Table,
     right_row_ids: &[usize],
+    right_source: usize,
     on: &PlanFilterPredicate,
     join_type: JoinType,
 ) -> RowSet<'a> {
-    let right_col_offset = left.num_cols;
-    let right_num_cols = right_table.columns.len();
     let num_existing = left.tables.len();
 
     let mut new_row_ids: Vec<Vec<usize>> =
@@ -24,7 +21,7 @@ pub fn nested_loop_join<'a>(
     for l in 0..left.num_rows {
         let mut matched = false;
         for &r in right_row_ids {
-            if eval::eval_join_row(on, left, right_table, right_col_offset, l, r) {
+            if eval::eval_join_row(on, left, right_table, right_source, l, r) {
                 matched = true;
                 for ti in 0..num_existing {
                     new_row_ids[ti].push(left.row_ids[ti][l]);
@@ -43,13 +40,9 @@ pub fn nested_loop_join<'a>(
     let num_rows = new_row_ids.first().map_or(0, |v| v.len());
     let mut tables = left.tables.clone();
     tables.push(right_table);
-    let mut col_offsets = left.col_offsets.clone();
-    col_offsets.push(right_col_offset);
 
     RowSet {
         tables,
-        col_offsets,
-        num_cols: left.num_cols + right_num_cols,
         row_ids: new_row_ids,
         num_rows,
     }
@@ -59,6 +52,7 @@ pub fn nested_loop_join<'a>(
 mod tests {
     use super::*;
     use crate::execute::scan::scan_row_ids;
+    use crate::planner::plan::ColumnRef;
     use crate::storage::CellValue;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
@@ -98,6 +92,10 @@ mod tests {
         t
     }
 
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
+
     #[test]
     fn test_inner_join() {
         let ut = make_users_table();
@@ -109,15 +107,15 @@ mod tests {
             &left,
             &ot,
             &right_ids,
-            &PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 4 },
+            1, // orders is source 1
+            &PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
             JoinType::Inner,
         );
 
         assert_eq!(result.num_rows, 3);
-        assert_eq!(result.num_cols, 6);
-        assert_eq!(result.get(0, 1), CellValue::Str("Alice".into()));
-        assert_eq!(result.get(1, 1), CellValue::Str("Alice".into()));
-        assert_eq!(result.get(2, 1), CellValue::Str("Bob".into()));
+        assert_eq!(result.get(0, c(0, 1)), CellValue::Str("Alice".into()));
+        assert_eq!(result.get(1, c(0, 1)), CellValue::Str("Alice".into()));
+        assert_eq!(result.get(2, c(0, 1)), CellValue::Str("Bob".into()));
     }
 
     #[test]
@@ -131,17 +129,17 @@ mod tests {
             &left,
             &ot,
             &right_ids,
-            &PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 4 },
+            1,
+            &PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
             JoinType::Left,
         );
 
         assert_eq!(result.num_rows, 4);
-        assert_eq!(result.get(3, 1), CellValue::Str("Carol".into()));
-        // Right side column 3 (orders.id): matched rows have values, unmatched is Null
-        assert_eq!(result.get(0, 3), CellValue::I64(10));
-        assert_eq!(result.get(1, 3), CellValue::I64(11));
-        assert_eq!(result.get(2, 3), CellValue::I64(12));
-        assert_eq!(result.get(3, 3), CellValue::Null);
+        assert_eq!(result.get(3, c(0, 1)), CellValue::Str("Carol".into()));
+        assert_eq!(result.get(0, c(1, 0)), CellValue::I64(10));
+        assert_eq!(result.get(1, c(1, 0)), CellValue::I64(11));
+        assert_eq!(result.get(2, c(1, 0)), CellValue::I64(12));
+        assert_eq!(result.get(3, c(1, 0)), CellValue::Null);
     }
 
     #[test]
@@ -151,14 +149,16 @@ mod tests {
         let left = RowSet::from_scan(&ut, scan_row_ids(&ut));
         let right_ids = scan_row_ids(&ot);
 
-        let on = PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 4 };
-        let result = nested_loop_join(&left, &ot, &right_ids, &on, JoinType::Inner);
+        let result = nested_loop_join(
+            &left, &ot, &right_ids, 1,
+            &PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
+            JoinType::Inner,
+        );
 
-        // users.id=1 matches orders.user_id=1 twice, users.id=2 matches once
         assert_eq!(result.num_rows, 3);
-        assert_eq!(result.get(0, 0), CellValue::I64(1)); // users.id
-        assert_eq!(result.get(0, 4), CellValue::I64(1)); // orders.user_id
-        assert_eq!(result.get(2, 0), CellValue::I64(2)); // users.id
-        assert_eq!(result.get(2, 4), CellValue::I64(2)); // orders.user_id
+        assert_eq!(result.get(0, c(0, 0)), CellValue::I64(1));
+        assert_eq!(result.get(0, c(1, 1)), CellValue::I64(1));
+        assert_eq!(result.get(2, c(0, 0)), CellValue::I64(2));
+        assert_eq!(result.get(2, c(1, 1)), CellValue::I64(2));
     }
 }

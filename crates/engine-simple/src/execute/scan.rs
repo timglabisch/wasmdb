@@ -13,12 +13,10 @@ pub fn scan<'a>(table: &'a Table, pre_filter: &PlanFilterPredicate) -> RowSet<'a
     RowSet::from_scan(table, row_ids)
 }
 
-/// Return live (non-deleted) row IDs without materializing any data.
 pub fn scan_row_ids(table: &Table) -> Vec<usize> {
     table.row_ids().collect()
 }
 
-/// Scan + filter: collect live row IDs, then evaluate predicate.
 pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
     let row_ids = scan_row_ids(table);
     pred.eval_table(table, &row_ids)
@@ -27,9 +25,14 @@ pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planner::plan::ColumnRef;
     use crate::storage::CellValue;
     use query_engine::ast::Value;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
+
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
 
     fn make_users_table() -> Table {
         let schema = TableSchema {
@@ -62,7 +65,7 @@ mod tests {
         let table = make_users_table();
         let row_ids = scan_filtered(
             &table,
-            &PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(2) },
+            &PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) },
         );
         assert_eq!(row_ids, vec![1]);
     }
@@ -72,9 +75,9 @@ mod tests {
         let table = make_users_table();
         let row_ids = scan_filtered(
             &table,
-            &PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(28) },
+            &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
         );
-        assert_eq!(row_ids, vec![0, 2]); // Alice(30), Carol(35)
+        assert_eq!(row_ids, vec![0, 2]);
     }
 
     #[test]
@@ -83,9 +86,9 @@ mod tests {
         table.delete(0).unwrap();
         let row_ids = scan_filtered(
             &table,
-            &PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(28) },
+            &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
         );
-        assert_eq!(row_ids, vec![2]); // only Carol
+        assert_eq!(row_ids, vec![2]);
     }
 
     #[test]
@@ -94,19 +97,19 @@ mod tests {
         let row_ids = scan_filtered(
             &table,
             &PlanFilterPredicate::And(
-                Box::new(PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(24) }),
-                Box::new(PlanFilterPredicate::LessThan { column_idx: 2, value: Value::Int(32) }),
+                Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(24) }),
+                Box::new(PlanFilterPredicate::LessThan { col: c(0, 2), value: Value::Int(32) }),
             ),
         );
-        assert_eq!(row_ids, vec![0, 1]); // Alice(30), Bob(25)
+        assert_eq!(row_ids, vec![0, 1]);
     }
 
     #[test]
     fn test_scan_returns_rowset() {
         let table = make_users_table();
-        let rs = scan(&table, &PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(28) });
+        let rs = scan(&table, &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) });
         assert_eq!(rs.num_rows, 2);
-        assert_eq!(rs.get(0, 1), CellValue::Str("Alice".into()));
-        assert_eq!(rs.get(1, 1), CellValue::Str("Carol".into()));
+        assert_eq!(rs.get(0, c(0, 1)), CellValue::Str("Alice".into()));
+        assert_eq!(rs.get(1, c(0, 1)), CellValue::Str("Carol".into()));
     }
 }

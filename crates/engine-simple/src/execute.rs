@@ -20,9 +20,7 @@ pub const NULL_ROW: usize = usize::MAX;
 /// No data is copied — cell access goes through row_id indirection.
 pub struct RowSet<'a> {
     pub tables: Vec<&'a Table>,
-    pub col_offsets: Vec<usize>,
-    pub num_cols: usize,
-    /// `row_ids[table_idx][output_row]` = physical row in that table.
+    /// `row_ids[source][output_row]` = physical row in that table.
     /// [`NULL_ROW`] means null fill (left join, no match).
     pub row_ids: Vec<Vec<usize>>,
     pub num_rows: usize,
@@ -31,33 +29,20 @@ pub struct RowSet<'a> {
 impl<'a> RowSet<'a> {
     pub fn from_scan(table: &'a Table, row_ids: Vec<usize>) -> Self {
         let num_rows = row_ids.len();
-        let num_cols = table.columns.len();
         RowSet {
             tables: vec![table],
-            col_offsets: vec![0],
-            num_cols,
             row_ids: vec![row_ids],
             num_rows,
         }
     }
 
-    pub fn get(&self, row: usize, global_col: usize) -> CellValue {
-        let (table_idx, local_col) = self.resolve_col(global_col);
-        let row_id = self.row_ids[table_idx][row];
+    pub fn get(&self, row: usize, col: ColumnRef) -> CellValue {
+        let row_id = self.row_ids[col.source][row];
         if row_id == NULL_ROW {
             CellValue::Null
         } else {
-            self.tables[table_idx].get(row_id, local_col)
+            self.tables[col.source].get(row_id, col.col)
         }
-    }
-
-    fn resolve_col(&self, global_col: usize) -> (usize, usize) {
-        for i in (0..self.col_offsets.len()).rev() {
-            if global_col >= self.col_offsets[i] {
-                return (i, global_col - self.col_offsets[i]);
-            }
-        }
-        unreachable!()
     }
 
     pub fn filter(&self, pred: &PlanFilterPredicate) -> RowSet<'a> {
@@ -74,8 +59,6 @@ impl<'a> RowSet<'a> {
         }
         RowSet {
             tables: self.tables.clone(),
-            col_offsets: self.col_offsets.clone(),
-            num_cols: self.num_cols,
             row_ids: new_row_ids,
             num_rows: count,
         }
@@ -119,7 +102,7 @@ pub fn execute(
     let mut rs = scan::scan(first_table, &first.pre_filter);
 
     // Phase 2: Join remaining sources (each extends the RowSet).
-    for source in plan.sources.iter().skip(1) {
+    for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
@@ -130,6 +113,7 @@ pub fn execute(
                     &rs,
                     right.tables[0],
                     &right.row_ids[0],
+                    source_idx,
                     &j.on,
                     j.join_type,
                 );
@@ -139,6 +123,7 @@ pub fn execute(
                     &rs,
                     right.tables[0],
                     &right.row_ids[0],
+                    source_idx,
                     &PlanFilterPredicate::None,
                     query_engine::ast::JoinType::Inner,
                 );
@@ -175,6 +160,10 @@ mod tests {
     use query_engine::ast::*;
     use query_engine::schema::{ColumnDef, Schema};
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
+
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
 
     fn make_users_table() -> Table {
         let schema = TableSchema {
@@ -237,7 +226,6 @@ mod tests {
 
     #[test]
     fn test_execute_scan_filter_project() {
-        // SELECT users.name, users.age FROM users WHERE users.age > 28
         let db = make_db();
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
@@ -247,30 +235,27 @@ mod tests {
                 pre_filter: PlanFilterPredicate::None,
             }],
             filter: PlanFilterPredicate::GreaterThan {
-                column_idx: 2,
+                col: c(0, 2),
                 value: Value::Int(28),
             },
             group_by: vec![],
             aggregates: vec![],
             result_columns: vec![
-                PlanResultColumn::Column { column_idx: 1, alias: None },
-                PlanResultColumn::Column { column_idx: 2, alias: None },
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
+                PlanResultColumn::Column { col: c(0, 2), alias: None },
             ],
-            schema: users_query_schema(),
         };
 
         let result = execute(&plan, &db).unwrap();
-        assert_eq!(result.len(), 2); // 2 output columns
-        assert_eq!(result[0].len(), 2); // Alice(30), Carol(35)
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].len(), 2);
         assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
         assert_eq!(result[1], vec![CellValue::I64(30), CellValue::I64(35)]);
     }
 
     #[test]
     fn test_execute_join() {
-        // SELECT users.name, orders.amount FROM users JOIN orders ON users.id = orders.user_id
         let db = make_db();
-        let combined = Schema::merge(&users_query_schema(), &orders_query_schema());
         let plan = PlanSelect {
             sources: vec![
                 PlanSourceEntry {
@@ -285,8 +270,8 @@ mod tests {
                     join: Some(PlanJoin {
                         join_type: JoinType::Inner,
                         on: PlanFilterPredicate::ColumnEquals {
-                            left_idx: 0,  // users.id
-                            right_idx: 4, // orders.user_id
+                            left: c(0, 0),  // users.id
+                            right: c(1, 1), // orders.user_id
                         },
                     }),
                     pre_filter: PlanFilterPredicate::None,
@@ -296,14 +281,13 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             result_columns: vec![
-                PlanResultColumn::Column { column_idx: 1, alias: None }, // users.name
-                PlanResultColumn::Column { column_idx: 5, alias: None }, // orders.amount
+                PlanResultColumn::Column { col: c(0, 1), alias: None }, // users.name
+                PlanResultColumn::Column { col: c(1, 2), alias: None }, // orders.amount
             ],
-            schema: combined,
         };
 
         let result = execute(&plan, &db).unwrap();
-        assert_eq!(result[0].len(), 3); // Alice×2, Bob×1
+        assert_eq!(result[0].len(), 3);
         assert_eq!(result[0], vec![
             CellValue::Str("Alice".into()),
             CellValue::Str("Alice".into()),
@@ -318,7 +302,6 @@ mod tests {
 
     #[test]
     fn test_execute_aggregate() {
-        // SELECT users.name, MIN(users.age) FROM users GROUP BY users.name
         let db = make_db();
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
@@ -328,26 +311,24 @@ mod tests {
                 pre_filter: PlanFilterPredicate::None,
             }],
             filter: PlanFilterPredicate::None,
-            group_by: vec![1], // users.name
+            group_by: vec![c(0, 1)], // users.name
             aggregates: vec![PlanAggregate {
                 func: AggFunc::Min,
-                column_idx: 2, // users.age
+                col: c(0, 2), // users.age
             }],
             result_columns: vec![
-                PlanResultColumn::Column { column_idx: 1, alias: None },
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Aggregate {
                     func: AggFunc::Min,
-                    column_idx: 2,
+                    col: c(0, 2),
                     alias: Some("min_age".into()),
                 },
             ],
-            schema: users_query_schema(),
         };
 
         let result = execute(&plan, &db).unwrap();
-        assert_eq!(result.len(), 2); // name + min_age
-        assert_eq!(result[0].len(), 3); // 3 unique names
-        // Each user is their own group (unique names)
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].len(), 3);
         assert_eq!(result[0][0], CellValue::Str("Alice".into()));
         assert_eq!(result[1][0], CellValue::I64(30));
     }
@@ -366,7 +347,6 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             result_columns: vec![],
-            schema: Schema::new(vec![]),
         };
 
         let err = execute(&plan, &db).unwrap_err();

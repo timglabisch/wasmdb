@@ -6,17 +6,16 @@ use query_engine::ast::AggFunc;
 
 use super::Columns;
 
-/// Aggregate directly from a RowSet without materializing intermediate columns.
 pub fn aggregate_rowset(
     rs: &super::RowSet,
-    group_by: &[usize],
+    group_by: &[crate::planner::plan::ColumnRef],
     aggregates: &[PlanAggregate],
 ) -> Columns {
     let mut groups: HashMap<Vec<CellValue>, Vec<Accumulator>> = HashMap::new();
     let mut group_order: Vec<Vec<CellValue>> = Vec::new();
 
     for row in 0..rs.num_rows {
-        let key: Vec<CellValue> = group_by.iter().map(|&ci| rs.get(row, ci)).collect();
+        let key: Vec<CellValue> = group_by.iter().map(|&cr| rs.get(row, cr)).collect();
 
         let accums = groups.entry(key.clone()).or_insert_with(|| {
             group_order.push(key.clone());
@@ -24,7 +23,7 @@ pub fn aggregate_rowset(
         });
 
         for (ai, agg) in aggregates.iter().enumerate() {
-            accums[ai].feed(&rs.get(row, agg.column_idx));
+            accums[ai].feed(&rs.get(row, agg.col));
         }
     }
 
@@ -77,25 +76,13 @@ impl Accumulator {
             AggFunc::Min => {
                 self.min = Some(match &self.min {
                     None => val.clone(),
-                    Some(cur) => {
-                        if val < cur {
-                            val.clone()
-                        } else {
-                            cur.clone()
-                        }
-                    }
+                    Some(cur) => if val < cur { val.clone() } else { cur.clone() },
                 });
             }
             AggFunc::Max => {
                 self.max = Some(match &self.max {
                     None => val.clone(),
-                    Some(cur) => {
-                        if val > cur {
-                            val.clone()
-                        } else {
-                            cur.clone()
-                        }
-                    }
+                    Some(cur) => if val > cur { val.clone() } else { cur.clone() },
                 });
             }
         }
@@ -118,8 +105,13 @@ impl Accumulator {
 mod tests {
     use super::*;
     use crate::execute::RowSet;
+    use crate::planner::plan::ColumnRef;
     use crate::storage::Table;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
+
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
 
     fn make_test_table() -> Table {
         let schema = TableSchema {
@@ -144,12 +136,12 @@ mod tests {
 
         let result = aggregate_rowset(
             &rs,
-            &[0],
+            &[c(0, 0)],
             &[
-                PlanAggregate { func: AggFunc::Count, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Sum, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Min, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Max, column_idx: 1 },
+                PlanAggregate { func: AggFunc::Count, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Sum, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Min, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Max, col: c(0, 1) },
             ],
         );
 
@@ -176,22 +168,20 @@ mod tests {
 
         let result = aggregate_rowset(
             &rs,
-            &[0],
+            &[c(0, 0)],
             &[
-                PlanAggregate { func: AggFunc::Count, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Sum, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Min, column_idx: 1 },
-                PlanAggregate { func: AggFunc::Max, column_idx: 1 },
+                PlanAggregate { func: AggFunc::Count, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Sum, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Min, col: c(0, 1) },
+                PlanAggregate { func: AggFunc::Max, col: c(0, 1) },
             ],
         );
 
-        // Group A: values [10, NULL] → COUNT=1 (skip NULL), SUM=10, MIN=10, MAX=10
         assert_eq!(result[1][0], CellValue::I64(1));
         assert_eq!(result[2][0], CellValue::I64(10));
         assert_eq!(result[3][0], CellValue::I64(10));
         assert_eq!(result[4][0], CellValue::I64(10));
 
-        // Group B: values [NULL] → COUNT=0, SUM=NULL, MIN=NULL, MAX=NULL
         assert_eq!(result[1][1], CellValue::I64(0));
         assert_eq!(result[2][1], CellValue::Null);
         assert_eq!(result[3][1], CellValue::Null);

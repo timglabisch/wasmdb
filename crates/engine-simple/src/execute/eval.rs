@@ -1,4 +1,4 @@
-use crate::planner::plan::PlanFilterPredicate;
+use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::{CellValue, Table, TypedColumn};
 use query_engine::ast::Value;
 
@@ -33,7 +33,7 @@ fn normalize_value<'a>(v: &'a Value) -> NormalizedValue<'a> {
 
 impl PlanFilterPredicate {
     /// Evaluate predicate on Table storage, returning matching row IDs.
-    /// For And: short-circuit — right side only evaluates survivors of left.
+    /// Column refs use .col (local index within the table).
     pub fn eval_table(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::None => row_ids.to_vec(),
@@ -48,67 +48,109 @@ impl PlanFilterPredicate {
                 sorted_union(&left_ids, &right_ids)
             }
 
-            // Leaf predicates: directly produce matching row_ids (no Vec<bool> intermediate)
             _ => self.eval_leaf_filtered(table, row_ids),
         }
     }
 
-
-    /// Directly produce matching row_ids for leaf predicates (gather path, no Vec<bool> intermediate).
     fn eval_leaf_filtered(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
-            PlanFilterPredicate::Equals { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Eq)
+            PlanFilterPredicate::Equals { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Eq)
             }
-            PlanFilterPredicate::NotEquals { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Neq)
+            PlanFilterPredicate::NotEquals { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Neq)
             }
-            PlanFilterPredicate::GreaterThan { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gt)
+            PlanFilterPredicate::GreaterThan { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Gt)
             }
-            PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gte)
+            PlanFilterPredicate::GreaterThanOrEqual { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Gte)
             }
-            PlanFilterPredicate::LessThan { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lt)
+            PlanFilterPredicate::LessThan { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Lt)
             }
-            PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
-                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lte)
+            PlanFilterPredicate::LessThanOrEqual { col, value } => {
+                filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Lte)
             }
-            PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Eq)
+            PlanFilterPredicate::ColumnEquals { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Eq)
             }
-            PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Neq)
+            PlanFilterPredicate::ColumnNotEquals { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Neq)
             }
-            PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gt)
+            PlanFilterPredicate::ColumnGreaterThan { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Gt)
             }
-            PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gte)
+            PlanFilterPredicate::ColumnGreaterThanOrEqual { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Gte)
             }
-            PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lt)
+            PlanFilterPredicate::ColumnLessThan { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Lt)
             }
-            PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
-                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lte)
+            PlanFilterPredicate::ColumnLessThanOrEqual { left, right } => {
+                filter_typed_col_col(&table.columns[left.col], &table.columns[right.col], row_ids, CmpOp::Lte)
             }
-            PlanFilterPredicate::IsNull { column_idx } => {
-                filter_typed_is_null(&table.columns[*column_idx], row_ids, true)
+            PlanFilterPredicate::IsNull { col } => {
+                filter_typed_is_null(&table.columns[col.col], row_ids, true)
             }
-            PlanFilterPredicate::IsNotNull { column_idx } => {
-                filter_typed_is_null(&table.columns[*column_idx], row_ids, false)
+            PlanFilterPredicate::IsNotNull { col } => {
+                filter_typed_is_null(&table.columns[col.col], row_ids, false)
             }
             _ => unreachable!(),
         }
     }
+}
 
+// --- Generic predicate evaluation on a cell accessor (no materialization) ---
 
+/// Evaluate a predicate using a closure that resolves ColumnRef → CellValue.
+pub fn eval_pred_row<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
+    match pred {
+        PlanFilterPredicate::None => true,
+        PlanFilterPredicate::Equals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Eq),
+        PlanFilterPredicate::NotEquals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Neq),
+        PlanFilterPredicate::GreaterThan { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Gt),
+        PlanFilterPredicate::GreaterThanOrEqual { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Gte),
+        PlanFilterPredicate::LessThan { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Lt),
+        PlanFilterPredicate::LessThanOrEqual { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Lte),
+        PlanFilterPredicate::ColumnEquals { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Eq),
+        PlanFilterPredicate::ColumnNotEquals { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Neq),
+        PlanFilterPredicate::ColumnGreaterThan { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Gt),
+        PlanFilterPredicate::ColumnGreaterThanOrEqual { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Gte),
+        PlanFilterPredicate::ColumnLessThan { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Lt),
+        PlanFilterPredicate::ColumnLessThanOrEqual { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Lte),
+        PlanFilterPredicate::IsNull { col } => matches!(get(*col), CellValue::Null),
+        PlanFilterPredicate::IsNotNull { col } => !matches!(get(*col), CellValue::Null),
+        PlanFilterPredicate::And(a, b) => eval_pred_row(a, get) && eval_pred_row(b, get),
+        PlanFilterPredicate::Or(a, b) => eval_pred_row(a, get) || eval_pred_row(b, get),
+    }
+}
+
+/// Evaluate predicate on a single RowSet row.
+pub fn eval_rowset_row(pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
+    eval_pred_row(pred, &|col| rs.get(row, col))
+}
+
+/// Evaluate join predicate: left columns from RowSet, right columns from Table.
+pub fn eval_join_row(
+    pred: &PlanFilterPredicate,
+    left: &super::RowSet,
+    right_table: &Table,
+    right_source: usize,
+    l: usize,
+    r: usize,
+) -> bool {
+    eval_pred_row(pred, &|col| {
+        if col.source < right_source {
+            left.get(l, col)
+        } else {
+            right_table.get(r, col.col)
+        }
+    })
 }
 
 // --- Typed helpers for eval_table: directly produce Vec<usize> (no Vec<bool> intermediate) ---
 
-/// Filter row_ids by comparing a TypedColumn against a literal Value.
 fn filter_typed_cmp(
     col: &TypedColumn,
     row_ids: &[usize],
@@ -138,7 +180,6 @@ fn filter_typed_cmp(
     }
 }
 
-/// Filter row_ids by comparing two TypedColumns.
 fn filter_typed_col_col(
     left: &TypedColumn,
     right: &TypedColumn,
@@ -174,7 +215,6 @@ fn filter_typed_col_col(
     }
 }
 
-/// Filter row_ids by IS NULL / IS NOT NULL.
 fn filter_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -> Vec<usize> {
     match col {
         TypedColumn::I64(_) | TypedColumn::Str(_) => {
@@ -213,8 +253,6 @@ fn cmp_str(left: &str, right: &str, op: CmpOp) -> bool {
     }
 }
 
-
-/// Merge two sorted, deduplicated slices into a sorted, deduplicated Vec.
 fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
     let mut result = Vec::with_capacity(a.len() + b.len());
     let (mut i, mut j) = (0, 0);
@@ -228,55 +266,6 @@ fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
     result.extend_from_slice(&a[i..]);
     result.extend_from_slice(&b[j..]);
     result
-}
-
-// --- Generic predicate evaluation on a cell accessor (no materialization) ---
-
-/// Evaluate a predicate using a closure that resolves column index → CellValue.
-/// Used by both RowSet filter and join evaluation.
-pub fn eval_pred_row<F: Fn(usize) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
-    match pred {
-        PlanFilterPredicate::None => true,
-        PlanFilterPredicate::Equals { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Eq),
-        PlanFilterPredicate::NotEquals { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Neq),
-        PlanFilterPredicate::GreaterThan { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Gt),
-        PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Gte),
-        PlanFilterPredicate::LessThan { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Lt),
-        PlanFilterPredicate::LessThanOrEqual { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Lte),
-        PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Eq),
-        PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Neq),
-        PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Gt),
-        PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Gte),
-        PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Lt),
-        PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Lte),
-        PlanFilterPredicate::IsNull { column_idx } => matches!(get(*column_idx), CellValue::Null),
-        PlanFilterPredicate::IsNotNull { column_idx } => !matches!(get(*column_idx), CellValue::Null),
-        PlanFilterPredicate::And(a, b) => eval_pred_row(a, get) && eval_pred_row(b, get),
-        PlanFilterPredicate::Or(a, b) => eval_pred_row(a, get) || eval_pred_row(b, get),
-    }
-}
-
-/// Evaluate predicate on a single RowSet row.
-pub fn eval_rowset_row(pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
-    eval_pred_row(pred, &|col| rs.get(row, col))
-}
-
-/// Evaluate join predicate: left columns from RowSet, right columns from Table.
-pub fn eval_join_row(
-    pred: &PlanFilterPredicate,
-    left: &super::RowSet,
-    right_table: &Table,
-    right_col_offset: usize,
-    l: usize,
-    r: usize,
-) -> bool {
-    eval_pred_row(pred, &|col| {
-        if col < right_col_offset {
-            left.get(l, col)
-        } else {
-            right_table.get(r, col - right_col_offset)
-        }
-    })
 }
 
 // --- Shared utility ---
@@ -335,13 +324,15 @@ mod tests {
         t
     }
 
-    // --- eval_table tests (now returns Vec<usize> of matching row IDs) ---
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
 
     #[test]
     fn test_eval_table_equals_i64() {
         let table = make_i64_table("t", "x", &[1, 2, 3, 2, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
-        let pred = PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(2) };
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 3]);
     }
 
@@ -349,7 +340,7 @@ mod tests {
     fn test_eval_table_greater_than() {
         let table = make_i64_table("t", "x", &[1, 5, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(2) };
+        let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(2) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 2]);
     }
 
@@ -357,23 +348,23 @@ mod tests {
     fn test_eval_table_string_equals() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::Equals { column_idx: 1, value: Value::Text("Bob".into()) };
+        let pred = PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![1]);
     }
 
     #[test]
     fn test_eval_table_nullable_skips_null() {
-        let table = make_users_table(); // age: 30, 25, NULL
+        let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(20) };
+        let pred = PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(20) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1]);
     }
 
     #[test]
     fn test_eval_table_is_null() {
-        let table = make_users_table(); // age: 30, 25, NULL
+        let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::IsNull { column_idx: 2 };
+        let pred = PlanFilterPredicate::IsNull { col: c(0, 2) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![2]);
     }
 
@@ -381,8 +372,7 @@ mod tests {
     fn test_eval_table_is_not_null_on_non_nullable() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
-        // id column is non-nullable → IS NOT NULL always true
-        let pred = PlanFilterPredicate::IsNotNull { column_idx: 0 };
+        let pred = PlanFilterPredicate::IsNotNull { col: c(0, 0) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1, 2]);
     }
 
@@ -402,7 +392,7 @@ mod tests {
         table.insert(&[CellValue::I64(2), CellValue::I64(9)]).unwrap();
         table.insert(&[CellValue::I64(3), CellValue::I64(3)]).unwrap();
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 1 };
+        let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
         assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 2]);
     }
 
@@ -411,8 +401,8 @@ mod tests {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::And(
-            Box::new(PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(1) }),
-            Box::new(PlanFilterPredicate::Equals { column_idx: 1, value: Value::Text("Bob".into()) }),
+            Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(1) }),
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) }),
         );
         assert_eq!(pred.eval_table(&table, &row_ids), vec![1]);
     }
@@ -420,18 +410,16 @@ mod tests {
     #[test]
     fn test_eval_table_subset_row_ids() {
         let table = make_i64_table("t", "x", &[10, 20, 30, 40, 50]);
-        // Only evaluate rows 1 and 3
         let row_ids = vec![1, 3];
-        let pred = PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(25) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![3]); // 20>25=F, 40>25=T
+        let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(25) };
+        assert_eq!(pred.eval_table(&table, &row_ids), vec![3]);
     }
 
     #[test]
     fn test_eval_table_null_value_always_false() {
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
-        let pred = PlanFilterPredicate::Equals { column_idx: 0, value: Value::Null };
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
         assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
     }
-
 }

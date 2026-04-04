@@ -1,4 +1,4 @@
-use crate::planner::plan::PlanResultColumn;
+use crate::planner::plan::{ColumnRef, PlanResultColumn};
 
 use super::Columns;
 
@@ -10,9 +10,9 @@ pub fn project_rowset(
     let mut result: Columns = Vec::with_capacity(result_columns.len());
     for rc in result_columns {
         match rc {
-            PlanResultColumn::Column { column_idx, .. } => {
+            PlanResultColumn::Column { col, .. } => {
                 result.push(
-                    (0..rs.num_rows).map(|row| rs.get(row, *column_idx)).collect(),
+                    (0..rs.num_rows).map(|row| rs.get(row, *col)).collect(),
                 );
             }
             PlanResultColumn::Aggregate { .. } => {
@@ -26,7 +26,7 @@ pub fn project_rowset(
 pub fn project(
     cols: &Columns,
     result_columns: &[PlanResultColumn],
-    group_by: &[usize],
+    group_by: &[ColumnRef],
     has_aggregates: bool,
 ) -> Columns {
     let mut result: Columns = Vec::with_capacity(result_columns.len());
@@ -34,15 +34,15 @@ pub fn project(
 
     for rc in result_columns {
         match rc {
-            PlanResultColumn::Column { column_idx, .. } => {
+            PlanResultColumn::Column { col, .. } => {
                 if has_aggregates {
                     let pos = group_by
                         .iter()
-                        .position(|&gb| gb == *column_idx)
+                        .position(|&gb| gb == *col)
                         .expect("column in aggregate query must be in group_by");
                     result.push(cols[pos].clone());
                 } else {
-                    result.push(cols[*column_idx].clone());
+                    result.push(cols[col.col].clone());
                 }
             }
             PlanResultColumn::Aggregate { .. } => {
@@ -62,6 +62,10 @@ mod tests {
     use crate::storage::CellValue;
     use query_engine::ast::AggFunc;
 
+    fn c(source: usize, col: usize) -> ColumnRef {
+        ColumnRef { source, col }
+    }
+
     #[test]
     fn test_project_simple() {
         let cols: Columns = vec![
@@ -73,8 +77,8 @@ mod tests {
         let result = project(
             &cols,
             &[
-                PlanResultColumn::Column { column_idx: 2, alias: None },
-                PlanResultColumn::Column { column_idx: 0, alias: None },
+                PlanResultColumn::Column { col: c(0, 2), alias: None },
+                PlanResultColumn::Column { col: c(0, 0), alias: None },
             ],
             &[],
             false,
@@ -95,14 +99,14 @@ mod tests {
         let result = project(
             &cols,
             &[
-                PlanResultColumn::Column { column_idx: 1, alias: None },
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Aggregate {
                     func: AggFunc::Min,
-                    column_idx: 2,
+                    col: c(0, 2),
                     alias: Some("min_age".into()),
                 },
             ],
-            &[1],
+            &[c(0, 1)],
             true,
         );
 
