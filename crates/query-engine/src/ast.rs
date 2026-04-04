@@ -3,7 +3,6 @@ pub struct AstSelect {
     pub sources: Vec<AstSourceEntry>,
     pub filter: Vec<AstExpr>,
     pub group_by: Vec<AstExpr>,
-    pub aggregates: Vec<AstAggregate>,
     pub result_columns: Vec<AstResultColumn>,
 }
 
@@ -35,6 +34,10 @@ pub enum AstExpr {
         op: Operator,
         right: Box<AstExpr>,
     },
+    Aggregate {
+        func: AggFunc,
+        arg: Box<AstExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -62,12 +65,6 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Null,
-}
-
-#[derive(Debug, Clone)]
-pub struct AstAggregate {
-    pub func: AggFunc,
-    pub expr: AstExpr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -70,7 +70,14 @@ pub struct PlanAggregate {
 }
 
 #[derive(Debug, Clone)]
-pub struct PlanResultColumn {
-    pub column_idx: usize,
-    pub alias: Option<String>,
+pub enum PlanResultColumn {
+    Column {
+        column_idx: usize,
+        alias: Option<String>,
+    },
+    Aggregate {
+        func: AggFunc,
+        column_idx: usize,
+        alias: Option<String>,
+    },
 }

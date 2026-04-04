@@ -73,17 +73,22 @@ pub fn plan_select(
         .map(|expr| resolve_to_column_idx(expr, &combined_schema))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let aggregates = select
-        .aggregates
-        .iter()
-        .map(|agg| plan_aggregate(agg, &combined_schema))
-        .collect::<Result<Vec<_>, _>>()?;
-
     let result_columns = select
         .result_columns
         .iter()
         .map(|rc| plan_result_column(rc, &combined_schema))
         .collect::<Result<Vec<_>, _>>()?;
+
+    // Extract aggregates from result columns.
+    let aggregates = result_columns
+        .iter()
+        .filter_map(|rc| match rc {
+            PlanResultColumn::Aggregate { func, column_idx, .. } => {
+                Some(PlanAggregate { func: *func, column_idx: *column_idx })
+            }
+            _ => None,
+        })
+        .collect();
 
     Ok(PlanSelect {
         sources,
@@ -227,26 +232,27 @@ fn flip_op(op: ast::Operator) -> Result<ast::Operator, PlanError> {
     }
 }
 
-fn plan_aggregate(
-    agg: &ast::AstAggregate,
-    schema: &Schema,
-) -> Result<PlanAggregate, PlanError> {
-    let column_idx = resolve_to_column_idx(&agg.expr, schema)?;
-    Ok(PlanAggregate {
-        func: agg.func,
-        column_idx,
-    })
-}
-
 fn plan_result_column(
     rc: &ast::AstResultColumn,
     schema: &Schema,
 ) -> Result<PlanResultColumn, PlanError> {
-    let column_idx = resolve_to_column_idx(&rc.expr, schema)?;
-    Ok(PlanResultColumn {
-        column_idx,
-        alias: rc.alias.clone(),
-    })
+    match &rc.expr {
+        ast::AstExpr::Aggregate { func, arg } => {
+            let column_idx = resolve_to_column_idx(arg, schema)?;
+            Ok(PlanResultColumn::Aggregate {
+                func: *func,
+                column_idx,
+                alias: rc.alias.clone(),
+            })
+        }
+        other => {
+            let column_idx = resolve_to_column_idx(other, schema)?;
+            Ok(PlanResultColumn::Column {
+                column_idx,
+                alias: rc.alias.clone(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -291,7 +297,6 @@ mod tests {
                 right: Box::new(AstExpr::Literal(Value::Int(18))),
             }],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "name".into() }), alias: None },
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() }), alias: None },
@@ -301,8 +306,8 @@ mod tests {
         let plan = plan_select(&select, &table_schemas()).unwrap();
 
         assert!(matches!(plan.filter, PlanFilterPredicate::GreaterThan { column_idx: 2, .. }));
-        assert_eq!(plan.result_columns[0].column_idx, 1);
-        assert_eq!(plan.result_columns[1].column_idx, 2);
+        assert!(matches!(plan.result_columns[0], PlanResultColumn::Column { column_idx: 1, .. }));
+        assert!(matches!(plan.result_columns[1], PlanResultColumn::Column { column_idx: 2, .. }));
     }
 
     #[test]
@@ -330,7 +335,6 @@ mod tests {
             ],
             filter: vec![],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
@@ -394,7 +398,6 @@ mod tests {
             ],
             filter: vec![],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
@@ -428,7 +431,6 @@ mod tests {
                 },
             ],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
@@ -446,7 +448,6 @@ mod tests {
                 right: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() })),
             }],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
@@ -460,7 +461,6 @@ mod tests {
             sources: vec![AstSourceEntry { table: "nonexistent".into(), join: None }],
             filter: vec![],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
@@ -474,7 +474,6 @@ mod tests {
             sources: vec![],
             filter: vec![],
             group_by: vec![],
-            aggregates: vec![],
             result_columns: vec![],
         };
 
