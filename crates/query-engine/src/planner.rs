@@ -7,7 +7,7 @@ use crate::schema::Schema;
 #[derive(Debug)]
 pub enum PlanError {
     UnknownTable(String),
-    UnknownColumn { table: Option<String>, column: String },
+    UnknownColumn { table: String, column: String },
     UnsupportedExpr(String),
     EmptySources,
 }
@@ -16,10 +16,9 @@ impl std::fmt::Display for PlanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PlanError::UnknownTable(t) => write!(f, "unknown table: {t}"),
-            PlanError::UnknownColumn { table, column } => match table {
-                Some(t) => write!(f, "unknown column: {t}.{column}"),
-                None => write!(f, "unknown column: {column}"),
-            },
+            PlanError::UnknownColumn { table, column } => {
+                write!(f, "unknown column: {table}.{column}")
+            }
             PlanError::UnsupportedExpr(msg) => write!(f, "unsupported expression: {msg}"),
             PlanError::EmptySources => write!(f, "query has no sources"),
         }
@@ -162,7 +161,7 @@ fn plan_expr_to_predicate(
 
 fn resolve_column_ref(col: &ast::AstColumnRef, schema: &Schema) -> Result<usize, PlanError> {
     schema
-        .resolve(col.table.as_deref(), &col.column)
+        .resolve(&col.table, &col.column)
         .ok_or_else(|| PlanError::UnknownColumn {
             table: col.table.clone(),
             column: col.column.clone(),
@@ -285,7 +284,7 @@ mod tests {
             sources: vec![AstSourceEntry { table: "users".into(), join: None }],
             filter: vec![AstExpr::Binary {
                 left: Box::new(AstExpr::Column(AstColumnRef {
-                    table: Some("users".into()),
+                    table: "users".into(),
                     column: "age".into(),
                 })),
                 op: Operator::Gt,
@@ -294,8 +293,8 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             result_columns: vec![
-                AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: None, column: "name".into() }), alias: None },
-                AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: None, column: "age".into() }), alias: None },
+                AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "name".into() }), alias: None },
+                AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() }), alias: None },
             ],
         };
 
@@ -317,12 +316,12 @@ mod tests {
                         join_type: JoinType::Inner,
                         on: vec![AstExpr::Binary {
                             left: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("users".into()),
+                                table: "users".into(),
                                 column: "id".into(),
                             })),
                             op: Operator::Eq,
                             right: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("orders".into()),
+                                table: "orders".into(),
                                 column: "user_id".into(),
                             })),
                         }],
@@ -364,12 +363,12 @@ mod tests {
                         join_type: JoinType::Inner,
                         on: vec![AstExpr::Binary {
                             left: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("users".into()),
+                                table: "users".into(),
                                 column: "id".into(),
                             })),
                             op: Operator::Eq,
                             right: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("orders".into()),
+                                table: "orders".into(),
                                 column: "user_id".into(),
                             })),
                         }],
@@ -381,12 +380,12 @@ mod tests {
                         join_type: JoinType::Left,
                         on: vec![AstExpr::Binary {
                             left: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("orders".into()),
+                                table: "orders".into(),
                                 column: "id".into(),
                             })),
                             op: Operator::Eq,
                             right: Box::new(AstExpr::Column(AstColumnRef {
-                                table: Some("products".into()),
+                                table: "products".into(),
                                 column: "id".into(),
                             })),
                         }],
@@ -418,12 +417,12 @@ mod tests {
             sources: vec![AstSourceEntry { table: "users".into(), join: None }],
             filter: vec![
                 AstExpr::Binary {
-                    left: Box::new(AstExpr::Column(AstColumnRef { table: None, column: "age".into() })),
+                    left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() })),
                     op: Operator::Gt,
                     right: Box::new(AstExpr::Literal(Value::Int(18))),
                 },
                 AstExpr::Binary {
-                    left: Box::new(AstExpr::Column(AstColumnRef { table: None, column: "name".into() })),
+                    left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "name".into() })),
                     op: Operator::Eq,
                     right: Box::new(AstExpr::Literal(Value::Text("Alice".into()))),
                 },
@@ -444,7 +443,7 @@ mod tests {
             filter: vec![AstExpr::Binary {
                 left: Box::new(AstExpr::Literal(Value::Int(18))),
                 op: Operator::Lt,
-                right: Box::new(AstExpr::Column(AstColumnRef { table: None, column: "age".into() })),
+                right: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() })),
             }],
             group_by: vec![],
             aggregates: vec![],

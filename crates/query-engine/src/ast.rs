@@ -39,7 +39,7 @@ pub enum AstExpr {
 
 #[derive(Debug, Clone)]
 pub struct AstColumnRef {
-    pub table: Option<String>,
+    pub table: String,
     pub column: String,
 }
 

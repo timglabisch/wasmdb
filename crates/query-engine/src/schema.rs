@@ -16,13 +16,12 @@ impl Schema {
 
     /// Resolve a column reference to an index.
     /// If `table` is None, matches the first column with the given name.
-    pub fn resolve(&self, table: Option<&str>, column: &str) -> Option<usize> {
+    pub fn resolve(&self, table: &str, column: &str) -> Option<usize> {
         self.columns.iter().position(|c| {
             c.name == column
-                && match (table, &c.table) {
-                    (Some(t), Some(ct)) => t == ct,
-                    (None, _) => true,
-                    (Some(_), None) => false,
+                && match &c.table {
+                    Some(ct) => table == ct,
+                    None => false,
                 }
         })
     }
