@@ -1,6 +1,5 @@
 pub mod aggregate;
 pub mod eval;
-pub mod filter;
 pub mod join;
 pub mod project;
 pub mod scan;
@@ -98,10 +97,6 @@ impl std::fmt::Display for ExecuteError {
 
 impl std::error::Error for ExecuteError {}
 
-pub fn num_rows(cols: &Columns) -> usize {
-    cols.iter().find(|c| !c.is_empty()).map_or(0, |c| c.len())
-}
-
 pub fn value_to_cell(v: &Value) -> CellValue {
     match v {
         Value::Int(n) => CellValue::I64(*n),
@@ -116,37 +111,34 @@ pub fn execute(
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Phase 1: Scan + pre-filter first source → RowSet (no materialization).
+    // Phase 1: Scan first source → RowSet (no materialization).
     let first = &plan.sources[0];
     let first_table = db
         .get(&first.table)
         .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
-    let first_ids = if matches!(first.pre_filter, PlanFilterPredicate::None) {
-        scan::scan_row_ids(first_table)
-    } else {
-        scan::scan_filtered(first_table, &first.pre_filter)
-    };
-    let mut rs = RowSet::from_scan(first_table, first_ids);
+    let mut rs = scan::scan(first_table, &first.pre_filter);
 
     // Phase 2: Join remaining sources (each extends the RowSet).
     for source in plan.sources.iter().skip(1) {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-        let row_ids = if matches!(source.pre_filter, PlanFilterPredicate::None) {
-            scan::scan_row_ids(table)
-        } else {
-            scan::scan_filtered(table, &source.pre_filter)
-        };
+        let right = scan::scan(table, &source.pre_filter);
         match source.join.as_ref() {
             Some(j) => {
-                rs = join::nested_loop_join(&rs, table, &row_ids, &j.on, j.join_type);
+                rs = join::nested_loop_join(
+                    &rs,
+                    right.tables[0],
+                    &right.row_ids[0],
+                    &j.on,
+                    j.join_type,
+                );
             }
             None => {
                 rs = join::nested_loop_join(
                     &rs,
-                    table,
-                    &row_ids,
+                    right.tables[0],
+                    &right.row_ids[0],
                     &PlanFilterPredicate::None,
                     query_engine::ast::JoinType::Inner,
                 );

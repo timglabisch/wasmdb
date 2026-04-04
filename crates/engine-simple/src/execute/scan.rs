@@ -1,7 +1,17 @@
 use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::Table;
 
-use super::Columns;
+use super::RowSet;
+
+/// Scan + pre-filter → RowSet (no materialization).
+pub fn scan<'a>(table: &'a Table, pre_filter: &PlanFilterPredicate) -> RowSet<'a> {
+    let row_ids = if matches!(pre_filter, PlanFilterPredicate::None) {
+        scan_row_ids(table)
+    } else {
+        scan_filtered(table, pre_filter)
+    };
+    RowSet::from_scan(table, row_ids)
+}
 
 /// Return live (non-deleted) row IDs without materializing any data.
 pub fn scan_row_ids(table: &Table) -> Vec<usize> {
@@ -12,11 +22,6 @@ pub fn scan_row_ids(table: &Table) -> Vec<usize> {
 pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
     let row_ids = scan_row_ids(table);
     pred.eval_table(table, &row_ids)
-}
-
-/// Materialize all columns for the given row IDs (column-at-a-time batch conversion).
-pub fn materialize(table: &Table, row_ids: &[usize]) -> Columns {
-    table.columns.iter().map(|col| col.to_cells(row_ids)).collect()
 }
 
 #[cfg(test)]
@@ -97,26 +102,11 @@ mod tests {
     }
 
     #[test]
-    fn test_materialize_all() {
-        let mut table = make_users_table();
-        table.delete(1).unwrap();
-        let row_ids = scan_row_ids(&table);
-        let cols = materialize(&table, &row_ids);
-        assert_eq!(cols.len(), 3);
-        assert_eq!(cols[0], vec![CellValue::I64(1), CellValue::I64(3)]);
-        assert_eq!(cols[1], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
-    }
-
-    #[test]
-    fn test_scan_filtered_then_materialize() {
+    fn test_scan_returns_rowset() {
         let table = make_users_table();
-        let row_ids = scan_filtered(
-            &table,
-            &PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(2) },
-        );
-        let cols = materialize(&table, &row_ids);
-        assert_eq!(cols[0], vec![CellValue::I64(2)]);
-        assert_eq!(cols[1], vec![CellValue::Str("Bob".into())]);
-        assert_eq!(cols[2], vec![CellValue::I64(25)]);
+        let rs = scan(&table, &PlanFilterPredicate::GreaterThan { column_idx: 2, value: Value::Int(28) });
+        assert_eq!(rs.num_rows, 2);
+        assert_eq!(rs.get(0, 1), CellValue::Str("Alice".into()));
+        assert_eq!(rs.get(1, 1), CellValue::Str("Carol".into()));
     }
 }

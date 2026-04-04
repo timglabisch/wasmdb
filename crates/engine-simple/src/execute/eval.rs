@@ -2,7 +2,7 @@ use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::{CellValue, Table, TypedColumn};
 use query_engine::ast::Value;
 
-use super::{num_rows, value_to_cell, Columns};
+use super::value_to_cell;
 
 #[derive(Debug, Clone, Copy)]
 pub enum CmpOp {
@@ -103,66 +103,6 @@ impl PlanFilterPredicate {
         }
     }
 
-
-    /// Evaluate this predicate against materialized columnar data (post-join).
-    pub fn eval_batch(&self, cols: &Columns) -> Vec<bool> {
-        let n = num_rows(cols);
-        match self {
-            PlanFilterPredicate::None => vec![true; n],
-
-            PlanFilterPredicate::Equals { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Eq)
-            }
-            PlanFilterPredicate::NotEquals { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Neq)
-            }
-            PlanFilterPredicate::GreaterThan { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Gt)
-            }
-            PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Gte)
-            }
-            PlanFilterPredicate::LessThan { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Lt)
-            }
-            PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
-                eval_column_value_cmp(cols, *column_idx, value, CmpOp::Lte)
-            }
-
-            PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Eq)
-            }
-            PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Neq)
-            }
-            PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Gt)
-            }
-            PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Gte)
-            }
-            PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Lt)
-            }
-            PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
-                eval_column_column_cmp(cols, *left_idx, *right_idx, CmpOp::Lte)
-            }
-
-            PlanFilterPredicate::IsNull { column_idx } => eval_is_null(cols, *column_idx, true),
-            PlanFilterPredicate::IsNotNull { column_idx } => eval_is_null(cols, *column_idx, false),
-
-            PlanFilterPredicate::And(l, r) => {
-                let lm = l.eval_batch(cols);
-                let rm = r.eval_batch(cols);
-                lm.iter().zip(rm.iter()).map(|(a, b)| *a && *b).collect()
-            }
-            PlanFilterPredicate::Or(l, r) => {
-                let lm = l.eval_batch(cols);
-                let rm = r.eval_batch(cols);
-                lm.iter().zip(rm.iter()).map(|(a, b)| *a || *b).collect()
-            }
-        }
-    }
 
 }
 
@@ -339,40 +279,6 @@ pub fn eval_join_row(
     })
 }
 
-// --- Helpers for eval_batch (on materialized Columns, post-join) ---
-
-fn eval_column_value_cmp(
-    cols: &Columns,
-    col_idx: usize,
-    value: &Value,
-    op: CmpOp,
-) -> Vec<bool> {
-    let col = &cols[col_idx];
-    let cell_val = value_to_cell(value);
-    col.iter().map(|cell| cmp_cell(cell, &cell_val, op)).collect()
-}
-
-fn eval_column_column_cmp(
-    cols: &Columns,
-    left_idx: usize,
-    right_idx: usize,
-    op: CmpOp,
-) -> Vec<bool> {
-    let left = &cols[left_idx];
-    let right = &cols[right_idx];
-    left.iter()
-        .zip(right.iter())
-        .map(|(l, r)| cmp_cell(l, r, op))
-        .collect()
-}
-
-fn eval_is_null(cols: &Columns, col_idx: usize, want_null: bool) -> Vec<bool> {
-    cols[col_idx]
-        .iter()
-        .map(|v| matches!(v, CellValue::Null) == want_null)
-        .collect()
-}
-
 // --- Shared utility ---
 
 /// SQL comparison semantics: any comparison involving NULL returns false.
@@ -528,81 +434,4 @@ mod tests {
         assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
     }
 
-    // --- eval_batch tests (on materialized Columns) ---
-
-    #[test]
-    fn test_eval_batch_equals_i64() {
-        let cols: Columns = vec![vec![
-            CellValue::I64(1), CellValue::I64(2), CellValue::I64(3),
-            CellValue::I64(2), CellValue::I64(5),
-        ]];
-        let pred = PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(2) };
-        assert_eq!(pred.eval_batch(&cols), vec![false, true, false, true, false]);
-    }
-
-    #[test]
-    fn test_eval_batch_greater_than() {
-        let cols: Columns = vec![vec![CellValue::I64(1), CellValue::I64(5), CellValue::I64(3)]];
-        let pred = PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(2) };
-        assert_eq!(pred.eval_batch(&cols), vec![false, true, true]);
-    }
-
-    #[test]
-    fn test_eval_batch_is_null() {
-        let cols: Columns = vec![vec![
-            CellValue::I64(1), CellValue::Null, CellValue::I64(3), CellValue::Null,
-        ]];
-        let pred = PlanFilterPredicate::IsNull { column_idx: 0 };
-        assert_eq!(pred.eval_batch(&cols), vec![false, true, false, true]);
-        let pred = PlanFilterPredicate::IsNotNull { column_idx: 0 };
-        assert_eq!(pred.eval_batch(&cols), vec![true, false, true, false]);
-    }
-
-    #[test]
-    fn test_eval_batch_and() {
-        let cols: Columns = vec![
-            vec![CellValue::I64(1), CellValue::I64(5), CellValue::I64(3)],
-            vec![CellValue::Str("a".into()), CellValue::Str("b".into()), CellValue::Str("a".into())],
-        ];
-        let pred = PlanFilterPredicate::And(
-            Box::new(PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(2) }),
-            Box::new(PlanFilterPredicate::Equals { column_idx: 1, value: Value::Text("a".into()) }),
-        );
-        assert_eq!(pred.eval_batch(&cols), vec![false, false, true]);
-    }
-
-    #[test]
-    fn test_eval_batch_or() {
-        let cols: Columns = vec![vec![CellValue::I64(1), CellValue::I64(5), CellValue::I64(3)]];
-        let pred = PlanFilterPredicate::Or(
-            Box::new(PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(1) }),
-            Box::new(PlanFilterPredicate::Equals { column_idx: 0, value: Value::Int(5) }),
-        );
-        assert_eq!(pred.eval_batch(&cols), vec![true, true, false]);
-    }
-
-    #[test]
-    fn test_eval_batch_column_equals() {
-        let cols: Columns = vec![
-            vec![CellValue::I64(1), CellValue::I64(2), CellValue::I64(3)],
-            vec![CellValue::I64(1), CellValue::I64(99), CellValue::I64(3)],
-        ];
-        let pred = PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 1 };
-        assert_eq!(pred.eval_batch(&cols), vec![true, false, true]);
-    }
-
-    #[test]
-    fn test_eval_batch_null_comparison_returns_false() {
-        let cols: Columns = vec![vec![CellValue::I64(10), CellValue::Null, CellValue::I64(30)]];
-        let pred = PlanFilterPredicate::GreaterThan { column_idx: 0, value: Value::Int(18) };
-        assert_eq!(pred.eval_batch(&cols), vec![false, false, true]);
-        let pred = PlanFilterPredicate::Equals { column_idx: 0, value: Value::Null };
-        assert_eq!(pred.eval_batch(&cols), vec![false, false, false]);
-    }
-
-    #[test]
-    fn test_eval_batch_none_accepts_all() {
-        let cols: Columns = vec![vec![CellValue::I64(1), CellValue::I64(2)]];
-        assert_eq!(PlanFilterPredicate::None.eval_batch(&cols), vec![true, true]);
-    }
 }

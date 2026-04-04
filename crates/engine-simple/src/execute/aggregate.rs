@@ -4,45 +4,7 @@ use crate::planner::plan::PlanAggregate;
 use crate::storage::CellValue;
 use query_engine::ast::AggFunc;
 
-use super::{num_rows, Columns};
-
-pub fn aggregate(
-    cols: &Columns,
-    group_by: &[usize],
-    aggregates: &[PlanAggregate],
-) -> Columns {
-    let n = num_rows(cols);
-    let mut groups: HashMap<Vec<CellValue>, Vec<Accumulator>> = HashMap::new();
-    let mut group_order: Vec<Vec<CellValue>> = Vec::new();
-
-    for row in 0..n {
-        let key: Vec<CellValue> = group_by.iter().map(|&ci| cols[ci][row].clone()).collect();
-
-        let accums = groups.entry(key.clone()).or_insert_with(|| {
-            group_order.push(key.clone());
-            aggregates.iter().map(|agg| Accumulator::new(agg.func)).collect()
-        });
-
-        for (ai, agg) in aggregates.iter().enumerate() {
-            accums[ai].feed(&cols[agg.column_idx][row]);
-        }
-    }
-
-    let out_cols = group_by.len() + aggregates.len();
-    let mut result: Columns = (0..out_cols).map(|_| Vec::new()).collect();
-
-    for key in &group_order {
-        for (i, val) in key.iter().enumerate() {
-            result[i].push(val.clone());
-        }
-        let accums = &groups[key];
-        for (i, acc) in accums.iter().enumerate() {
-            result[group_by.len() + i].push(acc.finish());
-        }
-    }
-
-    result
-}
+use super::Columns;
 
 /// Aggregate directly from a RowSet without materializing intermediate columns.
 pub fn aggregate_rowset(
@@ -85,7 +47,7 @@ pub fn aggregate_rowset(
 struct Accumulator {
     func: AggFunc,
     count: i64,
-    sum: i64,
+    sum: Option<i64>,
     min: Option<CellValue>,
     max: Option<CellValue>,
 }
@@ -95,7 +57,7 @@ impl Accumulator {
         Self {
             func,
             count: 0,
-            sum: 0,
+            sum: None,
             min: None,
             max: None,
         }
@@ -103,16 +65,13 @@ impl Accumulator {
 
     fn feed(&mut self, val: &CellValue) {
         if matches!(val, CellValue::Null) {
-            if self.func == AggFunc::Count {
-                self.count += 1;
-            }
             return;
         }
         match self.func {
             AggFunc::Count => self.count += 1,
             AggFunc::Sum => {
                 if let CellValue::I64(n) = val {
-                    self.sum += n;
+                    *self.sum.get_or_insert(0) += n;
                 }
             }
             AggFunc::Min => {
@@ -145,7 +104,10 @@ impl Accumulator {
     fn finish(&self) -> CellValue {
         match self.func {
             AggFunc::Count => CellValue::I64(self.count),
-            AggFunc::Sum => CellValue::I64(self.sum),
+            AggFunc::Sum => match self.sum {
+                Some(s) => CellValue::I64(s),
+                None => CellValue::Null,
+            },
             AggFunc::Min => self.min.clone().unwrap_or(CellValue::Null),
             AggFunc::Max => self.max.clone().unwrap_or(CellValue::Null),
         }
@@ -155,16 +117,33 @@ impl Accumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execute::RowSet;
+    use crate::storage::Table;
+    use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
+
+    fn make_test_table() -> Table {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "g".into(), data_type: DataType::String, nullable: false },
+                ColumnSchema { name: "v".into(), data_type: DataType::I64, nullable: true },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        Table::new(schema)
+    }
 
     #[test]
     fn test_aggregate_count_sum_min_max() {
-        let cols: Columns = vec![
-            vec![CellValue::Str("A".into()), CellValue::Str("A".into()), CellValue::Str("B".into())],
-            vec![CellValue::I64(10), CellValue::I64(30), CellValue::I64(20)],
-        ];
+        let mut table = make_test_table();
+        table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
+        table.insert(&[CellValue::Str("A".into()), CellValue::I64(30)]).unwrap();
+        table.insert(&[CellValue::Str("B".into()), CellValue::I64(20)]).unwrap();
+        let rs = RowSet::from_scan(&table, vec![0, 1, 2]);
 
-        let result = aggregate(
-            &cols,
+        let result = aggregate_rowset(
+            &rs,
             &[0],
             &[
                 PlanAggregate { func: AggFunc::Count, column_idx: 1 },
@@ -185,5 +164,37 @@ mod tests {
         assert_eq!(result[2][1], CellValue::I64(20));
         assert_eq!(result[3][1], CellValue::I64(20));
         assert_eq!(result[4][1], CellValue::I64(20));
+    }
+
+    #[test]
+    fn test_aggregate_null_handling() {
+        let mut table = make_test_table();
+        table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
+        table.insert(&[CellValue::Str("A".into()), CellValue::Null]).unwrap();
+        table.insert(&[CellValue::Str("B".into()), CellValue::Null]).unwrap();
+        let rs = RowSet::from_scan(&table, vec![0, 1, 2]);
+
+        let result = aggregate_rowset(
+            &rs,
+            &[0],
+            &[
+                PlanAggregate { func: AggFunc::Count, column_idx: 1 },
+                PlanAggregate { func: AggFunc::Sum, column_idx: 1 },
+                PlanAggregate { func: AggFunc::Min, column_idx: 1 },
+                PlanAggregate { func: AggFunc::Max, column_idx: 1 },
+            ],
+        );
+
+        // Group A: values [10, NULL] → COUNT=1 (skip NULL), SUM=10, MIN=10, MAX=10
+        assert_eq!(result[1][0], CellValue::I64(1));
+        assert_eq!(result[2][0], CellValue::I64(10));
+        assert_eq!(result[3][0], CellValue::I64(10));
+        assert_eq!(result[4][0], CellValue::I64(10));
+
+        // Group B: values [NULL] → COUNT=0, SUM=NULL, MIN=NULL, MAX=NULL
+        assert_eq!(result[1][1], CellValue::I64(0));
+        assert_eq!(result[2][1], CellValue::Null);
+        assert_eq!(result[3][1], CellValue::Null);
+        assert_eq!(result[4][1], CellValue::Null);
     }
 }
