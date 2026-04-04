@@ -48,11 +48,8 @@ impl PlanFilterPredicate {
                 sorted_union(&left_ids, &right_ids)
             }
 
-            // Leaf predicates: produce bool mask, then select matching row_ids
-            _ => {
-                let mask = self.eval_leaf_mask(table, row_ids);
-                row_ids.iter().zip(mask).filter(|(_, keep)| *keep).map(|(&id, _)| id).collect()
-            }
+            // Leaf predicates: directly produce matching row_ids (no Vec<bool> intermediate)
+            _ => self.eval_leaf_filtered(table, row_ids),
         }
     }
 
@@ -65,7 +62,6 @@ impl PlanFilterPredicate {
             PlanFilterPredicate::None => {
                 deleted.iter_zeros().filter(|&i| i < n).collect()
             }
-
             PlanFilterPredicate::And(l, r) => {
                 let left_ids = l.eval_full_scan(table);
                 r.eval_table(table, &left_ids)
@@ -76,112 +72,107 @@ impl PlanFilterPredicate {
                 sorted_union(&left_ids, &right_ids)
             }
 
-            // Leaf predicates: full-scan contiguous slice, apply deleted mask
-            _ => {
-                let mask = self.eval_full_scan_mask(table);
-                (0..n).filter(|&i| mask[i] && !deleted.get(i)).collect()
-            }
+            // Leaf predicates: full-scan contiguous slice, directly collect matching IDs
+            _ => self.eval_full_scan_filtered(table),
         }
     }
 
-    /// Produce a bool mask for leaf predicates using row_ids indirection (gather path).
-    fn eval_leaf_mask(&self, table: &Table, row_ids: &[usize]) -> Vec<bool> {
+    /// Directly produce matching row_ids for leaf predicates (gather path, no Vec<bool> intermediate).
+    fn eval_leaf_filtered(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::Equals { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Eq)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Eq)
             }
             PlanFilterPredicate::NotEquals { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Neq)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Neq)
             }
             PlanFilterPredicate::GreaterThan { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gt)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gt)
             }
             PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gte)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Gte)
             }
             PlanFilterPredicate::LessThan { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lt)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lt)
             }
             PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
-                eval_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lte)
+                filter_typed_cmp(&table.columns[*column_idx], row_ids, value, CmpOp::Lte)
             }
             PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Eq)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Eq)
             }
             PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Neq)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Neq)
             }
             PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gt)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gt)
             }
             PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gte)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Gte)
             }
             PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lt)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lt)
             }
             PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
-                eval_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lte)
+                filter_typed_col_col(&table.columns[*left_idx], &table.columns[*right_idx], row_ids, CmpOp::Lte)
             }
             PlanFilterPredicate::IsNull { column_idx } => {
-                eval_typed_is_null(&table.columns[*column_idx], row_ids, true)
+                filter_typed_is_null(&table.columns[*column_idx], row_ids, true)
             }
             PlanFilterPredicate::IsNotNull { column_idx } => {
-                eval_typed_is_null(&table.columns[*column_idx], row_ids, false)
+                filter_typed_is_null(&table.columns[*column_idx], row_ids, false)
             }
-            // And/Or/None handled in eval_table, not here
             _ => unreachable!(),
         }
     }
 
-    /// Produce a bool mask for all physical rows (contiguous scan, SIMD-friendly).
-    /// Does NOT apply the deleted bitmap — caller must do that.
-    fn eval_full_scan_mask(&self, table: &Table) -> Vec<bool> {
+    /// Full-scan leaf: scan contiguous slice + deleted bitmap, directly collect matching row IDs.
+    fn eval_full_scan_filtered(&self, table: &Table) -> Vec<usize> {
         let n = table.physical_len();
+        let deleted = table.deleted_bitmap();
         match self {
             PlanFilterPredicate::Equals { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Eq)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Eq)
             }
             PlanFilterPredicate::NotEquals { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Neq)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Neq)
             }
             PlanFilterPredicate::GreaterThan { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Gt)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Gt)
             }
             PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Gte)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Gte)
             }
             PlanFilterPredicate::LessThan { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Lt)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Lt)
             }
             PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
-                eval_full_scan_cmp(&table.columns[*column_idx], n, value, CmpOp::Lte)
+                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Lte)
             }
             PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Eq)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Eq)
             }
             PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Neq)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Neq)
             }
             PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Gt)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Gt)
             }
             PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Gte)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Gte)
             }
             PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Lt)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Lt)
             }
             PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
-                eval_full_scan_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, CmpOp::Lte)
+                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Lte)
             }
             PlanFilterPredicate::IsNull { column_idx } => {
-                eval_full_scan_is_null(&table.columns[*column_idx], n, true)
+                full_scan_filter_is_null(&table.columns[*column_idx], n, deleted, true)
             }
             PlanFilterPredicate::IsNotNull { column_idx } => {
-                eval_full_scan_is_null(&table.columns[*column_idx], n, false)
+                full_scan_filter_is_null(&table.columns[*column_idx], n, deleted, false)
             }
-            // And/Or/None handled in eval_full_scan, not here
             _ => unreachable!(),
         }
     }
@@ -286,101 +277,85 @@ impl PlanFilterPredicate {
     }
 }
 
-// --- Typed helpers for eval_table (zero-copy, SIMD-ready) ---
+// --- Typed helpers for eval_table: directly produce Vec<usize> (no Vec<bool> intermediate) ---
 
-/// Compare a TypedColumn against a literal Value for all given row IDs.
-fn eval_typed_cmp(
+/// Filter row_ids by comparing a TypedColumn against a literal Value.
+fn filter_typed_cmp(
     col: &TypedColumn,
     row_ids: &[usize],
     value: &Value,
     op: CmpOp,
-) -> Vec<bool> {
+) -> Vec<usize> {
     match normalize_value(value) {
-        NormalizedValue::Null => vec![false; row_ids.len()],
+        NormalizedValue::Null => Vec::new(),
         NormalizedValue::I64(n) => match col {
             TypedColumn::I64(data) => {
-                row_ids.iter().map(|&i| cmp_i64(data[i], n, op)).collect()
+                row_ids.iter().filter(|&&i| cmp_i64(data[i], n, op)).copied().collect()
             }
             TypedColumn::NullableI64 { values, nulls } => {
-                row_ids.iter().map(|&i| {
-                    if nulls.get(i) { false } else { cmp_i64(values[i], n, op) }
-                }).collect()
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_i64(values[i], n, op)).copied().collect()
             }
-            _ => vec![false; row_ids.len()],
+            _ => Vec::new(),
         },
         NormalizedValue::Str(s) => match col {
             TypedColumn::Str(data) => {
-                row_ids.iter().map(|&i| cmp_str(&data[i], s, op)).collect()
+                row_ids.iter().filter(|&&i| cmp_str(&data[i], s, op)).copied().collect()
             }
             TypedColumn::NullableStr { values, nulls } => {
-                row_ids.iter().map(|&i| {
-                    if nulls.get(i) { false } else { cmp_str(&values[i], s, op) }
-                }).collect()
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_str(&values[i], s, op)).copied().collect()
             }
-            _ => vec![false; row_ids.len()],
+            _ => Vec::new(),
         },
     }
 }
 
-/// Compare two TypedColumns for all given row IDs.
-fn eval_typed_col_col(
+/// Filter row_ids by comparing two TypedColumns.
+fn filter_typed_col_col(
     left: &TypedColumn,
     right: &TypedColumn,
     row_ids: &[usize],
     op: CmpOp,
-) -> Vec<bool> {
+) -> Vec<usize> {
     match (left, right) {
         (TypedColumn::I64(l), TypedColumn::I64(r)) => {
-            row_ids.iter().map(|&i| cmp_i64(l[i], r[i], op)).collect()
+            row_ids.iter().filter(|&&i| cmp_i64(l[i], r[i], op)).copied().collect()
         }
         (TypedColumn::Str(l), TypedColumn::Str(r)) => {
-            row_ids.iter().map(|&i| cmp_str(&l[i], &r[i], op)).collect()
+            row_ids.iter().filter(|&&i| cmp_str(&l[i], &r[i], op)).copied().collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            row_ids.iter().map(|&i| {
-                if ln.get(i) || rn.get(i) { false } else { cmp_i64(lv[i], rv[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_i64(lv[i], rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            row_ids.iter().map(|&i| {
-                if ln.get(i) || rn.get(i) { false } else { cmp_str(&lv[i], &rv[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_str(&lv[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::I64(l), TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            row_ids.iter().map(|&i| {
-                if rn.get(i) { false } else { cmp_i64(l[i], rv[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_i64(l[i], rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::I64(r)) => {
-            row_ids.iter().map(|&i| {
-                if ln.get(i) { false } else { cmp_i64(lv[i], r[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_i64(lv[i], r[i], op)).copied().collect()
         }
         (TypedColumn::Str(l), TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            row_ids.iter().map(|&i| {
-                if rn.get(i) { false } else { cmp_str(&l[i], &rv[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_str(&l[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::Str(r)) => {
-            row_ids.iter().map(|&i| {
-                if ln.get(i) { false } else { cmp_str(&lv[i], &r[i], op) }
-            }).collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_str(&lv[i], &r[i], op)).copied().collect()
         }
-        // Cross-type (I64 vs Str) → always false
-        _ => vec![false; row_ids.len()],
+        _ => Vec::new(),
     }
 }
 
-/// IS NULL / IS NOT NULL directly on TypedColumn.
-fn eval_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -> Vec<bool> {
+/// Filter row_ids by IS NULL / IS NOT NULL.
+fn filter_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -> Vec<usize> {
     match col {
-        // Non-nullable columns are never null
-        TypedColumn::I64(_) | TypedColumn::Str(_) => vec![!want_null; row_ids.len()],
+        TypedColumn::I64(_) | TypedColumn::Str(_) => {
+            if want_null { Vec::new() } else { row_ids.to_vec() }
+        }
         TypedColumn::NullableI64 { nulls, .. } => {
-            row_ids.iter().map(|&i| nulls.get(i) == want_null).collect()
+            row_ids.iter().filter(|&&i| nulls.get(i) == want_null).copied().collect()
         }
         TypedColumn::NullableStr { nulls, .. } => {
-            row_ids.iter().map(|&i| nulls.get(i) == want_null).collect()
+            row_ids.iter().filter(|&&i| nulls.get(i) == want_null).copied().collect()
         }
     }
 }
@@ -409,96 +384,89 @@ fn cmp_str(left: &str, right: &str, op: CmpOp) -> bool {
     }
 }
 
-// --- Full-scan helpers (contiguous slice access, SIMD-friendly) ---
+// --- Full-scan helpers: contiguous slice access, directly produce Vec<usize> ---
 
-/// Compare a TypedColumn against a literal for ALL physical rows (contiguous).
-/// The returned Vec<bool> has one entry per physical row. Does NOT filter deleted rows.
-fn eval_full_scan_cmp(col: &TypedColumn, n: usize, value: &Value, op: CmpOp) -> Vec<bool> {
+use crate::bitmap::Bitmap;
+
+/// Full-scan compare column vs literal, collect matching non-deleted row IDs.
+fn full_scan_filter_cmp(
+    col: &TypedColumn,
+    n: usize,
+    deleted: &Bitmap,
+    value: &Value,
+    op: CmpOp,
+) -> Vec<usize> {
     match normalize_value(value) {
-        NormalizedValue::Null => vec![false; n],
+        NormalizedValue::Null => Vec::new(),
         NormalizedValue::I64(scalar) => match col {
-            // SIMD-friendly: contiguous &[i64] vs scalar
             TypedColumn::I64(data) => {
-                data[..n].iter().map(|&v| cmp_i64(v, scalar, op)).collect()
+                (0..n).filter(|&i| !deleted.get(i) && cmp_i64(data[i], scalar, op)).collect()
             }
             TypedColumn::NullableI64 { values, nulls } => {
-                values[..n].iter().enumerate().map(|(i, &v)| {
-                    if nulls.get(i) { false } else { cmp_i64(v, scalar, op) }
-                }).collect()
+                (0..n).filter(|&i| !deleted.get(i) && !nulls.get(i) && cmp_i64(values[i], scalar, op)).collect()
             }
-            _ => vec![false; n],
+            _ => Vec::new(),
         },
         NormalizedValue::Str(s) => match col {
             TypedColumn::Str(data) => {
-                data[..n].iter().map(|v| cmp_str(v, s, op)).collect()
+                (0..n).filter(|&i| !deleted.get(i) && cmp_str(&data[i], s, op)).collect()
             }
             TypedColumn::NullableStr { values, nulls } => {
-                values[..n].iter().enumerate().map(|(i, v)| {
-                    if nulls.get(i) { false } else { cmp_str(v, s, op) }
-                }).collect()
+                (0..n).filter(|&i| !deleted.get(i) && !nulls.get(i) && cmp_str(&values[i], s, op)).collect()
             }
-            _ => vec![false; n],
+            _ => Vec::new(),
         },
     }
 }
 
-/// Compare two TypedColumns for ALL physical rows (contiguous).
-fn eval_full_scan_col_col(
+/// Full-scan compare two columns, collect matching non-deleted row IDs.
+fn full_scan_filter_col_col(
     left: &TypedColumn,
     right: &TypedColumn,
     n: usize,
+    deleted: &Bitmap,
     op: CmpOp,
-) -> Vec<bool> {
+) -> Vec<usize> {
     match (left, right) {
         (TypedColumn::I64(l), TypedColumn::I64(r)) => {
-            l[..n].iter().zip(r[..n].iter()).map(|(&a, &b)| cmp_i64(a, b, op)).collect()
+            (0..n).filter(|&i| !deleted.get(i) && cmp_i64(l[i], r[i], op)).collect()
         }
         (TypedColumn::Str(l), TypedColumn::Str(r)) => {
-            l[..n].iter().zip(r[..n].iter()).map(|(a, b)| cmp_str(a, b, op)).collect()
+            (0..n).filter(|&i| !deleted.get(i) && cmp_str(&l[i], &r[i], op)).collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            (0..n).map(|i| {
-                if ln.get(i) || rn.get(i) { false } else { cmp_i64(lv[i], rv[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && !rn.get(i) && cmp_i64(lv[i], rv[i], op)).collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            (0..n).map(|i| {
-                if ln.get(i) || rn.get(i) { false } else { cmp_str(&lv[i], &rv[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && !rn.get(i) && cmp_str(&lv[i], &rv[i], op)).collect()
         }
         (TypedColumn::I64(l), TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            (0..n).map(|i| {
-                if rn.get(i) { false } else { cmp_i64(l[i], rv[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !rn.get(i) && cmp_i64(l[i], rv[i], op)).collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::I64(r)) => {
-            (0..n).map(|i| {
-                if ln.get(i) { false } else { cmp_i64(lv[i], r[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && cmp_i64(lv[i], r[i], op)).collect()
         }
         (TypedColumn::Str(l), TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            (0..n).map(|i| {
-                if rn.get(i) { false } else { cmp_str(&l[i], &rv[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !rn.get(i) && cmp_str(&l[i], &rv[i], op)).collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::Str(r)) => {
-            (0..n).map(|i| {
-                if ln.get(i) { false } else { cmp_str(&lv[i], &r[i], op) }
-            }).collect()
+            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && cmp_str(&lv[i], &r[i], op)).collect()
         }
-        _ => vec![false; n],
+        _ => Vec::new(),
     }
 }
 
-/// IS NULL / IS NOT NULL for ALL physical rows.
-fn eval_full_scan_is_null(col: &TypedColumn, n: usize, want_null: bool) -> Vec<bool> {
+/// Full-scan IS NULL / IS NOT NULL, collect matching non-deleted row IDs.
+fn full_scan_filter_is_null(col: &TypedColumn, n: usize, deleted: &Bitmap, want_null: bool) -> Vec<usize> {
     match col {
-        TypedColumn::I64(_) | TypedColumn::Str(_) => vec![!want_null; n],
+        TypedColumn::I64(_) | TypedColumn::Str(_) => {
+            if want_null { Vec::new() } else { (0..n).filter(|&i| !deleted.get(i)).collect() }
+        }
         TypedColumn::NullableI64 { nulls, .. } => {
-            (0..n).map(|i| nulls.get(i) == want_null).collect()
+            (0..n).filter(|&i| !deleted.get(i) && nulls.get(i) == want_null).collect()
         }
         TypedColumn::NullableStr { nulls, .. } => {
-            (0..n).map(|i| nulls.get(i) == want_null).collect()
+            (0..n).filter(|&i| !deleted.get(i) && nulls.get(i) == want_null).collect()
         }
     }
 }
