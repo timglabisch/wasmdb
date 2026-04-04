@@ -8,6 +8,7 @@ pub mod scan;
 use std::collections::HashMap;
 
 use crate::planner::plan::*;
+use crate::planner::predicate_column_indices;
 use crate::storage::{CellValue, Table};
 use query_engine::ast::Value;
 
@@ -30,7 +31,7 @@ impl std::fmt::Display for ExecuteError {
 impl std::error::Error for ExecuteError {}
 
 pub fn num_rows(cols: &Columns) -> usize {
-    cols.first().map_or(0, |c| c.len())
+    cols.iter().find(|c| !c.is_empty()).map_or(0, |c| c.len())
 }
 
 pub fn value_to_cell(v: &Value) -> CellValue {
@@ -47,17 +48,31 @@ pub fn execute(
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Phase 1: Scan + pre-filter each source
+    // Phase 1: Late materialization — scan + pre-filter as row indices,
+    // only materialize surviving rows.
     let mut scanned: Vec<Columns> = Vec::new();
     for source in &plan.sources {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-        let mut cols = scan::scan(table);
+
+        let mut indices = scan::scan_indices(table);
+
         if !matches!(source.pre_filter, PlanFilterPredicate::None) {
-            cols = filter::filter(&cols, &source.pre_filter);
+            // Sparse materialization: only the columns the predicate references
+            let needed = predicate_column_indices(&source.pre_filter);
+            let sparse = scan::materialize_sparse(table, &indices, &needed);
+            let mask = eval::eval_predicate(&sparse, &source.pre_filter);
+            indices = indices
+                .into_iter()
+                .zip(mask)
+                .filter(|(_, keep)| *keep)
+                .map(|(idx, _)| idx)
+                .collect();
         }
-        scanned.push(cols);
+
+        // Materialize all columns for surviving rows only
+        scanned.push(scan::materialize(table, &indices));
     }
 
     // Phase 2: Join sources
@@ -65,11 +80,11 @@ pub fn execute(
 
     for (i, source) in plan.sources.iter().enumerate().skip(1) {
         let right = &scanned[i - 1];
-        let join = source.join.as_ref();
-        match join {
-            Some(join) => {
+        let join_info = source.join.as_ref();
+        match join_info {
+            Some(j) => {
                 current =
-                    join::nested_loop_join(&current, right, &join.on, join.join_type);
+                    join::nested_loop_join(&current, right, &j.on, j.join_type);
             }
             None => {
                 current = join::nested_loop_join(

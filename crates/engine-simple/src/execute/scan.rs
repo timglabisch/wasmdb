@@ -2,16 +2,30 @@ use crate::storage::Table;
 
 use super::Columns;
 
-pub fn scan(table: &Table) -> Columns {
-    let num_cols = table.columns.len();
-    let mut columns: Columns = (0..num_cols).map(|_| Vec::new()).collect();
+/// Return live (non-deleted) row indices without materializing any data.
+pub fn scan_indices(table: &Table) -> Vec<usize> {
+    table.row_indices().collect()
+}
 
-    for row_idx in table.row_indices() {
-        for col_idx in 0..num_cols {
-            columns[col_idx].push(table.get(row_idx, col_idx));
-        }
+/// Materialize all columns for the given row indices (column-at-a-time batch conversion).
+pub fn materialize(table: &Table, indices: &[usize]) -> Columns {
+    table.columns.iter().map(|col| col.to_cells(indices)).collect()
+}
+
+/// Materialize only specific columns for the given row indices.
+/// Returns a sparse Columns where only `col_indices` positions are populated;
+/// other positions are empty Vecs.
+pub fn materialize_sparse(
+    table: &Table,
+    row_indices: &[usize],
+    col_indices: &[usize],
+) -> Columns {
+    let num_cols = table.columns.len();
+    let mut cols: Columns = (0..num_cols).map(|_| Vec::new()).collect();
+    for &ci in col_indices {
+        cols[ci] = table.columns[ci].to_cells(row_indices);
     }
-    columns
+    cols
 }
 
 #[cfg(test)]
@@ -39,13 +53,33 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_reads_live_rows() {
+    fn test_scan_indices_skips_deleted() {
         let mut table = make_users_table();
         table.delete(1).unwrap();
-        let cols = scan(&table);
+        let indices = scan_indices(&table);
+        assert_eq!(indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_materialize_all() {
+        let mut table = make_users_table();
+        table.delete(1).unwrap();
+        let indices = scan_indices(&table);
+        let cols = materialize(&table, &indices);
         assert_eq!(cols.len(), 3);
-        assert_eq!(cols[0].len(), 2);
         assert_eq!(cols[0], vec![CellValue::I64(1), CellValue::I64(3)]);
         assert_eq!(cols[1], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
+    }
+
+    #[test]
+    fn test_materialize_sparse() {
+        let table = make_users_table();
+        let indices = scan_indices(&table);
+        // Only materialize column 2 (age)
+        let cols = materialize_sparse(&table, &indices, &[2]);
+        assert_eq!(cols.len(), 3);
+        assert!(cols[0].is_empty()); // not materialized
+        assert!(cols[1].is_empty()); // not materialized
+        assert_eq!(cols[2], vec![CellValue::I64(30), CellValue::I64(25), CellValue::I64(35)]);
     }
 }

@@ -60,6 +60,22 @@ impl TypedColumn {
         }
     }
 
+    /// Batch-convert specific rows to CellValues (column-at-a-time, no per-cell dispatch).
+    pub fn to_cells(&self, indices: &[usize]) -> Vec<CellValue> {
+        match self {
+            TypedColumn::I64(v) => indices.iter().map(|&i| CellValue::I64(v[i])).collect(),
+            TypedColumn::Str(v) => indices.iter().map(|&i| CellValue::Str(v[i].clone())).collect(),
+            TypedColumn::NullableI64(v) => indices.iter().map(|&i| match v[i] {
+                Some(val) => CellValue::I64(val),
+                None => CellValue::Null,
+            }).collect(),
+            TypedColumn::NullableStr(v) => indices.iter().map(|&i| match &v[i] {
+                Some(val) => CellValue::Str(val.clone()),
+                None => CellValue::Null,
+            }).collect(),
+        }
+    }
+
     fn len(&self) -> usize {
         match self {
             TypedColumn::I64(v) => v.len(),

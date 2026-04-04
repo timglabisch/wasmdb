@@ -111,7 +111,7 @@ fn build_single_row(left: &Columns, right: &Columns, l: usize, r: usize) -> Colu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execute::scan::scan;
+    use crate::execute::scan::{materialize, scan_indices};
     use crate::storage::CellValue;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
@@ -153,8 +153,10 @@ mod tests {
 
     #[test]
     fn test_inner_join() {
-        let left = scan(&make_users_table());
-        let right = scan(&make_orders_table());
+        let ut = make_users_table();
+        let left = materialize(&ut, &scan_indices(&ut));
+        let ot = make_orders_table();
+        let right = materialize(&ot, &scan_indices(&ot));
 
         let result = nested_loop_join(
             &left,
@@ -174,8 +176,10 @@ mod tests {
 
     #[test]
     fn test_left_join_with_nulls() {
-        let left = scan(&make_users_table());
-        let right = scan(&make_orders_table());
+        let ut = make_users_table();
+        let left = materialize(&ut, &scan_indices(&ut));
+        let ot = make_orders_table();
+        let right = materialize(&ot, &scan_indices(&ot));
 
         let result = nested_loop_join(
             &left,

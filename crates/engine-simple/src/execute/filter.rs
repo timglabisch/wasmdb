@@ -23,7 +23,7 @@ fn apply_mask(cols: &Columns, mask: &[bool]) -> Columns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execute::scan::scan;
+    use crate::execute::scan::{materialize, scan_indices};
     use crate::storage::CellValue;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
@@ -44,7 +44,8 @@ mod tests {
         t.insert(&[CellValue::I64(2), CellValue::Str("Bob".into()), CellValue::I64(25)]).unwrap();
         t.insert(&[CellValue::I64(3), CellValue::Str("Carol".into()), CellValue::I64(35)]).unwrap();
 
-        let cols = scan(&t);
+        let indices = scan_indices(&t);
+        let cols = materialize(&t, &indices);
         let filtered = filter(
             &cols,
             &PlanFilterPredicate::GreaterThan {

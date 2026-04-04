@@ -164,7 +164,7 @@ fn flatten_and_conjuncts(pred: PlanFilterPredicate) -> Vec<PlanFilterPredicate> 
     }
 }
 
-fn predicate_column_indices(pred: &PlanFilterPredicate) -> Vec<usize> {
+pub fn predicate_column_indices(pred: &PlanFilterPredicate) -> Vec<usize> {
     match pred {
         PlanFilterPredicate::Equals { column_idx, .. }
         | PlanFilterPredicate::NotEquals { column_idx, .. }
