@@ -47,8 +47,13 @@ pub fn execute(
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Phase 1: Fused scan+filter — evaluate pre-filter per row directly on
-    // Table storage, collect only qualifying row IDs, then materialize.
+    // Single-table fast path: avoid materialization entirely.
+    // Only materialize the final result columns at the end.
+    if plan.sources.len() == 1 {
+        return execute_single_table(plan, db);
+    }
+
+    // Multi-table path: materialize per source, then join.
     let mut scanned: Vec<Columns> = Vec::new();
     for source in &plan.sources {
         let table = db
@@ -64,7 +69,6 @@ pub fn execute(
         scanned.push(scan::materialize(table, &row_ids));
     }
 
-    // Phase 2: Join sources
     let mut current = scanned.remove(0);
 
     for (i, source) in plan.sources.iter().enumerate().skip(1) {
@@ -86,21 +90,70 @@ pub fn execute(
         }
     }
 
-    // Phase 3: Remaining WHERE filter
     if !matches!(plan.filter, PlanFilterPredicate::None) {
         current = filter::filter(&current, &plan.filter);
     }
 
-    // Phase 4: Aggregate (if GROUP BY)
     if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
         current = aggregate::aggregate(&current, &plan.group_by, &plan.aggregates);
     }
 
-    // Phase 5: Project
     let has_aggregates = !plan.aggregates.is_empty();
     current = project::project(&current, &plan.result_columns, &plan.group_by, has_aggregates);
 
     Ok(current)
+}
+
+fn execute_single_table(
+    plan: &PlanSelect,
+    db: &HashMap<String, Table>,
+) -> Result<Columns, ExecuteError> {
+    let source = &plan.sources[0];
+    let table = db
+        .get(&source.table)
+        .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
+
+    // Scan + pre-filter → row IDs only, no materialization.
+    let row_ids = if matches!(source.pre_filter, PlanFilterPredicate::None) {
+        scan::scan_row_ids(table)
+    } else {
+        scan::scan_filtered(table, &source.pre_filter)
+    };
+
+    // Post-filter directly on Table storage (typically None for single table
+    // since pushdown moves everything to pre_filter).
+    let row_ids = if matches!(plan.filter, PlanFilterPredicate::None) {
+        row_ids
+    } else {
+        plan.filter.eval_table(table, &row_ids)
+    };
+
+    // Aggregate directly from Table — no intermediate materialization.
+    if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
+        let aggregated =
+            aggregate::aggregate_direct(table, &row_ids, &plan.group_by, &plan.aggregates);
+        let has_aggregates = !plan.aggregates.is_empty();
+        return Ok(project::project(
+            &aggregated,
+            &plan.result_columns,
+            &plan.group_by,
+            has_aggregates,
+        ));
+    }
+
+    // Project: materialize only the result columns directly from Table.
+    let mut result = Columns::with_capacity(plan.result_columns.len());
+    for rc in &plan.result_columns {
+        match rc {
+            PlanResultColumn::Column { column_idx, .. } => {
+                result.push(table.columns[*column_idx].to_cells(&row_ids));
+            }
+            PlanResultColumn::Aggregate { .. } => {
+                unreachable!("aggregate result column without aggregates in plan");
+            }
+        }
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
