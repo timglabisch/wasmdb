@@ -64,6 +64,7 @@ pub fn plan_select(
             table: entry.table.clone(),
             schema: table_schema,
             join,
+            pre_filter: PlanFilterPredicate::None,
         });
     }
 
@@ -92,14 +93,193 @@ pub fn plan_select(
         })
         .collect();
 
-    Ok(PlanSelect {
+    let mut plan = PlanSelect {
         sources,
         filter,
         group_by,
         aggregates,
         result_columns,
         schema: combined_schema,
-    })
+    };
+
+    pushdown_filters(&mut plan);
+
+    Ok(plan)
+}
+
+fn pushdown_filters(plan: &mut PlanSelect) {
+    // Compute column ranges for each source.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut offset = 0;
+    for src in &plan.sources {
+        let len = src.schema.columns.len();
+        ranges.push((offset, offset + len));
+        offset += len;
+    }
+
+    let filter = std::mem::replace(&mut plan.filter, PlanFilterPredicate::None);
+    let conjuncts = flatten_and_conjuncts(filter);
+
+    let mut remaining = Vec::new();
+    for conjunct in conjuncts {
+        let indices = predicate_column_indices(&conjunct);
+        let target = ranges.iter().enumerate().find(|(_, (start, end))| {
+            indices.iter().all(|idx| *idx >= *start && *idx < *end)
+        });
+
+        match target {
+            Some((src_idx, (start, _))) => {
+                let remapped = remap_predicate(conjunct, *start);
+                let existing = std::mem::replace(
+                    &mut plan.sources[src_idx].pre_filter,
+                    PlanFilterPredicate::None,
+                );
+                plan.sources[src_idx].pre_filter = match existing {
+                    PlanFilterPredicate::None => remapped,
+                    other => PlanFilterPredicate::And(Box::new(other), Box::new(remapped)),
+                };
+            }
+            None => remaining.push(conjunct),
+        }
+    }
+
+    plan.filter = match remaining.len() {
+        0 => PlanFilterPredicate::None,
+        _ => remaining
+            .into_iter()
+            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
+            .unwrap(),
+    };
+}
+
+fn flatten_and_conjuncts(pred: PlanFilterPredicate) -> Vec<PlanFilterPredicate> {
+    match pred {
+        PlanFilterPredicate::And(l, r) => {
+            let mut out = flatten_and_conjuncts(*l);
+            out.extend(flatten_and_conjuncts(*r));
+            out
+        }
+        PlanFilterPredicate::None => vec![],
+        other => vec![other],
+    }
+}
+
+fn predicate_column_indices(pred: &PlanFilterPredicate) -> Vec<usize> {
+    match pred {
+        PlanFilterPredicate::Equals { column_idx, .. }
+        | PlanFilterPredicate::NotEquals { column_idx, .. }
+        | PlanFilterPredicate::GreaterThan { column_idx, .. }
+        | PlanFilterPredicate::GreaterThanOrEqual { column_idx, .. }
+        | PlanFilterPredicate::LessThan { column_idx, .. }
+        | PlanFilterPredicate::LessThanOrEqual { column_idx, .. }
+        | PlanFilterPredicate::IsNull { column_idx }
+        | PlanFilterPredicate::IsNotNull { column_idx } => vec![*column_idx],
+
+        PlanFilterPredicate::ColumnEquals { left_idx, right_idx }
+        | PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx }
+        | PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx }
+        | PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx }
+        | PlanFilterPredicate::ColumnLessThan { left_idx, right_idx }
+        | PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
+            vec![*left_idx, *right_idx]
+        }
+
+        PlanFilterPredicate::And(l, r) | PlanFilterPredicate::Or(l, r) => {
+            let mut v = predicate_column_indices(l);
+            v.extend(predicate_column_indices(r));
+            v
+        }
+        PlanFilterPredicate::None => vec![],
+    }
+}
+
+fn remap_predicate(pred: PlanFilterPredicate, offset: usize) -> PlanFilterPredicate {
+    if offset == 0 {
+        return pred;
+    }
+    match pred {
+        PlanFilterPredicate::Equals { column_idx, value } => PlanFilterPredicate::Equals {
+            column_idx: column_idx - offset,
+            value,
+        },
+        PlanFilterPredicate::NotEquals { column_idx, value } => PlanFilterPredicate::NotEquals {
+            column_idx: column_idx - offset,
+            value,
+        },
+        PlanFilterPredicate::GreaterThan { column_idx, value } => {
+            PlanFilterPredicate::GreaterThan {
+                column_idx: column_idx - offset,
+                value,
+            }
+        }
+        PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
+            PlanFilterPredicate::GreaterThanOrEqual {
+                column_idx: column_idx - offset,
+                value,
+            }
+        }
+        PlanFilterPredicate::LessThan { column_idx, value } => PlanFilterPredicate::LessThan {
+            column_idx: column_idx - offset,
+            value,
+        },
+        PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
+            PlanFilterPredicate::LessThanOrEqual {
+                column_idx: column_idx - offset,
+                value,
+            }
+        }
+        PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnEquals {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnNotEquals {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnGreaterThan {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnGreaterThanOrEqual {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnLessThan {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
+            PlanFilterPredicate::ColumnLessThanOrEqual {
+                left_idx: left_idx - offset,
+                right_idx: right_idx - offset,
+            }
+        }
+        PlanFilterPredicate::IsNull { column_idx } => PlanFilterPredicate::IsNull {
+            column_idx: column_idx - offset,
+        },
+        PlanFilterPredicate::IsNotNull { column_idx } => PlanFilterPredicate::IsNotNull {
+            column_idx: column_idx - offset,
+        },
+        PlanFilterPredicate::And(l, r) => PlanFilterPredicate::And(
+            Box::new(remap_predicate(*l, offset)),
+            Box::new(remap_predicate(*r, offset)),
+        ),
+        PlanFilterPredicate::Or(l, r) => PlanFilterPredicate::Or(
+            Box::new(remap_predicate(*l, offset)),
+            Box::new(remap_predicate(*r, offset)),
+        ),
+        PlanFilterPredicate::None => PlanFilterPredicate::None,
+    }
 }
 
 fn plan_filter(
@@ -307,7 +487,12 @@ mod tests {
 
         let plan = plan_select(&select, &table_schemas()).unwrap();
 
-        assert!(matches!(plan.filter, PlanFilterPredicate::GreaterThan { column_idx: 2, .. }));
+        // Single-source filter gets pushed down
+        assert!(matches!(plan.filter, PlanFilterPredicate::None));
+        assert!(matches!(
+            plan.sources[0].pre_filter,
+            PlanFilterPredicate::GreaterThan { column_idx: 2, .. }
+        ));
         assert!(matches!(plan.result_columns[0], PlanResultColumn::Column { column_idx: 1, .. }));
         assert!(matches!(plan.result_columns[1], PlanResultColumn::Column { column_idx: 2, .. }));
     }
@@ -437,7 +622,9 @@ mod tests {
         };
 
         let plan = plan_select(&select, &table_schemas()).unwrap();
-        assert!(matches!(plan.filter, PlanFilterPredicate::And(_, _)));
+        // Both predicates reference only users → both pushed down
+        assert!(matches!(plan.filter, PlanFilterPredicate::None));
+        assert!(matches!(plan.sources[0].pre_filter, PlanFilterPredicate::And(_, _)));
     }
 
     #[test]
@@ -454,7 +641,12 @@ mod tests {
         };
 
         let plan = plan_select(&select, &table_schemas()).unwrap();
-        assert!(matches!(plan.filter, PlanFilterPredicate::GreaterThan { column_idx: 2, .. }));
+        // Single-source filter gets pushed down
+        assert!(matches!(plan.filter, PlanFilterPredicate::None));
+        assert!(matches!(
+            plan.sources[0].pre_filter,
+            PlanFilterPredicate::GreaterThan { column_idx: 2, .. }
+        ));
     }
 
     #[test]
@@ -468,6 +660,90 @@ mod tests {
 
         let err = plan_select(&select, &table_schemas()).unwrap_err();
         assert!(matches!(err, PlanError::UnknownTable(_)));
+    }
+
+    #[test]
+    fn test_pushdown_cross_source_stays() {
+        // WHERE users.id = orders.user_id → crosses sources, cannot push down
+        let select = AstSelect {
+            sources: vec![
+                AstSourceEntry { table: "users".into(), join: None },
+                AstSourceEntry {
+                    table: "orders".into(),
+                    join: Some(AstJoinClause {
+                        join_type: JoinType::Inner,
+                        on: vec![AstExpr::Binary {
+                            left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "id".into() })),
+                            op: Operator::Eq,
+                            right: Box::new(AstExpr::Column(AstColumnRef { table: "orders".into(), column: "user_id".into() })),
+                        }],
+                    }),
+                },
+            ],
+            filter: vec![AstExpr::Binary {
+                left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "id".into() })),
+                op: Operator::Eq,
+                right: Box::new(AstExpr::Column(AstColumnRef { table: "orders".into(), column: "user_id".into() })),
+            }],
+            group_by: vec![],
+            result_columns: vec![],
+        };
+
+        let plan = plan_select(&select, &table_schemas()).unwrap();
+        // Cross-source predicate stays in plan.filter
+        assert!(matches!(plan.filter, PlanFilterPredicate::ColumnEquals { .. }));
+        assert!(matches!(plan.sources[0].pre_filter, PlanFilterPredicate::None));
+        assert!(matches!(plan.sources[1].pre_filter, PlanFilterPredicate::None));
+    }
+
+    #[test]
+    fn test_pushdown_mixed() {
+        // WHERE users.age > 18 AND orders.amount > 50 → each pushed to respective source
+        let select = AstSelect {
+            sources: vec![
+                AstSourceEntry { table: "users".into(), join: None },
+                AstSourceEntry {
+                    table: "orders".into(),
+                    join: Some(AstJoinClause {
+                        join_type: JoinType::Inner,
+                        on: vec![AstExpr::Binary {
+                            left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "id".into() })),
+                            op: Operator::Eq,
+                            right: Box::new(AstExpr::Column(AstColumnRef { table: "orders".into(), column: "user_id".into() })),
+                        }],
+                    }),
+                },
+            ],
+            filter: vec![
+                AstExpr::Binary {
+                    left: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() })),
+                    op: Operator::Gt,
+                    right: Box::new(AstExpr::Literal(Value::Int(18))),
+                },
+                AstExpr::Binary {
+                    left: Box::new(AstExpr::Column(AstColumnRef { table: "orders".into(), column: "amount".into() })),
+                    op: Operator::Gt,
+                    right: Box::new(AstExpr::Literal(Value::Int(50))),
+                },
+            ],
+            group_by: vec![],
+            result_columns: vec![],
+        };
+
+        let plan = plan_select(&select, &table_schemas()).unwrap();
+
+        // Both pushed down, main filter empty
+        assert!(matches!(plan.filter, PlanFilterPredicate::None));
+        // users.age > 18 → pushed to source 0 (local idx 2)
+        assert!(matches!(
+            plan.sources[0].pre_filter,
+            PlanFilterPredicate::GreaterThan { column_idx: 2, .. }
+        ));
+        // orders.amount > 50 → pushed to source 1, remapped: global 5 → local 2
+        assert!(matches!(
+            plan.sources[1].pre_filter,
+            PlanFilterPredicate::GreaterThan { column_idx: 2, .. }
+        ));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use schema_engine::schema::{DataType, TableSchema};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CellValue {
     I64(i64),
     Str(String),

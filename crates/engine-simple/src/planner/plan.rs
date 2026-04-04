@@ -55,6 +55,7 @@ pub struct PlanSourceEntry {
     pub table: String,
     pub schema: Schema,
     pub join: Option<PlanJoin>,
+    pub pre_filter: PlanFilterPredicate,
 }
 
 #[derive(Debug, Clone)]
