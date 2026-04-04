@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::planner::plan::PlanAggregate;
-use crate::storage::{CellValue, Table};
+use crate::storage::CellValue;
 use query_engine::ast::AggFunc;
 
 use super::{num_rows, Columns};
@@ -44,18 +44,17 @@ pub fn aggregate(
     result
 }
 
-/// Aggregate directly from Table storage without materializing intermediate columns.
-pub fn aggregate_direct(
-    table: &Table,
-    row_ids: &[usize],
+/// Aggregate directly from a RowSet without materializing intermediate columns.
+pub fn aggregate_rowset(
+    rs: &super::RowSet,
     group_by: &[usize],
     aggregates: &[PlanAggregate],
 ) -> Columns {
     let mut groups: HashMap<Vec<CellValue>, Vec<Accumulator>> = HashMap::new();
     let mut group_order: Vec<Vec<CellValue>> = Vec::new();
 
-    for &row in row_ids {
-        let key: Vec<CellValue> = group_by.iter().map(|&ci| table.get(row, ci)).collect();
+    for row in 0..rs.num_rows {
+        let key: Vec<CellValue> = group_by.iter().map(|&ci| rs.get(row, ci)).collect();
 
         let accums = groups.entry(key.clone()).or_insert_with(|| {
             group_order.push(key.clone());
@@ -63,7 +62,7 @@ pub fn aggregate_direct(
         });
 
         for (ai, agg) in aggregates.iter().enumerate() {
-            accums[ai].feed(&table.get(row, agg.column_idx));
+            accums[ai].feed(&rs.get(row, agg.column_idx));
         }
     }
 

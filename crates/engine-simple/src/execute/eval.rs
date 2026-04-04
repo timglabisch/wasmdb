@@ -164,44 +164,6 @@ impl PlanFilterPredicate {
         }
     }
 
-    /// Evaluate this predicate for a single (left_row, right_row) pair
-    /// in a join without materializing temporary columns.
-    pub fn matches_join_row(
-        &self,
-        left: &Columns,
-        right: &Columns,
-        l: usize,
-        r: usize,
-    ) -> bool {
-        match self {
-            PlanFilterPredicate::None => true,
-            PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                get_combined(left, right, l, r, *left_idx)
-                    == get_combined(left, right, l, r, *right_idx)
-            }
-            PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                get_combined(left, right, l, r, *left_idx)
-                    != get_combined(left, right, l, r, *right_idx)
-            }
-            PlanFilterPredicate::Equals { column_idx, value } => {
-                let cell = get_combined(left, right, l, r, *column_idx);
-                cell == value_to_cell(value)
-            }
-            PlanFilterPredicate::And(a, b) => {
-                a.matches_join_row(left, right, l, r)
-                    && b.matches_join_row(left, right, l, r)
-            }
-            PlanFilterPredicate::Or(a, b) => {
-                a.matches_join_row(left, right, l, r)
-                    || b.matches_join_row(left, right, l, r)
-            }
-            _other => {
-                let combined = build_single_row(left, right, l, r);
-                let mask = self.eval_batch(&combined);
-                mask[0]
-            }
-        }
-    }
 }
 
 // --- Typed helpers for eval_table: directly produce Vec<usize> (no Vec<bool> intermediate) ---
@@ -328,6 +290,55 @@ fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
     result
 }
 
+// --- Generic predicate evaluation on a cell accessor (no materialization) ---
+
+/// Evaluate a predicate using a closure that resolves column index → CellValue.
+/// Used by both RowSet filter and join evaluation.
+pub fn eval_pred_row<F: Fn(usize) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
+    match pred {
+        PlanFilterPredicate::None => true,
+        PlanFilterPredicate::Equals { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Eq),
+        PlanFilterPredicate::NotEquals { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Neq),
+        PlanFilterPredicate::GreaterThan { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Gt),
+        PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Gte),
+        PlanFilterPredicate::LessThan { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Lt),
+        PlanFilterPredicate::LessThanOrEqual { column_idx, value } => cmp_cell(&get(*column_idx), &value_to_cell(value), CmpOp::Lte),
+        PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Eq),
+        PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Neq),
+        PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Gt),
+        PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Gte),
+        PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Lt),
+        PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => cmp_cell(&get(*left_idx), &get(*right_idx), CmpOp::Lte),
+        PlanFilterPredicate::IsNull { column_idx } => matches!(get(*column_idx), CellValue::Null),
+        PlanFilterPredicate::IsNotNull { column_idx } => !matches!(get(*column_idx), CellValue::Null),
+        PlanFilterPredicate::And(a, b) => eval_pred_row(a, get) && eval_pred_row(b, get),
+        PlanFilterPredicate::Or(a, b) => eval_pred_row(a, get) || eval_pred_row(b, get),
+    }
+}
+
+/// Evaluate predicate on a single RowSet row.
+pub fn eval_rowset_row(pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
+    eval_pred_row(pred, &|col| rs.get(row, col))
+}
+
+/// Evaluate join predicate: left columns from RowSet, right columns from Table.
+pub fn eval_join_row(
+    pred: &PlanFilterPredicate,
+    left: &super::RowSet,
+    right_table: &Table,
+    right_col_offset: usize,
+    l: usize,
+    r: usize,
+) -> bool {
+    eval_pred_row(pred, &|col| {
+        if col < right_col_offset {
+            left.get(l, col)
+        } else {
+            right_table.get(r, col - right_col_offset)
+        }
+    })
+}
+
 // --- Helpers for eval_batch (on materialized Columns, post-join) ---
 
 fn eval_column_value_cmp(
@@ -360,33 +371,6 @@ fn eval_is_null(cols: &Columns, col_idx: usize, want_null: bool) -> Vec<bool> {
         .iter()
         .map(|v| matches!(v, CellValue::Null) == want_null)
         .collect()
-}
-
-// --- Helpers for matches_join_row ---
-
-fn get_combined(
-    left: &Columns,
-    right: &Columns,
-    l: usize,
-    r: usize,
-    global_idx: usize,
-) -> CellValue {
-    if global_idx < left.len() {
-        left[global_idx][l].clone()
-    } else {
-        right[global_idx - left.len()][r].clone()
-    }
-}
-
-fn build_single_row(left: &Columns, right: &Columns, l: usize, r: usize) -> Columns {
-    let mut combined = Vec::with_capacity(left.len() + right.len());
-    for col in left {
-        combined.push(vec![col[l].clone()]);
-    }
-    for col in right {
-        combined.push(vec![col[r].clone()]);
-    }
-    combined
 }
 
 // --- Shared utility ---

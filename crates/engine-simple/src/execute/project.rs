@@ -2,6 +2,27 @@ use crate::planner::plan::PlanResultColumn;
 
 use super::Columns;
 
+/// Project result columns directly from a RowSet — only result columns are materialized.
+pub fn project_rowset(
+    rs: &super::RowSet,
+    result_columns: &[PlanResultColumn],
+) -> Columns {
+    let mut result: Columns = Vec::with_capacity(result_columns.len());
+    for rc in result_columns {
+        match rc {
+            PlanResultColumn::Column { column_idx, .. } => {
+                result.push(
+                    (0..rs.num_rows).map(|row| rs.get(row, *column_idx)).collect(),
+                );
+            }
+            PlanResultColumn::Aggregate { .. } => {
+                unreachable!("aggregate result column without aggregates in plan");
+            }
+        }
+    }
+    result
+}
+
 pub fn project(
     cols: &Columns,
     result_columns: &[PlanResultColumn],

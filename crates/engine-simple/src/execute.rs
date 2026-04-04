@@ -14,6 +14,75 @@ use query_engine::ast::Value;
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 
+/// Sentinel row ID for null-fill in left joins (no match on right side).
+pub const NULL_ROW: usize = usize::MAX;
+
+/// Virtual row set backed by references to underlying Tables.
+/// No data is copied — cell access goes through row_id indirection.
+pub struct RowSet<'a> {
+    pub tables: Vec<&'a Table>,
+    pub col_offsets: Vec<usize>,
+    pub num_cols: usize,
+    /// `row_ids[table_idx][output_row]` = physical row in that table.
+    /// [`NULL_ROW`] means null fill (left join, no match).
+    pub row_ids: Vec<Vec<usize>>,
+    pub num_rows: usize,
+}
+
+impl<'a> RowSet<'a> {
+    pub fn from_scan(table: &'a Table, row_ids: Vec<usize>) -> Self {
+        let num_rows = row_ids.len();
+        let num_cols = table.columns.len();
+        RowSet {
+            tables: vec![table],
+            col_offsets: vec![0],
+            num_cols,
+            row_ids: vec![row_ids],
+            num_rows,
+        }
+    }
+
+    pub fn get(&self, row: usize, global_col: usize) -> CellValue {
+        let (table_idx, local_col) = self.resolve_col(global_col);
+        let row_id = self.row_ids[table_idx][row];
+        if row_id == NULL_ROW {
+            CellValue::Null
+        } else {
+            self.tables[table_idx].get(row_id, local_col)
+        }
+    }
+
+    fn resolve_col(&self, global_col: usize) -> (usize, usize) {
+        for i in (0..self.col_offsets.len()).rev() {
+            if global_col >= self.col_offsets[i] {
+                return (i, global_col - self.col_offsets[i]);
+            }
+        }
+        unreachable!()
+    }
+
+    pub fn filter(&self, pred: &PlanFilterPredicate) -> RowSet<'a> {
+        let mut new_row_ids: Vec<Vec<usize>> =
+            (0..self.tables.len()).map(|_| Vec::new()).collect();
+        let mut count = 0;
+        for row in 0..self.num_rows {
+            if eval::eval_rowset_row(pred, self, row) {
+                for (ti, ids) in self.row_ids.iter().enumerate() {
+                    new_row_ids[ti].push(ids[row]);
+                }
+                count += 1;
+            }
+        }
+        RowSet {
+            tables: self.tables.clone(),
+            col_offsets: self.col_offsets.clone(),
+            num_cols: self.num_cols,
+            row_ids: new_row_ids,
+            num_rows: count,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ExecuteError {
     TableNotFound(String),
@@ -47,42 +116,37 @@ pub fn execute(
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Single-table fast path: avoid materialization entirely.
-    // Only materialize the final result columns at the end.
-    if plan.sources.len() == 1 {
-        return execute_single_table(plan, db);
-    }
+    // Phase 1: Scan + pre-filter first source → RowSet (no materialization).
+    let first = &plan.sources[0];
+    let first_table = db
+        .get(&first.table)
+        .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
+    let first_ids = if matches!(first.pre_filter, PlanFilterPredicate::None) {
+        scan::scan_row_ids(first_table)
+    } else {
+        scan::scan_filtered(first_table, &first.pre_filter)
+    };
+    let mut rs = RowSet::from_scan(first_table, first_ids);
 
-    // Multi-table path: materialize per source, then join.
-    let mut scanned: Vec<Columns> = Vec::new();
-    for source in &plan.sources {
+    // Phase 2: Join remaining sources (each extends the RowSet).
+    for source in plan.sources.iter().skip(1) {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-
         let row_ids = if matches!(source.pre_filter, PlanFilterPredicate::None) {
             scan::scan_row_ids(table)
         } else {
             scan::scan_filtered(table, &source.pre_filter)
         };
-
-        scanned.push(scan::materialize(table, &row_ids));
-    }
-
-    let mut current = scanned.remove(0);
-
-    for (i, source) in plan.sources.iter().enumerate().skip(1) {
-        let right = &scanned[i - 1];
-        let join_info = source.join.as_ref();
-        match join_info {
+        match source.join.as_ref() {
             Some(j) => {
-                current =
-                    join::nested_loop_join(&current, right, &j.on, j.join_type);
+                rs = join::nested_loop_join(&rs, table, &row_ids, &j.on, j.join_type);
             }
             None => {
-                current = join::nested_loop_join(
-                    &current,
-                    right,
+                rs = join::nested_loop_join(
+                    &rs,
+                    table,
+                    &row_ids,
                     &PlanFilterPredicate::None,
                     query_engine::ast::JoinType::Inner,
                 );
@@ -90,48 +154,15 @@ pub fn execute(
         }
     }
 
+    // Phase 3: Post-filter on RowSet (no materialization).
     if !matches!(plan.filter, PlanFilterPredicate::None) {
-        current = filter::filter(&current, &plan.filter);
+        rs = rs.filter(&plan.filter);
     }
 
-    if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
-        current = aggregate::aggregate(&current, &plan.group_by, &plan.aggregates);
-    }
-
-    let has_aggregates = !plan.aggregates.is_empty();
-    current = project::project(&current, &plan.result_columns, &plan.group_by, has_aggregates);
-
-    Ok(current)
-}
-
-fn execute_single_table(
-    plan: &PlanSelect,
-    db: &HashMap<String, Table>,
-) -> Result<Columns, ExecuteError> {
-    let source = &plan.sources[0];
-    let table = db
-        .get(&source.table)
-        .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-
-    // Scan + pre-filter → row IDs only, no materialization.
-    let row_ids = if matches!(source.pre_filter, PlanFilterPredicate::None) {
-        scan::scan_row_ids(table)
-    } else {
-        scan::scan_filtered(table, &source.pre_filter)
-    };
-
-    // Post-filter directly on Table storage (typically None for single table
-    // since pushdown moves everything to pre_filter).
-    let row_ids = if matches!(plan.filter, PlanFilterPredicate::None) {
-        row_ids
-    } else {
-        plan.filter.eval_table(table, &row_ids)
-    };
-
-    // Aggregate directly from Table — no intermediate materialization.
+    // Phase 4: Aggregate (RowSet → small materialized Columns).
     if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
         let aggregated =
-            aggregate::aggregate_direct(table, &row_ids, &plan.group_by, &plan.aggregates);
+            aggregate::aggregate_rowset(&rs, &plan.group_by, &plan.aggregates);
         let has_aggregates = !plan.aggregates.is_empty();
         return Ok(project::project(
             &aggregated,
@@ -141,19 +172,8 @@ fn execute_single_table(
         ));
     }
 
-    // Project: materialize only the result columns directly from Table.
-    let mut result = Columns::with_capacity(plan.result_columns.len());
-    for rc in &plan.result_columns {
-        match rc {
-            PlanResultColumn::Column { column_idx, .. } => {
-                result.push(table.columns[*column_idx].to_cells(&row_ids));
-            }
-            PlanResultColumn::Aggregate { .. } => {
-                unreachable!("aggregate result column without aggregates in plan");
-            }
-        }
-    }
-    Ok(result)
+    // Phase 5: Project — materialize only result columns from RowSet.
+    Ok(project::project_rowset(&rs, &plan.result_columns))
 }
 
 #[cfg(test)]
