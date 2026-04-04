@@ -8,7 +8,6 @@ pub mod scan;
 use std::collections::HashMap;
 
 use crate::planner::plan::*;
-use crate::planner::predicate_column_indices;
 use crate::storage::{CellValue, Table};
 use query_engine::ast::Value;
 
@@ -48,31 +47,21 @@ pub fn execute(
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Phase 1: Late materialization — scan + pre-filter as row indices,
-    // only materialize surviving rows.
+    // Phase 1: Fused scan+filter — evaluate pre-filter per row directly on
+    // Table storage, collect only qualifying row IDs, then materialize.
     let mut scanned: Vec<Columns> = Vec::new();
     for source in &plan.sources {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
 
-        let mut indices = scan::scan_indices(table);
+        let row_ids = if matches!(source.pre_filter, PlanFilterPredicate::None) {
+            scan::scan_row_ids(table)
+        } else {
+            scan::scan_filtered(table, &source.pre_filter)
+        };
 
-        if !matches!(source.pre_filter, PlanFilterPredicate::None) {
-            // Sparse materialization: only the columns the predicate references
-            let needed = predicate_column_indices(&source.pre_filter);
-            let sparse = scan::materialize_sparse(table, &indices, &needed);
-            let mask = eval::eval_predicate(&sparse, &source.pre_filter);
-            indices = indices
-                .into_iter()
-                .zip(mask)
-                .filter(|(_, keep)| *keep)
-                .map(|(idx, _)| idx)
-                .collect();
-        }
-
-        // Materialize all columns for surviving rows only
-        scanned.push(scan::materialize(table, &indices));
+        scanned.push(scan::materialize(table, &row_ids));
     }
 
     // Phase 2: Join sources

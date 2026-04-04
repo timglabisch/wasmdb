@@ -1,3 +1,4 @@
+use crate::bitmap::Bitmap;
 use schema_engine::schema::{DataType, TableSchema};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -11,8 +12,8 @@ pub enum CellValue {
 pub enum TypedColumn {
     I64(Vec<i64>),
     Str(Vec<String>),
-    NullableI64(Vec<Option<i64>>),
-    NullableStr(Vec<Option<String>>),
+    NullableI64 { values: Vec<i64>, nulls: Bitmap },
+    NullableStr { values: Vec<String>, nulls: Bitmap },
 }
 
 impl TypedColumn {
@@ -20,8 +21,8 @@ impl TypedColumn {
         match (data_type, nullable) {
             (DataType::I64, false) => TypedColumn::I64(Vec::new()),
             (DataType::String, false) => TypedColumn::Str(Vec::new()),
-            (DataType::I64, true) => TypedColumn::NullableI64(Vec::new()),
-            (DataType::String, true) => TypedColumn::NullableStr(Vec::new()),
+            (DataType::I64, true) => TypedColumn::NullableI64 { values: Vec::new(), nulls: Bitmap::with_capacity(0) },
+            (DataType::String, true) => TypedColumn::NullableStr { values: Vec::new(), nulls: Bitmap::with_capacity(0) },
         }
     }
 
@@ -30,10 +31,22 @@ impl TypedColumn {
             (TypedColumn::I64(v), CellValue::I64(val)) => v.push(*val),
             (TypedColumn::Str(v), CellValue::Str(val)) => v.push(val.clone()),
 
-            (TypedColumn::NullableI64(v), CellValue::I64(val)) => v.push(Some(*val)),
-            (TypedColumn::NullableI64(v), CellValue::Null) => v.push(None),
-            (TypedColumn::NullableStr(v), CellValue::Str(val)) => v.push(Some(val.clone())),
-            (TypedColumn::NullableStr(v), CellValue::Null) => v.push(None),
+            (TypedColumn::NullableI64 { values, nulls }, CellValue::I64(val)) => {
+                values.push(*val);
+                nulls.push(false);
+            }
+            (TypedColumn::NullableI64 { values, nulls }, CellValue::Null) => {
+                values.push(0);
+                nulls.push(true);
+            }
+            (TypedColumn::NullableStr { values, nulls }, CellValue::Str(val)) => {
+                values.push(val.clone());
+                nulls.push(false);
+            }
+            (TypedColumn::NullableStr { values, nulls }, CellValue::Null) => {
+                values.push(String::new());
+                nulls.push(true);
+            }
 
             (TypedColumn::I64(_), CellValue::Null)
             | (TypedColumn::Str(_), CellValue::Null) => {
@@ -49,29 +62,25 @@ impl TypedColumn {
         match self {
             TypedColumn::I64(v) => CellValue::I64(v[row_idx]),
             TypedColumn::Str(v) => CellValue::Str(v[row_idx].clone()),
-            TypedColumn::NullableI64(v) => match v[row_idx] {
-                Some(val) => CellValue::I64(val),
-                None => CellValue::Null,
-            },
-            TypedColumn::NullableStr(v) => match &v[row_idx] {
-                Some(val) => CellValue::Str(val.clone()),
-                None => CellValue::Null,
-            },
+            TypedColumn::NullableI64 { values, nulls } => {
+                if nulls.get(row_idx) { CellValue::Null } else { CellValue::I64(values[row_idx]) }
+            }
+            TypedColumn::NullableStr { values, nulls } => {
+                if nulls.get(row_idx) { CellValue::Null } else { CellValue::Str(values[row_idx].clone()) }
+            }
         }
     }
 
     /// Batch-convert specific rows to CellValues (column-at-a-time, no per-cell dispatch).
-    pub fn to_cells(&self, indices: &[usize]) -> Vec<CellValue> {
+    pub fn to_cells(&self, row_ids: &[usize]) -> Vec<CellValue> {
         match self {
-            TypedColumn::I64(v) => indices.iter().map(|&i| CellValue::I64(v[i])).collect(),
-            TypedColumn::Str(v) => indices.iter().map(|&i| CellValue::Str(v[i].clone())).collect(),
-            TypedColumn::NullableI64(v) => indices.iter().map(|&i| match v[i] {
-                Some(val) => CellValue::I64(val),
-                None => CellValue::Null,
+            TypedColumn::I64(v) => row_ids.iter().map(|&i| CellValue::I64(v[i])).collect(),
+            TypedColumn::Str(v) => row_ids.iter().map(|&i| CellValue::Str(v[i].clone())).collect(),
+            TypedColumn::NullableI64 { values, nulls } => row_ids.iter().map(|&i| {
+                if nulls.get(i) { CellValue::Null } else { CellValue::I64(values[i]) }
             }).collect(),
-            TypedColumn::NullableStr(v) => indices.iter().map(|&i| match &v[i] {
-                Some(val) => CellValue::Str(val.clone()),
-                None => CellValue::Null,
+            TypedColumn::NullableStr { values, nulls } => row_ids.iter().map(|&i| {
+                if nulls.get(i) { CellValue::Null } else { CellValue::Str(values[i].clone()) }
             }).collect(),
         }
     }
@@ -80,8 +89,8 @@ impl TypedColumn {
         match self {
             TypedColumn::I64(v) => v.len(),
             TypedColumn::Str(v) => v.len(),
-            TypedColumn::NullableI64(v) => v.len(),
-            TypedColumn::NullableStr(v) => v.len(),
+            TypedColumn::NullableI64 { values, .. } => values.len(),
+            TypedColumn::NullableStr { values, .. } => values.len(),
         }
     }
 }
@@ -115,7 +124,7 @@ impl std::error::Error for StorageError {}
 pub struct Table {
     pub schema: TableSchema,
     pub columns: Vec<TypedColumn>,
-    deleted: Vec<bool>,
+    deleted: Bitmap,
 }
 
 impl Table {
@@ -128,7 +137,7 @@ impl Table {
         Table {
             schema,
             columns,
-            deleted: Vec::new(),
+            deleted: Bitmap::with_capacity(0),
         }
     }
 
@@ -143,7 +152,7 @@ impl Table {
 
     /// Number of live (non-deleted) rows.
     pub fn len(&self) -> usize {
-        self.physical_len() - self.deleted.iter().filter(|&&d| d).count()
+        self.physical_len() - self.deleted.count_ones()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -151,7 +160,12 @@ impl Table {
     }
 
     pub fn is_deleted(&self, row_idx: usize) -> bool {
-        self.deleted[row_idx]
+        self.deleted.get(row_idx)
+    }
+
+    /// Returns the deleted bitmap for direct inspection by the scan layer.
+    pub fn deleted_bitmap(&self) -> &Bitmap {
+        &self.deleted
     }
 
     pub fn insert(&mut self, row: &[CellValue]) -> Result<usize, StorageError> {
@@ -170,10 +184,10 @@ impl Table {
     }
 
     pub fn delete(&mut self, row_idx: usize) -> Result<(), StorageError> {
-        if row_idx >= self.physical_len() || self.deleted[row_idx] {
+        if row_idx >= self.physical_len() || self.deleted.get(row_idx) {
             return Err(StorageError::RowNotFound { row_idx });
         }
-        self.deleted[row_idx] = true;
+        self.deleted.set(row_idx, true);
         Ok(())
     }
 
@@ -181,9 +195,9 @@ impl Table {
         self.columns[col_idx].get(row_idx)
     }
 
-    /// Iterator over live (non-deleted) row indices.
-    pub fn row_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.physical_len()).filter(|&i| !self.deleted[i])
+    /// Iterator over live (non-deleted) row IDs.
+    pub fn row_ids(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.physical_len()).filter(move |&i| !self.deleted.get(i))
     }
 }
 
@@ -314,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn test_row_indices_skips_deleted() {
+    fn test_row_ids_skips_deleted() {
         let mut table = Table::new(users_schema());
         table.insert(&[CellValue::I64(1), CellValue::Str("A".into()), CellValue::I64(1)]).unwrap();
         table.insert(&[CellValue::I64(2), CellValue::Str("B".into()), CellValue::I64(2)]).unwrap();
@@ -322,7 +336,7 @@ mod tests {
 
         table.delete(1).unwrap();
 
-        let live: Vec<usize> = table.row_indices().collect();
+        let live: Vec<usize> = table.row_ids().collect();
         assert_eq!(live, vec![0, 2]);
     }
 

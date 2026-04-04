@@ -2,8 +2,7 @@ use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::CellValue;
 use query_engine::ast::JoinType;
 
-use super::eval::eval_predicate;
-use super::{num_rows, value_to_cell, Columns};
+use super::{num_rows, Columns};
 
 pub fn nested_loop_join(
     left: &Columns,
@@ -20,7 +19,7 @@ pub fn nested_loop_join(
         let mut matched = false;
 
         for r in 0..right_rows {
-            if eval_join_condition(left, right, l, r, on) {
+            if on.matches_join_row(left, right, l, r) {
                 matched = true;
                 for (ci, col) in left.iter().enumerate() {
                     result[ci].push(col[l].clone());
@@ -44,74 +43,10 @@ pub fn nested_loop_join(
     result
 }
 
-/// Evaluate a join condition for a single (left_row, right_row) pair
-/// without materializing temporary columns.
-fn eval_join_condition(
-    left: &Columns,
-    right: &Columns,
-    l: usize,
-    r: usize,
-    on: &PlanFilterPredicate,
-) -> bool {
-    match on {
-        PlanFilterPredicate::None => true,
-        PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-            get_combined(left, right, l, r, *left_idx)
-                == get_combined(left, right, l, r, *right_idx)
-        }
-        PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-            get_combined(left, right, l, r, *left_idx)
-                != get_combined(left, right, l, r, *right_idx)
-        }
-        PlanFilterPredicate::Equals { column_idx, value } => {
-            let cell = get_combined(left, right, l, r, *column_idx);
-            cell == value_to_cell(value)
-        }
-        PlanFilterPredicate::And(a, b) => {
-            eval_join_condition(left, right, l, r, a)
-                && eval_join_condition(left, right, l, r, b)
-        }
-        PlanFilterPredicate::Or(a, b) => {
-            eval_join_condition(left, right, l, r, a)
-                || eval_join_condition(left, right, l, r, b)
-        }
-        other => {
-            let combined = build_single_row(left, right, l, r);
-            let mask = eval_predicate(&combined, other);
-            mask[0]
-        }
-    }
-}
-
-fn get_combined(
-    left: &Columns,
-    right: &Columns,
-    l: usize,
-    r: usize,
-    global_idx: usize,
-) -> CellValue {
-    if global_idx < left.len() {
-        left[global_idx][l].clone()
-    } else {
-        right[global_idx - left.len()][r].clone()
-    }
-}
-
-fn build_single_row(left: &Columns, right: &Columns, l: usize, r: usize) -> Columns {
-    let mut combined = Vec::with_capacity(left.len() + right.len());
-    for col in left {
-        combined.push(vec![col[l].clone()]);
-    }
-    for col in right {
-        combined.push(vec![col[r].clone()]);
-    }
-    combined
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execute::scan::{materialize, scan_indices};
+    use crate::execute::scan::{materialize, scan_row_ids};
     use crate::storage::CellValue;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
@@ -154,9 +89,9 @@ mod tests {
     #[test]
     fn test_inner_join() {
         let ut = make_users_table();
-        let left = materialize(&ut, &scan_indices(&ut));
+        let left = materialize(&ut, &scan_row_ids(&ut));
         let ot = make_orders_table();
-        let right = materialize(&ot, &scan_indices(&ot));
+        let right = materialize(&ot, &scan_row_ids(&ot));
 
         let result = nested_loop_join(
             &left,
@@ -177,9 +112,9 @@ mod tests {
     #[test]
     fn test_left_join_with_nulls() {
         let ut = make_users_table();
-        let left = materialize(&ut, &scan_indices(&ut));
+        let left = materialize(&ut, &scan_row_ids(&ut));
         let ot = make_orders_table();
-        let right = materialize(&ot, &scan_indices(&ot));
+        let right = materialize(&ot, &scan_row_ids(&ot));
 
         let result = nested_loop_join(
             &left,
@@ -203,7 +138,7 @@ mod tests {
         let left: Columns = vec![vec![CellValue::I64(1), CellValue::I64(2)]];
         let right: Columns = vec![vec![CellValue::I64(2), CellValue::I64(3)]];
         let on = PlanFilterPredicate::ColumnEquals { left_idx: 0, right_idx: 1 };
-        assert!(!eval_join_condition(&left, &right, 0, 0, &on));
-        assert!(eval_join_condition(&left, &right, 1, 0, &on));
+        assert!(!on.matches_join_row(&left, &right, 0, 0));
+        assert!(on.matches_join_row(&left, &right, 1, 0));
     }
 }
