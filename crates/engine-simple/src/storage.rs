@@ -163,10 +163,6 @@ impl Table {
         self.deleted.get(row_idx)
     }
 
-    /// Returns the deleted bitmap for direct inspection by the scan layer.
-    pub fn deleted_bitmap(&self) -> &Bitmap {
-        &self.deleted
-    }
 
     pub fn insert(&mut self, row: &[CellValue]) -> Result<usize, StorageError> {
         if row.len() != self.columns.len() {

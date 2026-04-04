@@ -53,29 +53,6 @@ impl PlanFilterPredicate {
         }
     }
 
-    /// Full-scan entry point: evaluate predicate on the entire contiguous table
-    /// storage (SIMD-friendly), applying the deleted bitmap as a post-filter.
-    pub fn eval_full_scan(&self, table: &Table) -> Vec<usize> {
-        let n = table.physical_len();
-        let deleted = table.deleted_bitmap();
-        match self {
-            PlanFilterPredicate::None => {
-                deleted.iter_zeros().filter(|&i| i < n).collect()
-            }
-            PlanFilterPredicate::And(l, r) => {
-                let left_ids = l.eval_full_scan(table);
-                r.eval_table(table, &left_ids)
-            }
-            PlanFilterPredicate::Or(l, r) => {
-                let left_ids = l.eval_full_scan(table);
-                let right_ids = r.eval_full_scan(table);
-                sorted_union(&left_ids, &right_ids)
-            }
-
-            // Leaf predicates: full-scan contiguous slice, directly collect matching IDs
-            _ => self.eval_full_scan_filtered(table),
-        }
-    }
 
     /// Directly produce matching row_ids for leaf predicates (gather path, no Vec<bool> intermediate).
     fn eval_leaf_filtered(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
@@ -126,56 +103,6 @@ impl PlanFilterPredicate {
         }
     }
 
-    /// Full-scan leaf: scan contiguous slice + deleted bitmap, directly collect matching row IDs.
-    fn eval_full_scan_filtered(&self, table: &Table) -> Vec<usize> {
-        let n = table.physical_len();
-        let deleted = table.deleted_bitmap();
-        match self {
-            PlanFilterPredicate::Equals { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Eq)
-            }
-            PlanFilterPredicate::NotEquals { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Neq)
-            }
-            PlanFilterPredicate::GreaterThan { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Gt)
-            }
-            PlanFilterPredicate::GreaterThanOrEqual { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Gte)
-            }
-            PlanFilterPredicate::LessThan { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Lt)
-            }
-            PlanFilterPredicate::LessThanOrEqual { column_idx, value } => {
-                full_scan_filter_cmp(&table.columns[*column_idx], n, deleted, value, CmpOp::Lte)
-            }
-            PlanFilterPredicate::ColumnEquals { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Eq)
-            }
-            PlanFilterPredicate::ColumnNotEquals { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Neq)
-            }
-            PlanFilterPredicate::ColumnGreaterThan { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Gt)
-            }
-            PlanFilterPredicate::ColumnGreaterThanOrEqual { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Gte)
-            }
-            PlanFilterPredicate::ColumnLessThan { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Lt)
-            }
-            PlanFilterPredicate::ColumnLessThanOrEqual { left_idx, right_idx } => {
-                full_scan_filter_col_col(&table.columns[*left_idx], &table.columns[*right_idx], n, deleted, CmpOp::Lte)
-            }
-            PlanFilterPredicate::IsNull { column_idx } => {
-                full_scan_filter_is_null(&table.columns[*column_idx], n, deleted, true)
-            }
-            PlanFilterPredicate::IsNotNull { column_idx } => {
-                full_scan_filter_is_null(&table.columns[*column_idx], n, deleted, false)
-            }
-            _ => unreachable!(),
-        }
-    }
 
     /// Evaluate this predicate against materialized columnar data (post-join).
     pub fn eval_batch(&self, cols: &Columns) -> Vec<bool> {
@@ -384,92 +311,6 @@ fn cmp_str(left: &str, right: &str, op: CmpOp) -> bool {
     }
 }
 
-// --- Full-scan helpers: contiguous slice access, directly produce Vec<usize> ---
-
-use crate::bitmap::Bitmap;
-
-/// Full-scan compare column vs literal, collect matching non-deleted row IDs.
-fn full_scan_filter_cmp(
-    col: &TypedColumn,
-    n: usize,
-    deleted: &Bitmap,
-    value: &Value,
-    op: CmpOp,
-) -> Vec<usize> {
-    match normalize_value(value) {
-        NormalizedValue::Null => Vec::new(),
-        NormalizedValue::I64(scalar) => match col {
-            TypedColumn::I64(data) => {
-                (0..n).filter(|&i| !deleted.get(i) && cmp_i64(data[i], scalar, op)).collect()
-            }
-            TypedColumn::NullableI64 { values, nulls } => {
-                (0..n).filter(|&i| !deleted.get(i) && !nulls.get(i) && cmp_i64(values[i], scalar, op)).collect()
-            }
-            _ => Vec::new(),
-        },
-        NormalizedValue::Str(s) => match col {
-            TypedColumn::Str(data) => {
-                (0..n).filter(|&i| !deleted.get(i) && cmp_str(&data[i], s, op)).collect()
-            }
-            TypedColumn::NullableStr { values, nulls } => {
-                (0..n).filter(|&i| !deleted.get(i) && !nulls.get(i) && cmp_str(&values[i], s, op)).collect()
-            }
-            _ => Vec::new(),
-        },
-    }
-}
-
-/// Full-scan compare two columns, collect matching non-deleted row IDs.
-fn full_scan_filter_col_col(
-    left: &TypedColumn,
-    right: &TypedColumn,
-    n: usize,
-    deleted: &Bitmap,
-    op: CmpOp,
-) -> Vec<usize> {
-    match (left, right) {
-        (TypedColumn::I64(l), TypedColumn::I64(r)) => {
-            (0..n).filter(|&i| !deleted.get(i) && cmp_i64(l[i], r[i], op)).collect()
-        }
-        (TypedColumn::Str(l), TypedColumn::Str(r)) => {
-            (0..n).filter(|&i| !deleted.get(i) && cmp_str(&l[i], &r[i], op)).collect()
-        }
-        (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && !rn.get(i) && cmp_i64(lv[i], rv[i], op)).collect()
-        }
-        (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && !rn.get(i) && cmp_str(&lv[i], &rv[i], op)).collect()
-        }
-        (TypedColumn::I64(l), TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            (0..n).filter(|&i| !deleted.get(i) && !rn.get(i) && cmp_i64(l[i], rv[i], op)).collect()
-        }
-        (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::I64(r)) => {
-            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && cmp_i64(lv[i], r[i], op)).collect()
-        }
-        (TypedColumn::Str(l), TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            (0..n).filter(|&i| !deleted.get(i) && !rn.get(i) && cmp_str(&l[i], &rv[i], op)).collect()
-        }
-        (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::Str(r)) => {
-            (0..n).filter(|&i| !deleted.get(i) && !ln.get(i) && cmp_str(&lv[i], &r[i], op)).collect()
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Full-scan IS NULL / IS NOT NULL, collect matching non-deleted row IDs.
-fn full_scan_filter_is_null(col: &TypedColumn, n: usize, deleted: &Bitmap, want_null: bool) -> Vec<usize> {
-    match col {
-        TypedColumn::I64(_) | TypedColumn::Str(_) => {
-            if want_null { Vec::new() } else { (0..n).filter(|&i| !deleted.get(i)).collect() }
-        }
-        TypedColumn::NullableI64 { nulls, .. } => {
-            (0..n).filter(|&i| !deleted.get(i) && nulls.get(i) == want_null).collect()
-        }
-        TypedColumn::NullableStr { nulls, .. } => {
-            (0..n).filter(|&i| !deleted.get(i) && nulls.get(i) == want_null).collect()
-        }
-    }
-}
 
 /// Merge two sorted, deduplicated slices into a sorted, deduplicated Vec.
 fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {

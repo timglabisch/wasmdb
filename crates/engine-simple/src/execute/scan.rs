@@ -8,10 +8,10 @@ pub fn scan_row_ids(table: &Table) -> Vec<usize> {
     table.row_ids().collect()
 }
 
-/// Scan + filter fused: evaluate predicate on the full contiguous table
-/// storage (SIMD-friendly path), returning qualifying row IDs.
+/// Scan + filter: collect live row IDs, then evaluate predicate.
 pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
-    pred.eval_full_scan(table)
+    let row_ids = scan_row_ids(table);
+    pred.eval_table(table, &row_ids)
 }
 
 /// Materialize all columns for the given row IDs (column-at-a-time batch conversion).
