@@ -21,11 +21,8 @@ pub enum TokenKind {
     Not,
     Null,
     // Type keywords
-    KwString,
-    KwU32,
-    KwI32,
-    KwU64,
     KwI64,
+    KwString,
     // Identifier
     Ident(String),
     // Punctuation

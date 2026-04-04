@@ -85,11 +85,8 @@ impl<'a> Lexer<'a> {
             "KEY" => TokenKind::Key,
             "NOT" => TokenKind::Not,
             "NULL" => TokenKind::Null,
-            "STRING" => TokenKind::KwString,
-            "U32" => TokenKind::KwU32,
-            "I32" => TokenKind::KwI32,
-            "U64" => TokenKind::KwU64,
             "I64" => TokenKind::KwI64,
+            "STRING" => TokenKind::KwString,
             _ => TokenKind::Ident(text.to_string()),
         };
 
@@ -130,24 +127,21 @@ mod tests {
 
     #[test]
     fn test_type_keywords() {
-        let tokens = lex_all("STRING U32 I32 U64 I64").unwrap();
+        let tokens = lex_all("I64 STRING").unwrap();
         assert_eq!(tokens, vec![
-            TokenKind::KwString,
-            TokenKind::KwU32,
-            TokenKind::KwI32,
-            TokenKind::KwU64,
             TokenKind::KwI64,
+            TokenKind::KwString,
         ]);
     }
 
     #[test]
     fn test_case_insensitive() {
-        let tokens = lex_all("create Table string u64").unwrap();
+        let tokens = lex_all("create Table i64 string").unwrap();
         assert_eq!(tokens, vec![
             TokenKind::Create,
             TokenKind::Table,
+            TokenKind::KwI64,
             TokenKind::KwString,
-            TokenKind::KwU64,
         ]);
     }
 
@@ -180,14 +174,14 @@ mod tests {
 
     #[test]
     fn test_full_ddl_tokens() {
-        let tokens = lex_all("CREATE TABLE users ( id U64 NOT NULL PRIMARY KEY )").unwrap();
+        let tokens = lex_all("CREATE TABLE users ( id I64 NOT NULL PRIMARY KEY )").unwrap();
         assert_eq!(tokens, vec![
             TokenKind::Create,
             TokenKind::Table,
             TokenKind::Ident("users".into()),
             TokenKind::LParen,
             TokenKind::Ident("id".into()),
-            TokenKind::KwU64,
+            TokenKind::KwI64,
             TokenKind::Not,
             TokenKind::Null,
             TokenKind::Primary,

@@ -15,11 +15,8 @@ pub struct AstColumnDef {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AstDataType {
-    String,
-    U32,
-    I32,
-    U64,
     I64,
+    String,
 }
 
 #[derive(Debug, Clone)]

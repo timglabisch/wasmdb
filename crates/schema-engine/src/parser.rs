@@ -145,11 +145,8 @@ impl<'a> Parser<'a> {
     fn parse_data_type(&mut self) -> Result<AstDataType, ParseError> {
         let tok = self.eat()?;
         match tok.kind {
-            TokenKind::KwString => Ok(AstDataType::String),
-            TokenKind::KwU32 => Ok(AstDataType::U32),
-            TokenKind::KwI32 => Ok(AstDataType::I32),
-            TokenKind::KwU64 => Ok(AstDataType::U64),
             TokenKind::KwI64 => Ok(AstDataType::I64),
+            TokenKind::KwString => Ok(AstDataType::String),
             _ => Err(ParseError {
                 message: format!("expected data type, got {}", token_kind_name(&tok.kind)),
                 span: tok.span,
@@ -202,11 +199,8 @@ fn token_kind_name(kind: &TokenKind) -> &str {
         TokenKind::Key => "KEY",
         TokenKind::Not => "NOT",
         TokenKind::Null => "NULL",
-        TokenKind::KwString => "STRING",
-        TokenKind::KwU32 => "U32",
-        TokenKind::KwI32 => "I32",
-        TokenKind::KwU64 => "U64",
         TokenKind::KwI64 => "I64",
+        TokenKind::KwString => "STRING",
         TokenKind::Ident(_) => "identifier",
         TokenKind::LParen => "'('",
         TokenKind::RParen => "')'",
@@ -222,11 +216,11 @@ mod tests {
 
     #[test]
     fn test_simple_table() {
-        let ast = parse("CREATE TABLE users (id U64, name STRING)").unwrap();
+        let ast = parse("CREATE TABLE users (id I64, name STRING)").unwrap();
         assert_eq!(ast.name, "users");
         assert_eq!(ast.columns.len(), 2);
         assert_eq!(ast.columns[0].name, "id");
-        assert_eq!(ast.columns[0].data_type, AstDataType::U64);
+        assert_eq!(ast.columns[0].data_type, AstDataType::I64);
         assert!(!ast.columns[0].not_null);
         assert_eq!(ast.columns[1].name, "name");
         assert_eq!(ast.columns[1].data_type, AstDataType::String);
@@ -240,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_inline_primary_key() {
-        let ast = parse("CREATE TABLE t (id U64 NOT NULL PRIMARY KEY, name STRING)").unwrap();
+        let ast = parse("CREATE TABLE t (id I64 NOT NULL PRIMARY KEY, name STRING)").unwrap();
         assert!(ast.columns[0].primary_key);
         assert!(ast.columns[0].not_null);
         assert!(!ast.columns[1].primary_key);
@@ -248,14 +242,14 @@ mod tests {
 
     #[test]
     fn test_primary_key_implies_not_null() {
-        let ast = parse("CREATE TABLE t (id U64 PRIMARY KEY)").unwrap();
+        let ast = parse("CREATE TABLE t (id I64 PRIMARY KEY)").unwrap();
         assert!(ast.columns[0].primary_key);
         assert!(ast.columns[0].not_null);
     }
 
     #[test]
     fn test_constraint_primary_key() {
-        let ast = parse("CREATE TABLE t (a U32, b U64, PRIMARY KEY (a, b))").unwrap();
+        let ast = parse("CREATE TABLE t (a I64, b I64, PRIMARY KEY (a, b))").unwrap();
         assert_eq!(ast.constraints.len(), 1);
         match &ast.constraints[0] {
             AstTableConstraint::PrimaryKey { columns } => {
@@ -267,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_index_with_name() {
-        let ast = parse("CREATE TABLE t (id U64, name STRING, INDEX idx_name (name))").unwrap();
+        let ast = parse("CREATE TABLE t (id I64, name STRING, INDEX idx_name (name))").unwrap();
         assert_eq!(ast.constraints.len(), 1);
         match &ast.constraints[0] {
             AstTableConstraint::Index { name, columns } => {
@@ -280,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_index_without_name() {
-        let ast = parse("CREATE TABLE t (id U64, INDEX (id))").unwrap();
+        let ast = parse("CREATE TABLE t (id I64, INDEX (id))").unwrap();
         match &ast.constraints[0] {
             AstTableConstraint::Index { name, columns } => {
                 assert!(name.is_none());
@@ -292,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_composite_index() {
-        let ast = parse("CREATE TABLE t (a U32, b STRING, INDEX idx_ab (a, b))").unwrap();
+        let ast = parse("CREATE TABLE t (a I64, b STRING, INDEX idx_ab (a, b))").unwrap();
         match &ast.constraints[0] {
             AstTableConstraint::Index { columns, .. } => {
                 assert_eq!(columns, &["a", "b"]);
@@ -304,24 +298,21 @@ mod tests {
     #[test]
     fn test_all_data_types() {
         let ast = parse(
-            "CREATE TABLE t (a STRING, b U32, c I32, d U64, e I64)"
+            "CREATE TABLE t (a STRING, b I64)"
         ).unwrap();
         assert_eq!(ast.columns[0].data_type, AstDataType::String);
-        assert_eq!(ast.columns[1].data_type, AstDataType::U32);
-        assert_eq!(ast.columns[2].data_type, AstDataType::I32);
-        assert_eq!(ast.columns[3].data_type, AstDataType::U64);
-        assert_eq!(ast.columns[4].data_type, AstDataType::I64);
+        assert_eq!(ast.columns[1].data_type, AstDataType::I64);
     }
 
     #[test]
     fn test_trailing_semicolon() {
-        let ast = parse("CREATE TABLE t (id U64);").unwrap();
+        let ast = parse("CREATE TABLE t (id I64);").unwrap();
         assert_eq!(ast.name, "t");
     }
 
     #[test]
     fn test_case_insensitive() {
-        let ast = parse("create table Users (Id u64 not null primary key)").unwrap();
+        let ast = parse("create table Users (Id i64 not null primary key)").unwrap();
         assert_eq!(ast.name, "Users");
         assert_eq!(ast.columns[0].name, "Id");
         assert!(ast.columns[0].primary_key);
@@ -331,9 +322,9 @@ mod tests {
     fn test_full_example() {
         let sql = "
             CREATE TABLE users (
-                id U64 NOT NULL PRIMARY KEY,
+                id I64 NOT NULL PRIMARY KEY,
                 name STRING NOT NULL,
-                age I32,
+                age I64,
                 email STRING,
                 INDEX idx_email (email),
                 INDEX idx_name_age (name, age)
@@ -359,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_error_missing_table_name() {
-        let err = parse("CREATE TABLE (id U64)").unwrap_err();
+        let err = parse("CREATE TABLE (id I64)").unwrap_err();
         assert!(err.message.contains("expected identifier"));
     }
 

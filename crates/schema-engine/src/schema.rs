@@ -2,11 +2,8 @@ use crate::ast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
-    String,
-    U32,
-    I32,
-    U64,
     I64,
+    String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,11 +134,8 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
 
 fn convert_data_type(dt: ast::AstDataType) -> DataType {
     match dt {
-        ast::AstDataType::String => DataType::String,
-        ast::AstDataType::U32 => DataType::U32,
-        ast::AstDataType::I32 => DataType::I32,
-        ast::AstDataType::U64 => DataType::U64,
         ast::AstDataType::I64 => DataType::I64,
+        ast::AstDataType::String => DataType::String,
     }
 }
 
@@ -166,10 +160,10 @@ mod tests {
 
     #[test]
     fn test_simple_resolve() {
-        let schema = resolve_sql("CREATE TABLE users (id U64 NOT NULL, name STRING)").unwrap();
+        let schema = resolve_sql("CREATE TABLE users (id I64 NOT NULL, name STRING)").unwrap();
         assert_eq!(schema.name, "users");
         assert_eq!(schema.columns.len(), 2);
-        assert_eq!(schema.columns[0].data_type, DataType::U64);
+        assert_eq!(schema.columns[0].data_type, DataType::I64);
         assert!(!schema.columns[0].nullable);
         assert_eq!(schema.columns[1].data_type, DataType::String);
         assert!(schema.columns[1].nullable);
@@ -178,7 +172,7 @@ mod tests {
     #[test]
     fn test_primary_key_resolve() {
         let schema = resolve_sql(
-            "CREATE TABLE t (id U64 NOT NULL PRIMARY KEY, name STRING)"
+            "CREATE TABLE t (id I64 NOT NULL PRIMARY KEY, name STRING)"
         ).unwrap();
         assert_eq!(schema.primary_key, vec![0]);
     }
@@ -186,7 +180,7 @@ mod tests {
     #[test]
     fn test_constraint_primary_key_resolve() {
         let schema = resolve_sql(
-            "CREATE TABLE t (a U32 NOT NULL, b U64 NOT NULL, PRIMARY KEY (a, b))"
+            "CREATE TABLE t (a I64 NOT NULL, b I64 NOT NULL, PRIMARY KEY (a, b))"
         ).unwrap();
         assert_eq!(schema.primary_key, vec![0, 1]);
     }
@@ -194,7 +188,7 @@ mod tests {
     #[test]
     fn test_pk_nullable_error() {
         let err = resolve_sql(
-            "CREATE TABLE t (a U32, b U64, PRIMARY KEY (a))"
+            "CREATE TABLE t (a I64, b I64, PRIMARY KEY (a))"
         ).unwrap_err();
         assert!(matches!(err, SchemaError::PrimaryKeyNullable { .. }));
     }
@@ -202,7 +196,7 @@ mod tests {
     #[test]
     fn test_duplicate_column_error() {
         let err = resolve_sql(
-            "CREATE TABLE t (id U64, id STRING)"
+            "CREATE TABLE t (id I64, id STRING)"
         ).unwrap_err();
         assert!(matches!(err, SchemaError::DuplicateColumn { .. }));
     }
@@ -210,7 +204,7 @@ mod tests {
     #[test]
     fn test_index_resolve() {
         let schema = resolve_sql(
-            "CREATE TABLE t (id U64, name STRING, age I32, INDEX idx_name (name), INDEX (name, age))"
+            "CREATE TABLE t (id I64, name STRING, age I64, INDEX idx_name (name), INDEX (name, age))"
         ).unwrap();
         assert_eq!(schema.indexes.len(), 2);
         assert_eq!(schema.indexes[0].name.as_deref(), Some("idx_name"));
@@ -222,7 +216,7 @@ mod tests {
     #[test]
     fn test_unknown_column_in_index() {
         let err = resolve_sql(
-            "CREATE TABLE t (id U64, INDEX (nonexistent))"
+            "CREATE TABLE t (id I64, INDEX (nonexistent))"
         ).unwrap_err();
         assert!(matches!(err, SchemaError::UnknownColumn { .. }));
     }
@@ -231,9 +225,9 @@ mod tests {
     fn test_full_example() {
         let schema = resolve_sql("
             CREATE TABLE users (
-                id U64 NOT NULL PRIMARY KEY,
+                id I64 NOT NULL PRIMARY KEY,
                 name STRING NOT NULL,
-                age I32,
+                age I64,
                 email STRING,
                 INDEX idx_email (email),
                 INDEX idx_name_age (name, age)
