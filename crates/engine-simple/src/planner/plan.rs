@@ -1,7 +1,7 @@
 use query_engine::ast::{AggFunc, JoinType, OrderDirection, Value};
 use query_engine::schema::Schema;
 
-/// Reference to a column: (source table index, column index within that table).
+/// Reference to a column: (source table position, column position within that table).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ColumnRef {
     pub source: usize,

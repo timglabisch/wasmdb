@@ -71,13 +71,13 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         })
         .collect();
 
-    // Collect primary key indices.
-    let mut pk_indices = Vec::new();
+    // Collect primary key column positions.
+    let mut pk_positions = Vec::new();
 
     // From inline PRIMARY KEY on columns.
     for (i, col) in create.columns.iter().enumerate() {
         if col.primary_key {
-            pk_indices.push(i);
+            pk_positions.push(i);
         }
     }
 
@@ -89,15 +89,15 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         {
             for col_name in pk_cols {
                 let idx = resolve_column_idx(col_name, &columns)?;
-                if !pk_indices.contains(&idx) {
-                    pk_indices.push(idx);
+                if !pk_positions.contains(&idx) {
+                    pk_positions.push(idx);
                 }
             }
         }
     }
 
     // Validate PK columns are NOT NULL.
-    for &idx in &pk_indices {
+    for &idx in &pk_positions {
         if columns[idx].nullable {
             return Err(SchemaError::PrimaryKeyNullable {
                 column: columns[idx].name.clone(),
@@ -113,13 +113,13 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
             columns: idx_cols,
         } = constraint
         {
-            let col_indices = idx_cols
+            let col_positions = idx_cols
                 .iter()
                 .map(|c| resolve_column_idx(c, &columns))
                 .collect::<Result<Vec<_>, _>>()?;
             indexes.push(IndexSchema {
                 name: name.clone(),
-                columns: col_indices,
+                columns: col_positions,
             });
         }
     }
@@ -127,7 +127,7 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
     Ok(TableSchema {
         name: create.name.clone(),
         columns,
-        primary_key: pk_indices,
+        primary_key: pk_positions,
         indexes,
     })
 }

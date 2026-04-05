@@ -33,7 +33,7 @@ fn normalize_value<'a>(v: &'a Value) -> NormalizedValue<'a> {
 
 impl PlanFilterPredicate {
     /// Evaluate predicate on Table storage, returning matching row IDs.
-    /// Column refs use .col (local index within the table).
+    /// Column refs use .col (local column position within the table).
     pub fn eval_table(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::None => row_ids.to_vec(),

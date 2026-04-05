@@ -89,7 +89,7 @@ impl Bitmap {
         self.len - self.count_ones()
     }
 
-    /// Iterate over indices where bit is 1.
+    /// Iterate over positions where bit is 1.
     pub fn iter_ones(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(move |(wi, &word)| {
             let base = wi * 64;
@@ -97,7 +97,7 @@ impl Bitmap {
         })
     }
 
-    /// Iterate over indices where bit is 0.
+    /// Iterate over positions where bit is 0.
     pub fn iter_zeros(&self) -> impl Iterator<Item = usize> + '_ {
         self.words.iter().enumerate().flat_map(move |(wi, &word)| {
             let base = wi * 64;

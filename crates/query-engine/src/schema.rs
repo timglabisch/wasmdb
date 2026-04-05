@@ -14,7 +14,7 @@ impl Schema {
         Self { columns }
     }
 
-    /// Resolve a column reference to an index.
+    /// Resolve a column reference to a position.
     /// If `table` is None, matches the first column with the given name.
     pub fn resolve(&self, table: &str, column: &str) -> Option<usize> {
         self.columns.iter().position(|c| {

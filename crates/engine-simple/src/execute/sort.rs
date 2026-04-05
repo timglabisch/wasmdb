@@ -15,8 +15,8 @@ pub fn sort_materialized(
     let num_rows = cols[0].len();
     let mut row_order: Vec<usize> = (0..num_rows).collect();
 
-    // Map each order_by spec to a result column index.
-    let order_indices: Vec<(usize, OrderDirection)> = order_by
+    // Map each order_by spec to a result column position.
+    let order_positions: Vec<(usize, OrderDirection)> = order_by
         .iter()
         .filter_map(|spec| {
             let pos = result_columns.iter().position(|rc| match rc {
@@ -28,7 +28,7 @@ pub fn sort_materialized(
         .collect();
 
     row_order.sort_by(|&a, &b| {
-        for &(col_idx, dir) in &order_indices {
+        for &(col_idx, dir) in &order_positions {
             let cmp = cols[col_idx][a].cmp(&cols[col_idx][b]);
             let cmp = match dir {
                 OrderDirection::Asc => cmp,
