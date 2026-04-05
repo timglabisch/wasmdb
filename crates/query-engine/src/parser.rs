@@ -92,6 +92,17 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
+        let limit = if self.at(&TokenKind::Limit)? {
+            self.eat()?;
+            let tok = self.expect(TokenKind::Integer(0))?;
+            match tok.kind {
+                TokenKind::Integer(n) => Some(n as u64),
+                _ => unreachable!(),
+            }
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Eof)?;
 
         Ok(AstSelect {
@@ -99,6 +110,7 @@ impl<'a> Parser<'a> {
             filter,
             group_by,
             order_by,
+            limit,
             result_columns,
         })
     }

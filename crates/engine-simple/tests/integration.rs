@@ -411,3 +411,68 @@ fn order_by_join() {
     assert_eq!(result[1], vec![i(300), i(200), i(100), i(50)]);
 }
 
+// ── LIMIT ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn limit_basic() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users LIMIT 2");
+    assert_eq!(result[0].len(), 2);
+    assert_eq!(result[0], vec![s("Alice"), s("Bob")]);
+}
+
+#[test]
+fn limit_with_order_by() {
+    let db = make_db();
+    let result = db.run("SELECT users.name, users.age FROM users ORDER BY users.age DESC LIMIT 2");
+    assert_eq!(result[0], vec![s("Dave"), s("Carol")]);
+}
+
+#[test]
+fn limit_larger_than_rows() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users LIMIT 100");
+    assert_eq!(result[0].len(), 4);
+}
+
+#[test]
+fn limit_zero() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users LIMIT 0");
+    assert_eq!(result[0].len(), 0);
+}
+
+#[test]
+fn limit_with_where() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.age > 24 ORDER BY users.name LIMIT 2");
+    assert_eq!(result[0], vec![s("Alice"), s("Bob")]);
+}
+
+#[test]
+fn limit_with_join() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name, orders.amount \
+         FROM users \
+         INNER JOIN orders ON users.id = orders.user_id \
+         ORDER BY orders.amount DESC \
+         LIMIT 2",
+    );
+    assert_eq!(result[0], vec![s("Carol"), s("Alice")]);
+    assert_eq!(result[1], vec![i(300), i(200)]);
+}
+
+#[test]
+fn limit_with_aggregate() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name, SUM(orders.amount) \
+         FROM users \
+         INNER JOIN orders ON users.id = orders.user_id \
+         GROUP BY users.name \
+         LIMIT 2",
+    );
+    assert_eq!(result[0].len(), 2);
+}
+

@@ -4,6 +4,7 @@ pub struct AstSelect {
     pub filter: Vec<AstExpr>,
     pub group_by: Vec<AstExpr>,
     pub order_by: Vec<AstOrderSpec>,
+    pub limit: Option<u64>,
     pub result_columns: Vec<AstResultColumn>,
 }
 

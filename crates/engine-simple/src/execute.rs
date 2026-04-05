@@ -178,12 +178,28 @@ pub fn execute(
         if !plan.order_by.is_empty() {
             sort::sort_materialized(&mut result, &plan.order_by, &plan.result_columns);
         }
+        // Phase 4c: Limit aggregated results.
+        if let Some(limit) = plan.limit {
+            for col in &mut result {
+                col.truncate(limit);
+            }
+        }
         return Ok(result);
     }
 
     // Phase 5: Sort RowSet before projection.
     if !plan.order_by.is_empty() {
         rs.sort(&plan.order_by);
+    }
+
+    // Phase 5b: Limit RowSet before projection.
+    if let Some(limit) = plan.limit {
+        if rs.num_rows > limit {
+            for ids in &mut rs.row_ids {
+                ids.truncate(limit);
+            }
+            rs.num_rows = limit;
+        }
     }
 
     // Phase 6: Project — materialize only result columns from RowSet.
@@ -278,6 +294,7 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Column { col: c(0, 2), alias: None },
@@ -319,6 +336,7 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None }, // users.name
                 PlanResultColumn::Column { col: c(1, 2), alias: None }, // orders.amount
@@ -356,6 +374,7 @@ mod tests {
                 col: c(0, 2), // users.age
             }],
             order_by: vec![],
+            limit: None,
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Aggregate {
@@ -387,6 +406,7 @@ mod tests {
             group_by: vec![],
             aggregates: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 

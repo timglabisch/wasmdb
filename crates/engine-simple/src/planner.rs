@@ -99,12 +99,15 @@ pub fn plan_select(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    let limit = select.limit.map(|n| n as usize);
+
     let mut plan = PlanSelect {
         sources,
         filter,
         group_by,
         aggregates,
         order_by,
+        limit,
         result_columns,
     };
 
@@ -390,6 +393,7 @@ mod tests {
             }],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "name".into() }), alias: None },
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() }), alias: None },
@@ -434,6 +438,7 @@ mod tests {
             filter: vec![],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -501,6 +506,7 @@ mod tests {
             filter: vec![],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -540,6 +546,7 @@ mod tests {
             ],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -559,6 +566,7 @@ mod tests {
             }],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -577,6 +585,7 @@ mod tests {
             filter: vec![],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -608,6 +617,7 @@ mod tests {
             }],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -648,6 +658,7 @@ mod tests {
             ],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 
@@ -671,6 +682,7 @@ mod tests {
             filter: vec![],
             group_by: vec![],
             order_by: vec![],
+            limit: None,
             result_columns: vec![],
         };
 

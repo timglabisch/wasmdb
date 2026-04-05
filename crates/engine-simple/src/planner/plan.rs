@@ -41,6 +41,7 @@ pub struct PlanSelect {
     pub group_by: Vec<ColumnRef>,
     pub aggregates: Vec<PlanAggregate>,
     pub order_by: Vec<PlanOrderSpec>,
+    pub limit: Option<usize>,
     pub result_columns: Vec<PlanResultColumn>,
 }
 

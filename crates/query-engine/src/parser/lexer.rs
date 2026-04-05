@@ -158,6 +158,7 @@ impl<'a> Lexer<'a> {
             "ORDER" => TokenKind::Order,
             "ASC" => TokenKind::Asc,
             "DESC" => TokenKind::Desc,
+            "LIMIT" => TokenKind::Limit,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(self.token(kind, start))
