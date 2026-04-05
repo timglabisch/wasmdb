@@ -105,6 +105,7 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
     let mut best_used: Vec<usize> = Vec::new();
     let mut best_index_columns: Vec<usize> = Vec::new();
     let mut best_prefix_len: usize = 0;
+    let mut best_is_hash: bool = false;
 
     for idx in table.indexes() {
         let idx_cols = idx.columns();
@@ -171,6 +172,7 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
             best_used = used_leaves;
             best_index_columns = idx_cols.to_vec();
             best_prefix_len = prefix_len;
+            best_is_hash = idx.is_hash();
         }
     }
 
@@ -183,7 +185,7 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
         }
     }
 
-    let method = ScanMethod::Index { columns: best_index_columns, prefix_len: best_prefix_len };
+    let method = ScanMethod::Index { columns: best_index_columns, prefix_len: best_prefix_len, is_hash: best_is_hash };
     Some((ids, method))
 }
 

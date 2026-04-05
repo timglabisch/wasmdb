@@ -27,7 +27,7 @@ pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 #[derive(Debug, Clone)]
 pub enum ScanMethod {
     Full,
-    Index { columns: Vec<usize>, prefix_len: usize },
+    Index { columns: Vec<usize>, prefix_len: usize, is_hash: bool },
 }
 
 /// Describes one operation in the execution tree.
@@ -97,6 +97,49 @@ impl ExecutionContext {
         let (op, result) = f(self);
         self.close_span(op);
         result
+    }
+
+    /// Pretty-print the span tree (without timing — for deterministic snapshot tests).
+    pub fn pretty_print(&self) -> String {
+        let mut out = String::new();
+        for span in &self.spans {
+            span.pretty_print_to(&mut out, 0);
+        }
+        out
+    }
+}
+
+impl Span {
+    fn pretty_print_to(&self, out: &mut String, depth: usize) {
+        use std::fmt::Write;
+        for _ in 0..depth { out.push_str("  "); }
+        match &self.operation {
+            SpanOperation::Execute => writeln!(out, "Execute").unwrap(),
+            SpanOperation::Materialize { step } => writeln!(out, "Materialize step={step}").unwrap(),
+            SpanOperation::Scan { table, method, rows } => {
+                let m = match method {
+                    ScanMethod::Full => "Full".to_string(),
+                    ScanMethod::Index { columns, prefix_len, is_hash } => {
+                        let kind = if *is_hash { "Hash" } else { "BTree" };
+                        format!("{kind}({columns:?} prefix={prefix_len})")
+                    }
+                };
+                writeln!(out, "Scan table={table} method={m} rows={rows}").unwrap();
+            }
+            SpanOperation::Filter { rows_in, rows_out } =>
+                writeln!(out, "Filter rows_in={rows_in} rows_out={rows_out}").unwrap(),
+            SpanOperation::Join { rows_out } =>
+                writeln!(out, "Join rows_out={rows_out}").unwrap(),
+            SpanOperation::Aggregate { groups } =>
+                writeln!(out, "Aggregate groups={groups}").unwrap(),
+            SpanOperation::Sort { rows } =>
+                writeln!(out, "Sort rows={rows}").unwrap(),
+            SpanOperation::Project { columns, rows } =>
+                writeln!(out, "Project columns={columns} rows={rows}").unwrap(),
+        }
+        for child in &self.children {
+            child.pretty_print_to(out, depth + 1);
+        }
     }
 }
 
