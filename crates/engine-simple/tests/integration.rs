@@ -338,3 +338,76 @@ fn select_columns_reordered() {
     assert_eq!(result[1], vec![s("Alice")]);
 }
 
+// ── ORDER BY ───────────────────────────────────────────────────────────────
+
+#[test]
+fn order_by_asc() {
+    let db = make_db();
+    let result = db.run("SELECT users.name, users.age FROM users ORDER BY users.age");
+    assert_eq!(result[0], vec![s("Bob"), s("Alice"), s("Carol"), s("Dave")]);
+    assert_eq!(result[1], vec![i(25), i(30), i(35), CellValue::Null]);
+}
+
+#[test]
+fn order_by_asc_explicit() {
+    let db = make_db();
+    let result = db.run("SELECT users.name, users.age FROM users ORDER BY users.age ASC");
+    assert_eq!(result[0], vec![s("Bob"), s("Alice"), s("Carol"), s("Dave")]);
+}
+
+#[test]
+fn order_by_desc() {
+    let db = make_db();
+    let result = db.run("SELECT users.name, users.age FROM users ORDER BY users.age DESC");
+    // NULLs first in DESC
+    assert_eq!(result[0], vec![s("Dave"), s("Carol"), s("Alice"), s("Bob")]);
+}
+
+#[test]
+fn order_by_string() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users ORDER BY users.name");
+    assert_eq!(result[0], vec![s("Alice"), s("Bob"), s("Carol"), s("Dave")]);
+}
+
+#[test]
+fn order_by_with_where() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.age > 24 ORDER BY users.name DESC");
+    assert_eq!(result[0], vec![s("Carol"), s("Bob"), s("Alice")]);
+}
+
+#[test]
+fn order_by_multiple_keys() {
+    let mut db = TestDb::new();
+    let t = db.add_table(
+        "items",
+        &[
+            ("id", DataType::I64, false),
+            ("category", DataType::I64, false),
+            ("name", DataType::String, false),
+        ],
+    );
+    t.insert(&[i(1), i(2), s("Banana")]).unwrap();
+    t.insert(&[i(2), i(1), s("Apple")]).unwrap();
+    t.insert(&[i(3), i(1), s("Cherry")]).unwrap();
+    t.insert(&[i(4), i(2), s("Avocado")]).unwrap();
+
+    let result = db.run("SELECT items.category, items.name FROM items ORDER BY items.category ASC, items.name ASC");
+    assert_eq!(result[0], vec![i(1), i(1), i(2), i(2)]);
+    assert_eq!(result[1], vec![s("Apple"), s("Cherry"), s("Avocado"), s("Banana")]);
+}
+
+#[test]
+fn order_by_join() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name, orders.amount \
+         FROM users \
+         INNER JOIN orders ON users.id = orders.user_id \
+         ORDER BY orders.amount DESC",
+    );
+    assert_eq!(result[0], vec![s("Carol"), s("Alice"), s("Alice"), s("Bob")]);
+    assert_eq!(result[1], vec![i(300), i(200), i(100), i(50)]);
+}
+

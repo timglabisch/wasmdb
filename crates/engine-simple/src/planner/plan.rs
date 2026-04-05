@@ -1,4 +1,4 @@
-use query_engine::ast::{AggFunc, JoinType, Value};
+use query_engine::ast::{AggFunc, JoinType, OrderDirection, Value};
 use query_engine::schema::Schema;
 
 /// Reference to a column: (source table index, column index within that table).
@@ -40,7 +40,14 @@ pub struct PlanSelect {
     pub filter: PlanFilterPredicate,
     pub group_by: Vec<ColumnRef>,
     pub aggregates: Vec<PlanAggregate>,
+    pub order_by: Vec<PlanOrderSpec>,
     pub result_columns: Vec<PlanResultColumn>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlanOrderSpec {
+    pub col: ColumnRef,
+    pub direction: OrderDirection,
 }
 
 #[derive(Debug, Clone)]

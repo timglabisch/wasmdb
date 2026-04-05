@@ -155,6 +155,9 @@ impl<'a> Lexer<'a> {
             "SUM" => TokenKind::Sum,
             "MIN" => TokenKind::Min,
             "MAX" => TokenKind::Max,
+            "ORDER" => TokenKind::Order,
+            "ASC" => TokenKind::Asc,
+            "DESC" => TokenKind::Desc,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(self.token(kind, start))

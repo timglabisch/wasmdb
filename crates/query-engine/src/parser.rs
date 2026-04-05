@@ -86,12 +86,19 @@ impl<'a> Parser<'a> {
             vec![]
         };
 
+        let order_by = if self.at(&TokenKind::Order)? {
+            self.parse_order_by()?
+        } else {
+            vec![]
+        };
+
         self.expect(TokenKind::Eof)?;
 
         Ok(AstSelect {
             sources,
             filter,
             group_by,
+            order_by,
             result_columns,
         })
     }
@@ -175,6 +182,31 @@ impl<'a> Parser<'a> {
             exprs.push(self.parse_expr(0)?);
         }
         Ok(exprs)
+    }
+
+    fn parse_order_by(&mut self) -> Result<Vec<AstOrderSpec>, ParseError> {
+        self.expect(TokenKind::Order)?;
+        self.expect(TokenKind::By)?;
+        let mut specs = vec![self.parse_order_spec()?];
+        while self.at(&TokenKind::Comma)? {
+            self.eat()?;
+            specs.push(self.parse_order_spec()?);
+        }
+        Ok(specs)
+    }
+
+    fn parse_order_spec(&mut self) -> Result<AstOrderSpec, ParseError> {
+        let expr = self.parse_expr(0)?;
+        let direction = if self.at(&TokenKind::Desc)? {
+            self.eat()?;
+            OrderDirection::Desc
+        } else if self.at(&TokenKind::Asc)? {
+            self.eat()?;
+            OrderDirection::Asc
+        } else {
+            OrderDirection::Asc
+        };
+        Ok(AstOrderSpec { expr, direction })
     }
 
     // ── Expression parsing (Pratt) ──────────────────────────────────────

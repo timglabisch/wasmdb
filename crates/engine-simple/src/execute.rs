@@ -3,12 +3,13 @@ pub mod eval;
 pub mod join;
 pub mod project;
 pub mod scan;
+pub mod sort;
 
 use std::collections::HashMap;
 
 use crate::planner::plan::*;
 use crate::storage::{CellValue, Table};
-use query_engine::ast::Value;
+use query_engine::ast::{OrderDirection, Value};
 
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
@@ -42,6 +43,32 @@ impl<'a> RowSet<'a> {
             CellValue::Null
         } else {
             self.tables[col.source].get(row_id, col.col)
+        }
+    }
+
+    pub fn sort(&mut self, order_by: &[PlanOrderSpec]) {
+        if order_by.is_empty() || self.num_rows <= 1 {
+            return;
+        }
+        let mut row_order: Vec<usize> = (0..self.num_rows).collect();
+        row_order.sort_by(|&a, &b| {
+            for spec in order_by {
+                let va = self.get(a, spec.col);
+                let vb = self.get(b, spec.col);
+                let cmp = va.cmp(&vb);
+                let cmp = match spec.direction {
+                    OrderDirection::Asc => cmp,
+                    OrderDirection::Desc => cmp.reverse(),
+                };
+                if cmp != core::cmp::Ordering::Equal {
+                    return cmp;
+                }
+            }
+            core::cmp::Ordering::Equal
+        });
+        for ids in &mut self.row_ids {
+            let sorted: Vec<usize> = row_order.iter().map(|&i| ids[i]).collect();
+            *ids = sorted;
         }
     }
 
@@ -79,6 +106,49 @@ impl std::fmt::Display for ExecuteError {
 }
 
 impl std::error::Error for ExecuteError {}
+
+fn sort_materialized(
+    cols: &mut Columns,
+    order_by: &[PlanOrderSpec],
+    result_columns: &[PlanResultColumn],
+) {
+    if cols.is_empty() || cols[0].is_empty() {
+        return;
+    }
+    let num_rows = cols[0].len();
+    let mut row_order: Vec<usize> = (0..num_rows).collect();
+
+    // Map each order_by spec to a result column index.
+    let order_indices: Vec<(usize, OrderDirection)> = order_by
+        .iter()
+        .filter_map(|spec| {
+            let pos = result_columns.iter().position(|rc| match rc {
+                PlanResultColumn::Column { col, .. } => *col == spec.col,
+                PlanResultColumn::Aggregate { col, .. } => *col == spec.col,
+            });
+            pos.map(|p| (p, spec.direction))
+        })
+        .collect();
+
+    row_order.sort_by(|&a, &b| {
+        for &(col_idx, dir) in &order_indices {
+            let cmp = cols[col_idx][a].cmp(&cols[col_idx][b]);
+            let cmp = match dir {
+                OrderDirection::Asc => cmp,
+                OrderDirection::Desc => cmp.reverse(),
+            };
+            if cmp != core::cmp::Ordering::Equal {
+                return cmp;
+            }
+        }
+        core::cmp::Ordering::Equal
+    });
+
+    for col in cols.iter_mut() {
+        let sorted: Vec<CellValue> = row_order.iter().map(|&i| col[i].clone()).collect();
+        *col = sorted;
+    }
+}
 
 pub fn value_to_cell(v: &Value) -> CellValue {
     match v {
@@ -141,15 +211,25 @@ pub fn execute(
         let aggregated =
             aggregate::aggregate_rowset(&rs, &plan.group_by, &plan.aggregates);
         let has_aggregates = !plan.aggregates.is_empty();
-        return Ok(project::project(
+        let mut result = project::project(
             &aggregated,
             &plan.result_columns,
             &plan.group_by,
             has_aggregates,
-        ));
+        );
+        // Phase 4b: Sort aggregated results.
+        if !plan.order_by.is_empty() {
+            sort_materialized(&mut result, &plan.order_by, &plan.result_columns);
+        }
+        return Ok(result);
     }
 
-    // Phase 5: Project — materialize only result columns from RowSet.
+    // Phase 5: Sort RowSet before projection.
+    if !plan.order_by.is_empty() {
+        rs.sort(&plan.order_by);
+    }
+
+    // Phase 6: Project — materialize only result columns from RowSet.
     Ok(project::project_rowset(&rs, &plan.result_columns))
 }
 
@@ -240,6 +320,7 @@ mod tests {
             },
             group_by: vec![],
             aggregates: vec![],
+            order_by: vec![],
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Column { col: c(0, 2), alias: None },
@@ -280,6 +361,7 @@ mod tests {
             filter: PlanFilterPredicate::None,
             group_by: vec![],
             aggregates: vec![],
+            order_by: vec![],
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None }, // users.name
                 PlanResultColumn::Column { col: c(1, 2), alias: None }, // orders.amount
@@ -316,6 +398,7 @@ mod tests {
                 func: AggFunc::Min,
                 col: c(0, 2), // users.age
             }],
+            order_by: vec![],
             result_columns: vec![
                 PlanResultColumn::Column { col: c(0, 1), alias: None },
                 PlanResultColumn::Aggregate {
@@ -346,6 +429,7 @@ mod tests {
             filter: PlanFilterPredicate::None,
             group_by: vec![],
             aggregates: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 

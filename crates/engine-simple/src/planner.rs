@@ -87,11 +87,24 @@ pub fn plan_select(
         })
         .collect();
 
+    let order_by = select
+        .order_by
+        .iter()
+        .map(|spec| {
+            let col = resolve_to_column_ref(&spec.expr, &sources)?;
+            Ok(PlanOrderSpec {
+                col,
+                direction: spec.direction,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut plan = PlanSelect {
         sources,
         filter,
         group_by,
         aggregates,
+        order_by,
         result_columns,
     };
 
@@ -376,6 +389,7 @@ mod tests {
                 right: Box::new(AstExpr::Literal(Value::Int(18))),
             }],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "name".into() }), alias: None },
                 AstResultColumn { expr: AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() }), alias: None },
@@ -419,6 +433,7 @@ mod tests {
             ],
             filter: vec![],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -485,6 +500,7 @@ mod tests {
             ],
             filter: vec![],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -523,6 +539,7 @@ mod tests {
                 },
             ],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -541,6 +558,7 @@ mod tests {
                 right: Box::new(AstExpr::Column(AstColumnRef { table: "users".into(), column: "age".into() })),
             }],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -558,6 +576,7 @@ mod tests {
             sources: vec![AstSourceEntry { table: "nonexistent".into(), join: None }],
             filter: vec![],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -588,6 +607,7 @@ mod tests {
                 right: Box::new(AstExpr::Column(AstColumnRef { table: "orders".into(), column: "user_id".into() })),
             }],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -627,6 +647,7 @@ mod tests {
                 },
             ],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 
@@ -649,6 +670,7 @@ mod tests {
             sources: vec![],
             filter: vec![],
             group_by: vec![],
+            order_by: vec![],
             result_columns: vec![],
         };
 

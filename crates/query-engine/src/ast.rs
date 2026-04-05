@@ -3,7 +3,20 @@ pub struct AstSelect {
     pub sources: Vec<AstSourceEntry>,
     pub filter: Vec<AstExpr>,
     pub group_by: Vec<AstExpr>,
+    pub order_by: Vec<AstOrderSpec>,
     pub result_columns: Vec<AstResultColumn>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstOrderSpec {
+    pub expr: AstExpr,
+    pub direction: OrderDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderDirection {
+    Asc,
+    Desc,
 }
 
 #[derive(Debug, Clone)]

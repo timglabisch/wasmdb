@@ -94,6 +94,10 @@ pub enum TokenKind {
     Sum,
     Min,
     Max,
+    // ORDER BY
+    Order,
+    Asc,
+    Desc,
     // Literals
     Integer(i64),
     Float(f64),
@@ -141,6 +145,9 @@ impl TokenKind {
             Self::Sum => "SUM",
             Self::Min => "MIN",
             Self::Max => "MAX",
+            Self::Order => "ORDER",
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",
             Self::Str(_) => "string",
