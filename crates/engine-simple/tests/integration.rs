@@ -5,7 +5,7 @@ use engine_simple::planner;
 use engine_simple::storage::{CellValue, Table};
 use query_engine::parser;
 use query_engine::schema::{ColumnDef, Schema};
-use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
+use schema_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -49,6 +49,19 @@ impl TestDb {
 
     fn add_table(&mut self, name: &str, cols: &[(&str, DataType, bool)]) -> &mut Table {
         let (ts, qs) = schema_for(name, cols);
+        self.tables.insert(name.into(), Table::new(ts));
+        self.schemas.insert(name.into(), qs);
+        self.tables.get_mut(name).unwrap()
+    }
+
+    fn add_table_with_indexes(
+        &mut self,
+        name: &str,
+        cols: &[(&str, DataType, bool)],
+        indexes: Vec<IndexSchema>,
+    ) -> &mut Table {
+        let (mut ts, qs) = schema_for(name, cols);
+        ts.indexes = indexes;
         self.tables.insert(name.into(), Table::new(ts));
         self.schemas.insert(name.into(), qs);
         self.tables.get_mut(name).unwrap()
@@ -476,3 +489,69 @@ fn limit_with_aggregate() {
     assert_eq!(result[0].len(), 2);
 }
 
+// ── Index-backed queries ──────────────────────────────────────────────────
+
+fn make_indexed_db() -> TestDb {
+    let mut db = TestDb::new();
+
+    let users = db.add_table_with_indexes(
+        "users",
+        &[
+            ("id", DataType::I64, false),
+            ("name", DataType::String, false),
+            ("age", DataType::I64, true),
+        ],
+        vec![
+            IndexSchema { name: Some("idx_id".into()), columns: vec![0], index_type: IndexType::BTree },
+            IndexSchema { name: Some("idx_age".into()), columns: vec![2], index_type: IndexType::BTree },
+        ],
+    );
+    users.insert(&[i(1), s("Alice"), i(30)]).unwrap();
+    users.insert(&[i(2), s("Bob"), i(25)]).unwrap();
+    users.insert(&[i(3), s("Carol"), i(35)]).unwrap();
+    users.insert(&[i(4), s("Dave"), CellValue::Null]).unwrap();
+
+    db
+}
+
+#[test]
+fn index_eq_lookup() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id = 2");
+    assert_eq!(result[0], vec![s("Bob")]);
+}
+
+#[test]
+fn index_range_gt() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.age > 28");
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn index_range_lt() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.age < 30");
+    assert_eq!(result[0], vec![s("Bob")]);
+}
+
+#[test]
+fn index_no_match() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id = 999");
+    assert_eq!(result[0].len(), 0);
+}
+
+#[test]
+fn index_with_order_by() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.age > 24 ORDER BY users.name");
+    assert_eq!(result[0], vec![s("Alice"), s("Bob"), s("Carol")]);
+}
+
+#[test]
+fn index_with_limit() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id > 0 ORDER BY users.name LIMIT 2");
+    assert_eq!(result[0], vec![s("Alice"), s("Bob")]);
+}

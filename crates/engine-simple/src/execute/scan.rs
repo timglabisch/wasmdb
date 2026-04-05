@@ -1,14 +1,19 @@
 use crate::planner::plan::PlanFilterPredicate;
-use crate::storage::Table;
+use crate::storage::{RangeOp, Table};
+use super::value_to_cell;
 
 use super::RowSet;
 
 /// Scan + pre-filter → RowSet (no materialization).
+/// Tries index lookup first; falls back to full scan + filter.
 pub fn scan<'a>(table: &'a Table, pre_filter: &PlanFilterPredicate) -> RowSet<'a> {
     let row_ids = if matches!(pre_filter, PlanFilterPredicate::None) {
         scan_row_ids(table)
     } else {
-        scan_filtered(table, pre_filter)
+        match try_index_scan(table, pre_filter) {
+            Some(ids) => ids,
+            None => scan_filtered(table, pre_filter),
+        }
     };
     RowSet::from_scan(table, row_ids)
 }
@@ -20,6 +25,45 @@ pub fn scan_row_ids(table: &Table) -> Vec<usize> {
 pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
     let row_ids = scan_row_ids(table);
     pred.eval_table(table, &row_ids)
+}
+
+/// Try to satisfy the predicate via an index lookup.
+/// Returns `Some(row_ids)` if an index was used, `None` otherwise.
+fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize>> {
+    match pred {
+        PlanFilterPredicate::Equals { col, value } => {
+            let idx = table.index_for_column(col.col)?;
+            let cell = value_to_cell(value);
+            let ids = idx.lookup_eq(&cell)?;
+            // Filter out deleted rows.
+            Some(ids.iter().copied().filter(|&r| !table.is_deleted(r)).collect())
+        }
+        PlanFilterPredicate::GreaterThan { col, value } => {
+            let idx = table.index_for_column(col.col)?;
+            let cell = value_to_cell(value);
+            let ids = idx.lookup_range(RangeOp::Gt, &cell)?;
+            Some(ids.into_iter().filter(|&r| !table.is_deleted(r)).collect())
+        }
+        PlanFilterPredicate::GreaterThanOrEqual { col, value } => {
+            let idx = table.index_for_column(col.col)?;
+            let cell = value_to_cell(value);
+            let ids = idx.lookup_range(RangeOp::Gte, &cell)?;
+            Some(ids.into_iter().filter(|&r| !table.is_deleted(r)).collect())
+        }
+        PlanFilterPredicate::LessThan { col, value } => {
+            let idx = table.index_for_column(col.col)?;
+            let cell = value_to_cell(value);
+            let ids = idx.lookup_range(RangeOp::Lt, &cell)?;
+            Some(ids.into_iter().filter(|&r| !table.is_deleted(r)).collect())
+        }
+        PlanFilterPredicate::LessThanOrEqual { col, value } => {
+            let idx = table.index_for_column(col.col)?;
+            let cell = value_to_cell(value);
+            let ids = idx.lookup_range(RangeOp::Lte, &cell)?;
+            Some(ids.into_iter().filter(|&r| !table.is_deleted(r)).collect())
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

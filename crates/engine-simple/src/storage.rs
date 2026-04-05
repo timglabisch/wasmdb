@@ -1,5 +1,7 @@
+use std::collections::{BTreeMap, HashMap};
+
 use crate::bitmap::Bitmap;
-use schema_engine::schema::{DataType, TableSchema};
+use schema_engine::schema::{DataType, IndexType, TableSchema};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CellValue {
@@ -120,11 +122,107 @@ impl std::fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {}
 
+/// A single-column index backed by either a BTreeMap or HashMap.
+#[derive(Debug)]
+pub enum TableIndex {
+    BTree {
+        column: usize,
+        map: BTreeMap<CellValue, Vec<usize>>,
+    },
+    Hash {
+        column: usize,
+        map: HashMap<CellValue, Vec<usize>>,
+    },
+}
+
+impl TableIndex {
+    fn new(column: usize, index_type: IndexType) -> Self {
+        match index_type {
+            IndexType::BTree => TableIndex::BTree { column, map: BTreeMap::new() },
+            IndexType::Hash => TableIndex::Hash { column, map: HashMap::new() },
+        }
+    }
+
+    pub fn column(&self) -> usize {
+        match self {
+            TableIndex::BTree { column, .. } => *column,
+            TableIndex::Hash { column, .. } => *column,
+        }
+    }
+
+    fn insert(&mut self, value: CellValue, row_id: usize) {
+        match self {
+            TableIndex::BTree { map, .. } => map.entry(value).or_default().push(row_id),
+            TableIndex::Hash { map, .. } => map.entry(value).or_default().push(row_id),
+        }
+    }
+
+    fn remove(&mut self, value: &CellValue, row_id: usize) {
+        match self {
+            TableIndex::BTree { map, .. } => {
+                if let Some(ids) = map.get_mut(value) {
+                    ids.retain(|&id| id != row_id);
+                    if ids.is_empty() { map.remove(value); }
+                }
+            }
+            TableIndex::Hash { map, .. } => {
+                if let Some(ids) = map.get_mut(value) {
+                    ids.retain(|&id| id != row_id);
+                    if ids.is_empty() { map.remove(value); }
+                }
+            }
+        }
+    }
+
+    /// Equality lookup — works for both BTree and Hash.
+    pub fn lookup_eq(&self, value: &CellValue) -> Option<&[usize]> {
+        match self {
+            TableIndex::BTree { map, .. } => map.get(value).map(|v| v.as_slice()),
+            TableIndex::Hash { map, .. } => map.get(value).map(|v| v.as_slice()),
+        }
+    }
+
+    /// Range lookup — only BTree supports this. Returns row_ids matching the range.
+    /// NULL keys are excluded (SQL semantics: NULL comparisons are always false).
+    pub fn lookup_range(&self, op: RangeOp, value: &CellValue) -> Option<Vec<usize>> {
+        match self {
+            TableIndex::BTree { map, .. } => {
+                use std::ops::Bound::*;
+                // Cap upper bound at Excluded(Null) so NULL entries never appear.
+                let null_upper = Excluded(CellValue::Null);
+                let iter: Box<dyn Iterator<Item = (&CellValue, &Vec<usize>)>> = match op {
+                    RangeOp::Gt => Box::new(map.range((Excluded(value.clone()), null_upper))),
+                    RangeOp::Gte => Box::new(map.range((Included(value.clone()), null_upper))),
+                    RangeOp::Lt => Box::new(map.range((Unbounded, Excluded(value.clone())))),
+                    RangeOp::Lte => Box::new(map.range((Unbounded, Included(value.clone())))),
+                };
+                let mut result = Vec::new();
+                for (k, ids) in iter {
+                    if *k != CellValue::Null {
+                        result.extend_from_slice(ids);
+                    }
+                }
+                Some(result)
+            }
+            TableIndex::Hash { .. } => None, // Hash does not support range queries
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RangeOp {
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+}
+
 #[derive(Debug)]
 pub struct Table {
     pub schema: TableSchema,
     pub columns: Vec<TypedColumn>,
     deleted: Bitmap,
+    indexes: Vec<TableIndex>,
 }
 
 impl Table {
@@ -134,10 +232,18 @@ impl Table {
             .iter()
             .map(|col| TypedColumn::new(col.data_type, col.nullable))
             .collect();
+        // Build single-column indexes (composite indexes are not yet supported).
+        let indexes = schema
+            .indexes
+            .iter()
+            .filter(|idx| idx.columns.len() == 1)
+            .map(|idx| TableIndex::new(idx.columns[0], idx.index_type))
+            .collect();
         Table {
             schema,
             columns,
             deleted: Bitmap::with_capacity(0),
+            indexes,
         }
     }
 
@@ -176,6 +282,9 @@ impl Table {
             col.push(val)?;
         }
         self.deleted.push(false);
+        for idx in &mut self.indexes {
+            idx.insert(row[idx.column()].clone(), row_idx);
+        }
         Ok(row_idx)
     }
 
@@ -183,12 +292,21 @@ impl Table {
         if row_idx >= self.physical_len() || self.deleted.get(row_idx) {
             return Err(StorageError::RowNotFound { row_idx });
         }
+        for idx in &mut self.indexes {
+            let value = self.columns[idx.column()].get(row_idx);
+            idx.remove(&value, row_idx);
+        }
         self.deleted.set(row_idx, true);
         Ok(())
     }
 
     pub fn get(&self, row_idx: usize, col_idx: usize) -> CellValue {
         self.columns[col_idx].get(row_idx)
+    }
+
+    /// Find an index for the given column, if one exists.
+    pub fn index_for_column(&self, col: usize) -> Option<&TableIndex> {
+        self.indexes.iter().find(|idx| idx.column() == col)
     }
 
     /// Iterator over live (non-deleted) row IDs.
@@ -387,5 +505,89 @@ mod tests {
         assert_eq!(table.len(), 2);
         assert_eq!(table.get(0, 2), CellValue::I64(9999));
         assert_eq!(table.get(1, 2), CellValue::Null);
+    }
+
+    fn indexed_schema() -> TableSchema {
+        use schema_engine::schema::IndexSchema;
+        TableSchema {
+            name: "orders".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "amount".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![
+                IndexSchema { name: Some("idx_user".into()), columns: vec![1], index_type: IndexType::BTree },
+                IndexSchema { name: Some("idx_id_hash".into()), columns: vec![0], index_type: IndexType::Hash },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_index_btree_eq_lookup() {
+        let mut table = Table::new(indexed_schema());
+        table.insert(&[CellValue::I64(1), CellValue::I64(42), CellValue::I64(100)]).unwrap();
+        table.insert(&[CellValue::I64(2), CellValue::I64(42), CellValue::I64(200)]).unwrap();
+        table.insert(&[CellValue::I64(3), CellValue::I64(99), CellValue::I64(300)]).unwrap();
+
+        let idx = table.index_for_column(1).unwrap();
+        assert_eq!(idx.lookup_eq(&CellValue::I64(42)), Some([0, 1].as_slice()));
+        assert_eq!(idx.lookup_eq(&CellValue::I64(99)), Some([2].as_slice()));
+        assert_eq!(idx.lookup_eq(&CellValue::I64(0)), None);
+    }
+
+    #[test]
+    fn test_index_hash_eq_lookup() {
+        let mut table = Table::new(indexed_schema());
+        table.insert(&[CellValue::I64(10), CellValue::I64(1), CellValue::I64(100)]).unwrap();
+        table.insert(&[CellValue::I64(20), CellValue::I64(2), CellValue::I64(200)]).unwrap();
+
+        let idx = table.index_for_column(0).unwrap();
+        assert_eq!(idx.lookup_eq(&CellValue::I64(10)), Some([0].as_slice()));
+        assert_eq!(idx.lookup_eq(&CellValue::I64(20)), Some([1].as_slice()));
+        assert_eq!(idx.lookup_eq(&CellValue::I64(99)), None);
+    }
+
+    #[test]
+    fn test_index_btree_range_lookup() {
+        let mut table = Table::new(indexed_schema());
+        table.insert(&[CellValue::I64(1), CellValue::I64(10), CellValue::I64(0)]).unwrap();
+        table.insert(&[CellValue::I64(2), CellValue::I64(20), CellValue::I64(0)]).unwrap();
+        table.insert(&[CellValue::I64(3), CellValue::I64(30), CellValue::I64(0)]).unwrap();
+        table.insert(&[CellValue::I64(4), CellValue::I64(40), CellValue::I64(0)]).unwrap();
+
+        let idx = table.index_for_column(1).unwrap();
+        assert_eq!(idx.lookup_range(RangeOp::Gt, &CellValue::I64(20)).unwrap(), vec![2, 3]);
+        assert_eq!(idx.lookup_range(RangeOp::Gte, &CellValue::I64(20)).unwrap(), vec![1, 2, 3]);
+        assert_eq!(idx.lookup_range(RangeOp::Lt, &CellValue::I64(30)).unwrap(), vec![0, 1]);
+        assert_eq!(idx.lookup_range(RangeOp::Lte, &CellValue::I64(30)).unwrap(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_index_hash_range_unsupported() {
+        let mut table = Table::new(indexed_schema());
+        table.insert(&[CellValue::I64(1), CellValue::I64(10), CellValue::I64(0)]).unwrap();
+
+        let idx = table.index_for_column(0).unwrap();
+        assert!(idx.lookup_range(RangeOp::Gt, &CellValue::I64(0)).is_none());
+    }
+
+    #[test]
+    fn test_index_maintained_after_delete() {
+        let mut table = Table::new(indexed_schema());
+        table.insert(&[CellValue::I64(1), CellValue::I64(42), CellValue::I64(100)]).unwrap();
+        table.insert(&[CellValue::I64(2), CellValue::I64(42), CellValue::I64(200)]).unwrap();
+
+        table.delete(0).unwrap();
+
+        let idx = table.index_for_column(1).unwrap();
+        assert_eq!(idx.lookup_eq(&CellValue::I64(42)), Some([1].as_slice()));
+    }
+
+    #[test]
+    fn test_index_for_column_none() {
+        let table = Table::new(users_schema()); // no indexes
+        assert!(table.index_for_column(0).is_none());
     }
 }
