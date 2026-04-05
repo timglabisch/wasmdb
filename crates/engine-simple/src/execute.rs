@@ -9,6 +9,8 @@ pub mod rowset;
 pub mod scan;
 pub mod sort;
 
+use std::time::{Duration, Instant};
+
 use crate::storage::CellValue;
 use query_engine::ast::Value;
 
@@ -19,30 +21,82 @@ pub use rowset::{RowSet, NULL_ROW};
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 
-// ── Execution context ─────────────────────────────────────────────────────
+// ── Execution context with span-based tracing ─────────────────────────────
 
-/// Traces a single operation during query execution.
+/// How a table scan was performed.
 #[derive(Debug, Clone)]
-pub enum TraceEvent {
-    FullScan { table: String, rows: usize },
-    IndexScan { table: String, index_columns: Vec<usize>, prefix_len: usize, rows: usize },
+pub enum ScanMethod {
+    Full,
+    Index { columns: Vec<usize>, prefix_len: usize },
+}
+
+/// Describes one operation in the execution tree.
+#[derive(Debug, Clone)]
+pub enum SpanOperation {
+    Execute,
+    Materialize { step: usize },
+    Scan { table: String, method: ScanMethod, rows: usize },
     Filter { rows_in: usize, rows_out: usize },
     Join { rows_out: usize },
     Aggregate { groups: usize },
     Sort { rows: usize },
     Project { columns: usize, rows: usize },
-    Materialize { step: usize, rows: usize },
 }
 
-/// Threaded through all execution functions.
-/// Collects trace events so callers can inspect the exact execution path.
+/// A completed span: operation + duration + children.
+#[derive(Debug, Clone)]
+pub struct Span {
+    pub operation: SpanOperation,
+    pub duration: Duration,
+    pub children: Vec<Span>,
+}
+
+/// In-flight span on the context stack (children accumulate here).
+struct OpenSpan {
+    start: Instant,
+    children: Vec<Span>,
+}
+
+/// Threaded through all execution functions as first parameter.
+/// Builds a tree of [`Span`]s with timing information.
 pub struct ExecutionContext {
-    pub trace: Vec<TraceEvent>,
+    stack: Vec<OpenSpan>,
+    pub spans: Vec<Span>,
 }
 
 impl ExecutionContext {
     pub fn new() -> Self {
-        Self { trace: Vec::new() }
+        Self { stack: Vec::new(), spans: Vec::new() }
+    }
+
+    fn close_span(&mut self, op: SpanOperation) {
+        let open = self.stack.pop().expect("span stack underflow");
+        let span = Span {
+            operation: op,
+            duration: open.start.elapsed(),
+            children: open.children,
+        };
+        match self.stack.last_mut() {
+            Some(parent) => parent.children.push(span),
+            None => self.spans.push(span),
+        }
+    }
+
+    /// Wrap work in a span. Use when the operation is fully known upfront.
+    pub fn span<T>(&mut self, op: SpanOperation, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.stack.push(OpenSpan { start: Instant::now(), children: Vec::new() });
+        let result = f(self);
+        self.close_span(op);
+        result
+    }
+
+    /// Wrap work in a span. The closure returns `(SpanOperation, T)` —
+    /// use when operation details (e.g. row counts) are only known after the work.
+    pub fn span_with<T>(&mut self, f: impl FnOnce(&mut Self) -> (SpanOperation, T)) -> T {
+        self.stack.push(OpenSpan { start: Instant::now(), children: Vec::new() });
+        let (op, result) = f(self);
+        self.close_span(op);
+        result
     }
 }
 

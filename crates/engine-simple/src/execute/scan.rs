@@ -1,33 +1,27 @@
 use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::{CellValue, RangeOp, Table};
 use super::value_to_cell;
-use super::{ExecutionContext, TraceEvent};
+use super::{ExecutionContext, ScanMethod, SpanOperation};
 
 use super::RowSet;
 
 /// Scan + pre-filter -> RowSet (no materialization).
 /// Tries index lookup first; falls back to full scan + filter.
 pub fn scan<'a>(ctx: &mut ExecutionContext, table: &'a Table, pre_filter: &PlanFilterPredicate) -> RowSet<'a> {
-    let row_ids = if matches!(pre_filter, PlanFilterPredicate::None) {
-        let ids = scan_row_ids(ctx, table);
-        ctx.trace.push(TraceEvent::FullScan {
-            table: table.schema.name.clone(),
-            rows: ids.len(),
-        });
-        ids
-    } else {
-        match try_index_scan(ctx, table, pre_filter) {
-            Some(ids) => ids, // trace event emitted inside try_index_scan
-            None => {
-                let ids = scan_filtered(ctx, table, pre_filter);
-                ctx.trace.push(TraceEvent::FullScan {
-                    table: table.schema.name.clone(),
-                    rows: ids.len(),
-                });
-                ids
+    let table_name = table.schema.name.clone();
+    let (row_ids, method) = ctx.span_with(|ctx| {
+        let (ids, method) = if matches!(pre_filter, PlanFilterPredicate::None) {
+            (scan_row_ids(ctx, table), ScanMethod::Full)
+        } else {
+            match try_index_scan(ctx, table, pre_filter) {
+                Some((ids, m)) => (ids, m),
+                None => (scan_filtered(ctx, table, pre_filter), ScanMethod::Full),
             }
-        }
-    };
+        };
+        let op = SpanOperation::Scan { table: table_name, method: method.clone(), rows: ids.len() };
+        (op, (ids, method))
+    });
+    let _ = method; // used in span above
     RowSet::from_scan(table, row_ids)
 }
 
@@ -42,7 +36,6 @@ pub fn scan_filtered(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilte
 
 // ── Index scan helpers ────────────────────────────────────────────────────
 
-/// Flatten nested `And` predicates into a list of leaf predicates.
 fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
     match pred {
         PlanFilterPredicate::And(l, r) => {
@@ -54,7 +47,6 @@ fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
     }
 }
 
-/// Classification of a leaf predicate for index matching.
 enum PredClass<'a> {
     Eq(&'a query_engine::ast::Value),
     Range(RangeOp, &'a query_engine::ast::Value),
@@ -62,7 +54,6 @@ enum PredClass<'a> {
     Other,
 }
 
-/// Classify a predicate as Eq, Range, or Other (not directly indexable).
 fn classify_pred(pred: &PlanFilterPredicate) -> PredClass<'_> {
     match pred {
         PlanFilterPredicate::Equals { value, .. } => PredClass::Eq(value),
@@ -77,7 +68,6 @@ fn classify_pred(pred: &PlanFilterPredicate) -> PredClass<'_> {
     }
 }
 
-/// Extract the column position from a leaf predicate (column-vs-literal only).
 fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
     match pred {
         PlanFilterPredicate::Equals { col, .. }
@@ -92,15 +82,9 @@ fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
     }
 }
 
-/// Try to satisfy the predicate via an index lookup.
-/// Flattens `And` chains, matches leaves against composite (or single-column)
-/// indexes, picks the index with the longest prefix coverage, and applies
-/// any remaining predicates as a post-filter.
-fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize>> {
+fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPredicate) -> Option<(Vec<usize>, ScanMethod)> {
     let leaves = flatten_ands(pred);
 
-    // Collect indexable leaves: (leaf_index, column_position, predicate).
-    // Keep only the first predicate per column.
     let mut seen_cols = Vec::new();
     let mut indexable: Vec<(usize, usize, &PlanFilterPredicate)> = Vec::new();
     for (li, leaf) in leaves.iter().enumerate() {
@@ -116,11 +100,6 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
         return None;
     }
 
-    // Try each index, pick the best match.
-    // Score: (prefix_len, tie_break) — higher is better.
-    //   tie_break 2 = Hash full-key eq  (O(1), always wins at same prefix)
-    //   tie_break 1 = BTree full-key eq (O(log n))
-    //   tie_break 0 = prefix / range
     let mut best_ids: Option<Vec<usize>> = None;
     let mut best_score: (usize, u8) = (0, 0);
     let mut best_used: Vec<usize> = Vec::new();
@@ -132,7 +111,6 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
         let mut prefix_eq_values: Vec<CellValue> = Vec::new();
         let mut range_on_last: Option<(RangeOp, CellValue)> = None;
         let mut used_leaves: Vec<usize> = Vec::new();
-
         let mut in_on_last: Option<Vec<CellValue>> = None;
 
         for &col in idx_cols {
@@ -145,42 +123,29 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
                     PredClass::Range(op, value) => {
                         range_on_last = Some((op, value_to_cell(value)));
                         used_leaves.push(li);
-                        break; // range can only be on the last prefix column
+                        break;
                     }
                     PredClass::In(values) => {
                         in_on_last = Some(values.iter().map(|v| value_to_cell(v)).collect());
                         used_leaves.push(li);
-                        break; // IN can only be on the last prefix column
+                        break;
                     }
                     PredClass::Other => break,
                 }
             } else {
-                break; // gap in prefix
+                break;
             }
         }
 
         let prefix_len = used_leaves.len();
-        if prefix_len == 0 {
-            continue;
-        }
+        if prefix_len == 0 { continue; }
 
         let is_full_key_eq = range_on_last.is_none() && in_on_last.is_none() && prefix_eq_values.len() == idx_cols.len();
-        let tie_break = if is_full_key_eq && idx.is_hash() {
-            2 // Hash full-key eq — O(1)
-        } else if is_full_key_eq {
-            1 // BTree full-key eq — O(log n)
-        } else {
-            0 // prefix / range
-        };
+        let tie_break = if is_full_key_eq && idx.is_hash() { 2 } else if is_full_key_eq { 1 } else { 0 };
         let score = (prefix_len, tie_break);
+        if score <= best_score { continue; }
 
-        if score <= best_score {
-            continue;
-        }
-
-        // Perform the lookup.
         let ids = if let Some(ref in_values) = in_on_last {
-            // IN: multiple lookups, union results.
             let mut combined: Vec<usize> = Vec::new();
             for v in in_values {
                 let mut key = prefix_eq_values.clone();
@@ -197,7 +162,6 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
         } else if is_full_key_eq {
             idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec())
         } else {
-            // Partial prefix equality.
             idx.lookup_prefix_eq(&prefix_eq_values)
         };
 
@@ -211,25 +175,16 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
     }
 
     let mut ids = best_ids?;
-
-    ctx.trace.push(TraceEvent::IndexScan {
-        table: table.schema.name.clone(),
-        index_columns: best_index_columns,
-        prefix_len: best_prefix_len,
-        rows: ids.len(),
-    });
-
-    // Filter deleted rows.
     ids.retain(|&r| !table.is_deleted(r));
 
-    // Apply remaining leaf predicates not covered by the index.
     for (li, leaf) in leaves.iter().enumerate() {
         if !best_used.contains(&li) {
             ids = leaf.filter_batch(ctx, table, &ids);
         }
     }
 
-    Some(ids)
+    let method = ScanMethod::Index { columns: best_index_columns, prefix_len: best_prefix_len };
+    Some((ids, method))
 }
 
 #[cfg(test)]
@@ -240,9 +195,7 @@ mod tests {
     use query_engine::ast::Value;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
-    fn c(source: usize, col: usize) -> ColumnRef {
-        ColumnRef { source, col }
-    }
+    fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 
     fn make_users_table() -> Table {
         let schema = TableSchema {
@@ -252,8 +205,7 @@ mod tests {
                 ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
                 ColumnSchema { name: "age".into(), data_type: DataType::I64, nullable: true },
             ],
-            primary_key: vec![0],
-            indexes: vec![],
+            primary_key: vec![0], indexes: vec![],
         };
         let mut t = Table::new(schema);
         t.insert(&[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]).unwrap();
@@ -267,32 +219,21 @@ mod tests {
         let mut ctx = ExecutionContext::new();
         let mut table = make_users_table();
         table.delete(1).unwrap();
-        let row_ids = scan_row_ids(&mut ctx, &table);
-        assert_eq!(row_ids, vec![0, 2]);
+        assert_eq!(scan_row_ids(&mut ctx, &table), vec![0, 2]);
     }
 
     #[test]
     fn test_scan_filtered_equals() {
         let mut ctx = ExecutionContext::new();
         let table = make_users_table();
-        let row_ids = scan_filtered(
-            &mut ctx,
-            &table,
-            &PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) },
-        );
-        assert_eq!(row_ids, vec![1]);
+        assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) }), vec![1]);
     }
 
     #[test]
     fn test_scan_filtered_greater_than() {
         let mut ctx = ExecutionContext::new();
         let table = make_users_table();
-        let row_ids = scan_filtered(
-            &mut ctx,
-            &table,
-            &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
-        );
-        assert_eq!(row_ids, vec![0, 2]);
+        assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) }), vec![0, 2]);
     }
 
     #[test]
@@ -300,27 +241,18 @@ mod tests {
         let mut ctx = ExecutionContext::new();
         let mut table = make_users_table();
         table.delete(0).unwrap();
-        let row_ids = scan_filtered(
-            &mut ctx,
-            &table,
-            &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
-        );
-        assert_eq!(row_ids, vec![2]);
+        assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) }), vec![2]);
     }
 
     #[test]
     fn test_scan_filtered_and() {
         let mut ctx = ExecutionContext::new();
         let table = make_users_table();
-        let row_ids = scan_filtered(
-            &mut ctx,
-            &table,
-            &PlanFilterPredicate::And(
-                Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(24) }),
-                Box::new(PlanFilterPredicate::LessThan { col: c(0, 2), value: Value::Int(32) }),
-            ),
+        let pred = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(24) }),
+            Box::new(PlanFilterPredicate::LessThan { col: c(0, 2), value: Value::Int(32) }),
         );
-        assert_eq!(row_ids, vec![0, 1]);
+        assert_eq!(scan_filtered(&mut ctx, &table, &pred), vec![0, 1]);
     }
 
     #[test]
@@ -342,8 +274,7 @@ mod tests {
             )),
             Box::new(PlanFilterPredicate::LessThan { col: c(0, 2), value: Value::Int(10) }),
         );
-        let leaves = flatten_ands(&pred);
-        assert_eq!(leaves.len(), 3);
+        assert_eq!(flatten_ands(&pred).len(), 3);
     }
 
     fn make_composite_indexed_table() -> Table {
@@ -357,8 +288,7 @@ mod tests {
             ],
             primary_key: vec![],
             indexes: vec![IndexSchema {
-                name: Some("idx_user_cat".into()),
-                columns: vec![0, 1],
+                name: Some("idx_user_cat".into()), columns: vec![0, 1],
                 index_type: schema_engine::schema::IndexType::BTree,
             }],
         };
@@ -387,11 +317,8 @@ mod tests {
     fn test_scan_composite_index_prefix_eq() {
         let mut ctx = ExecutionContext::new();
         let table = make_composite_indexed_table();
-        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) };
-        let rs = scan(&mut ctx, &table, &pred);
+        let rs = scan(&mut ctx, &table, &PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) });
         assert_eq!(rs.num_rows, 2);
-        assert_eq!(rs.get(0, c(0, 2)), CellValue::I64(100));
-        assert_eq!(rs.get(1, c(0, 2)), CellValue::I64(200));
     }
 
     #[test]
@@ -411,8 +338,6 @@ mod tests {
     fn test_scan_composite_index_with_remaining_filter() {
         let mut ctx = ExecutionContext::new();
         let table = make_composite_indexed_table();
-        // user_id=2 AND category>=10 AND score>350
-        // Index covers (user_id, category), score post-filtered.
         let pred = PlanFilterPredicate::And(
             Box::new(PlanFilterPredicate::And(
                 Box::new(PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) }),

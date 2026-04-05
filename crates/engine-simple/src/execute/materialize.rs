@@ -8,7 +8,7 @@ use crate::storage::Table;
 use query_engine::ast::{Operator, Value};
 
 use super::pipeline::execute;
-use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, TraceEvent};
+use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, SpanOperation};
 
 /// Execute an ExecutionPlan: run materializations first, resolve placeholders, then run main query.
 pub fn execute_plan(
@@ -23,24 +23,24 @@ pub fn execute_plan(
     let mut materialized: Vec<Vec<Value>> = Vec::new();
 
     for (i, step) in plan.materializations.iter().enumerate() {
-        let resolved = resolve_materialized(&step.plan, &materialized);
-        let result = execute(ctx, &resolved, db)?;
+        let values = ctx.span(SpanOperation::Materialize { step: i }, |ctx| {
+            let resolved = resolve_materialized(&step.plan, &materialized);
+            let result = execute(ctx, &resolved, db)?;
 
-        if result.len() != 1 {
-            return Err(ExecuteError::MaterializeError(
-                format!("subquery must return 1 column, got {}", result.len()),
-            ));
-        }
-        if matches!(step.kind, MaterializeKind::Scalar) && result[0].len() != 1 {
-            return Err(ExecuteError::MaterializeError(
-                format!("scalar subquery must return 1 row, got {}", result[0].len()),
-            ));
-        }
+            if result.len() != 1 {
+                return Err(ExecuteError::MaterializeError(
+                    format!("subquery must return 1 column, got {}", result.len()),
+                ));
+            }
+            if matches!(step.kind, MaterializeKind::Scalar) && result[0].len() != 1 {
+                return Err(ExecuteError::MaterializeError(
+                    format!("scalar subquery must return 1 row, got {}", result[0].len()),
+                ));
+            }
 
-        let rows = result[0].len();
-        let values = result[0].iter().map(cell_to_value).collect();
+            Ok(result[0].iter().map(cell_to_value).collect::<Vec<_>>())
+        })?;
         materialized.push(values);
-        ctx.trace.push(TraceEvent::Materialize { step: i, rows });
     }
 
     let resolved = resolve_materialized(&plan.main, &materialized);
@@ -65,10 +65,7 @@ fn resolve_materialized_filter(
 ) -> PlanFilterPredicate {
     match pred {
         PlanFilterPredicate::InMaterialized { col, mat_id } => {
-            PlanFilterPredicate::In {
-                col: *col,
-                values: materialized[*mat_id].clone(),
-            }
+            PlanFilterPredicate::In { col: *col, values: materialized[*mat_id].clone() }
         }
         PlanFilterPredicate::CompareMaterialized { col, op, mat_id } => {
             let value = materialized[*mat_id][0].clone();
