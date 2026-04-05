@@ -151,6 +151,10 @@ impl TableIndex {
         }
     }
 
+    pub fn is_hash(&self) -> bool {
+        matches!(self, TableIndex::Hash { .. })
+    }
+
     fn insert(&mut self, key: Vec<CellValue>, row_id: usize) {
         match self {
             TableIndex::BTree { map, .. } => map.entry(key).or_default().push(row_id),
@@ -285,11 +289,19 @@ impl Table {
             .iter()
             .map(|col| TypedColumn::new(col.data_type, col.nullable))
             .collect();
-        let indexes = schema
+        let mut indexes: Vec<TableIndex> = schema
             .indexes
             .iter()
             .map(|idx| TableIndex::new(idx.columns.clone(), idx.index_type))
             .collect();
+        // Auto-create a Hash index on the primary key (O(1) lookups).
+        if !schema.primary_key.is_empty() {
+            let pk = &schema.primary_key;
+            let already_covered = indexes.iter().any(|idx| idx.columns() == pk.as_slice());
+            if !already_covered {
+                indexes.push(TableIndex::new(pk.clone(), IndexType::Hash));
+            }
+        }
         Table {
             schema,
             columns,
@@ -644,8 +656,25 @@ mod tests {
 
     #[test]
     fn test_index_for_column_none() {
-        let table = Table::new(users_schema()); // no indexes
+        // No explicit indexes and no PK → no indexes at all.
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let table = Table::new(schema);
         assert!(table.index_for_column(0).is_none());
+    }
+
+    #[test]
+    fn test_auto_pk_hash_index() {
+        let table = Table::new(users_schema());
+        // PK is column 0 → auto Hash index created.
+        let idx = table.index_for_column(0).unwrap();
+        assert!(idx.is_hash());
     }
 
     fn composite_indexed_schema() -> TableSchema {

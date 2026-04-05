@@ -96,9 +96,13 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
         return None;
     }
 
-    // Try each index, pick the one with the longest prefix match.
+    // Try each index, pick the best match.
+    // Score: (prefix_len, tie_break) — higher is better.
+    //   tie_break 2 = Hash full-key eq  (O(1), always wins at same prefix)
+    //   tie_break 1 = BTree full-key eq (O(log n))
+    //   tie_break 0 = prefix / range
     let mut best_ids: Option<Vec<usize>> = None;
-    let mut best_prefix_len: usize = 0;
+    let mut best_score: (usize, u8) = (0, 0);
     let mut best_used: Vec<usize> = Vec::new();
 
     for idx in table.indexes() {
@@ -127,15 +131,28 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
         }
 
         let prefix_len = used_leaves.len();
-        if prefix_len == 0 || prefix_len <= best_prefix_len {
+        if prefix_len == 0 {
+            continue;
+        }
+
+        let is_full_key_eq = range_on_last.is_none() && prefix_eq_values.len() == idx_cols.len();
+        let tie_break = if is_full_key_eq && idx.is_hash() {
+            2 // Hash full-key eq — O(1)
+        } else if is_full_key_eq {
+            1 // BTree full-key eq — O(log n)
+        } else {
+            0 // prefix / range
+        };
+        let score = (prefix_len, tie_break);
+
+        if score <= best_score {
             continue;
         }
 
         // Perform the lookup.
         let ids = if let Some((op, ref value)) = range_on_last {
             idx.lookup_prefix_range(&prefix_eq_values, op, value)
-        } else if prefix_eq_values.len() == idx_cols.len() {
-            // Full key equality match.
+        } else if is_full_key_eq {
             idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec())
         } else {
             // Partial prefix equality.
@@ -144,7 +161,7 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
 
         if let Some(ids) = ids {
             best_ids = Some(ids);
-            best_prefix_len = prefix_len;
+            best_score = score;
             best_used = used_leaves;
         }
     }
