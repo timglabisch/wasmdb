@@ -4,9 +4,10 @@ use crate::planner::plan::PlanAggregate;
 use crate::storage::CellValue;
 use query_engine::ast::AggFunc;
 
-use super::Columns;
+use super::{Columns, ExecutionContext, TraceEvent};
 
 pub fn aggregate_rowset(
+    ctx: &mut ExecutionContext,
     rs: &super::RowSet,
     group_by: &[crate::planner::plan::ColumnRef],
     aggregates: &[PlanAggregate],
@@ -39,6 +40,8 @@ pub fn aggregate_rowset(
             result[group_by.len() + i].push(acc.finish());
         }
     }
+
+    ctx.trace.push(TraceEvent::Aggregate { groups: group_order.len() });
 
     result
 }
@@ -128,6 +131,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_count_sum_min_max() {
+        let mut ctx = ExecutionContext::new();
         let mut table = make_test_table();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(30)]).unwrap();
@@ -135,6 +139,7 @@ mod tests {
         let rs = RowSet::from_scan(&table, vec![0, 1, 2]);
 
         let result = aggregate_rowset(
+            &mut ctx,
             &rs,
             &[c(0, 0)],
             &[
@@ -160,6 +165,7 @@ mod tests {
 
     #[test]
     fn test_aggregate_null_handling() {
+        let mut ctx = ExecutionContext::new();
         let mut table = make_test_table();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
         table.insert(&[CellValue::Str("A".into()), CellValue::Null]).unwrap();
@@ -167,6 +173,7 @@ mod tests {
         let rs = RowSet::from_scan(&table, vec![0, 1, 2]);
 
         let result = aggregate_rowset(
+            &mut ctx,
             &rs,
             &[c(0, 0)],
             &[

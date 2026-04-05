@@ -6,9 +6,10 @@ use crate::planner::plan::*;
 use crate::storage::Table;
 
 use super::{aggregate, join, project, scan, sort};
-use super::{Columns, ExecuteError};
+use super::{Columns, ExecuteError, ExecutionContext};
 
 pub fn execute(
+    ctx: &mut ExecutionContext,
     plan: &PlanSelect,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
@@ -17,17 +18,18 @@ pub fn execute(
     let first_table = db
         .get(&first.table)
         .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
-    let mut rs = scan::scan(first_table, &first.pre_filter);
+    let mut rs = scan::scan(ctx, first_table, &first.pre_filter);
 
     // Phase 2: Join remaining sources (each extends the RowSet).
     for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-        let right = scan::scan(table, &source.pre_filter);
+        let right = scan::scan(ctx, table, &source.pre_filter);
         match source.join.as_ref() {
             Some(j) => {
                 rs = join::nested_loop_join(
+                    ctx,
                     &rs,
                     right.tables[0],
                     &right.row_ids[0],
@@ -38,6 +40,7 @@ pub fn execute(
             }
             None => {
                 rs = join::nested_loop_join(
+                    ctx,
                     &rs,
                     right.tables[0],
                     &right.row_ids[0],
@@ -51,15 +54,16 @@ pub fn execute(
 
     // Phase 3: Post-filter on RowSet (no materialization).
     if !matches!(plan.filter, PlanFilterPredicate::None) {
-        rs = rs.filter(&plan.filter);
+        rs = rs.filter(ctx, &plan.filter);
     }
 
     // Phase 4: Aggregate (RowSet -> small materialized Columns).
     if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
         let aggregated =
-            aggregate::aggregate_rowset(&rs, &plan.group_by, &plan.aggregates);
+            aggregate::aggregate_rowset(ctx, &rs, &plan.group_by, &plan.aggregates);
         let has_aggregates = !plan.aggregates.is_empty();
         let mut result = project::project(
+            ctx,
             &aggregated,
             &plan.result_columns,
             &plan.group_by,
@@ -67,7 +71,7 @@ pub fn execute(
         );
         // Phase 4b: Sort aggregated results.
         if !plan.order_by.is_empty() {
-            sort::sort_materialized(&mut result, &plan.order_by, &plan.result_columns);
+            sort::sort_materialized(ctx, &mut result, &plan.order_by, &plan.result_columns);
         }
         // Phase 4c: Limit aggregated results.
         if let Some(limit) = plan.limit {
@@ -80,7 +84,7 @@ pub fn execute(
 
     // Phase 5: Sort RowSet before projection.
     if !plan.order_by.is_empty() {
-        rs.sort(&plan.order_by);
+        rs.sort(ctx, &plan.order_by);
     }
 
     // Phase 5b: Limit RowSet before projection.
@@ -94,7 +98,7 @@ pub fn execute(
     }
 
     // Phase 6: Project — materialize only result columns from RowSet.
-    Ok(project::project_rowset(&rs, &plan.result_columns))
+    Ok(project::project_rowset(ctx, &rs, &plan.result_columns))
 }
 
 #[cfg(test)]
@@ -171,6 +175,7 @@ mod tests {
     #[test]
     fn test_execute_scan_filter_project() {
         let db = make_db();
+        let mut ctx = ExecutionContext::new();
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "users".into(),
@@ -192,7 +197,7 @@ mod tests {
             ],
         };
 
-        let result = execute(&plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan, &db).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 2);
         assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
@@ -202,6 +207,7 @@ mod tests {
     #[test]
     fn test_execute_join() {
         let db = make_db();
+        let mut ctx = ExecutionContext::new();
         let plan = PlanSelect {
             sources: vec![
                 PlanSourceEntry {
@@ -234,7 +240,7 @@ mod tests {
             ],
         };
 
-        let result = execute(&plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan, &db).unwrap();
         assert_eq!(result[0].len(), 3);
         assert_eq!(result[0], vec![
             CellValue::Str("Alice".into()),
@@ -251,6 +257,7 @@ mod tests {
     #[test]
     fn test_execute_aggregate() {
         let db = make_db();
+        let mut ctx = ExecutionContext::new();
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "users".into(),
@@ -276,7 +283,7 @@ mod tests {
             ],
         };
 
-        let result = execute(&plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan, &db).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 3);
         assert_eq!(result[0][0], CellValue::Str("Alice".into()));
@@ -286,6 +293,7 @@ mod tests {
     #[test]
     fn test_execute_table_not_found() {
         let db = HashMap::new();
+        let mut ctx = ExecutionContext::new();
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "nonexistent".into(),
@@ -301,7 +309,7 @@ mod tests {
             result_columns: vec![],
         };
 
-        let err = execute(&plan, &db).unwrap_err();
+        let err = execute(&mut ctx, &plan, &db).unwrap_err();
         assert!(matches!(err, ExecuteError::TableNotFound(_)));
     }
 }

@@ -70,7 +70,8 @@ impl TestDb {
     fn run(&self, sql: &str) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
         let plan = planner::plan(&ast, &self.schemas).expect("plan failed");
-        execute::execute_plan(&plan, &self.tables).expect("execute failed")
+        let mut ctx = execute::ExecutionContext::new();
+        execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
     }
 }
 

@@ -10,6 +10,7 @@ use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::{CellValue, Table};
 
 use super::value_to_cell;
+use super::ExecutionContext;
 
 #[derive(Debug, Clone, Copy)]
 pub enum CmpOp {
@@ -40,7 +41,7 @@ pub fn cmp_cell(left: &CellValue, right: &CellValue, op: CmpOp) -> bool {
 ///
 /// `get` resolves a [`ColumnRef`] to the cell value for the current row.
 /// Returns `true` if the row matches.
-pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
+pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(_ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, get: &F) -> bool {
     match pred {
         PlanFilterPredicate::None => true,
         PlanFilterPredicate::Equals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Eq),
@@ -66,18 +67,19 @@ pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, get
         | PlanFilterPredicate::CompareMaterialized { .. } => {
             unreachable!("must be resolved before execution")
         }
-        PlanFilterPredicate::And(a, b) => filter_row(a, get) && filter_row(b, get),
-        PlanFilterPredicate::Or(a, b) => filter_row(a, get) || filter_row(b, get),
+        PlanFilterPredicate::And(a, b) => filter_row(_ctx, a, get) && filter_row(_ctx, b, get),
+        PlanFilterPredicate::Or(a, b) => filter_row(_ctx, a, get) || filter_row(_ctx, b, get),
     }
 }
 
 /// Evaluate predicate on a single RowSet row.
-pub fn filter_rowset_row(pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
-    filter_row(pred, &|col| rs.get(row, col))
+pub fn filter_rowset_row(ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
+    filter_row(ctx, pred, &|col| rs.get(row, col))
 }
 
 /// Evaluate join predicate: left columns from RowSet, right columns from Table.
 pub fn filter_join_row(
+    ctx: &mut ExecutionContext,
     pred: &PlanFilterPredicate,
     left: &super::RowSet,
     right_table: &Table,
@@ -85,7 +87,7 @@ pub fn filter_join_row(
     l: usize,
     r: usize,
 ) -> bool {
-    filter_row(pred, &|col| {
+    filter_row(ctx, pred, &|col| {
         if col.source < right_source {
             left.get(l, col)
         } else {

@@ -3,9 +3,10 @@ use crate::storage::Table;
 use query_engine::ast::JoinType;
 
 use super::filter_row;
-use super::RowSet;
+use super::{ExecutionContext, RowSet, TraceEvent};
 
 pub fn nested_loop_join<'a>(
+    ctx: &mut ExecutionContext,
     left: &RowSet<'a>,
     right_table: &'a Table,
     right_row_ids: &[usize],
@@ -21,7 +22,7 @@ pub fn nested_loop_join<'a>(
     for l in 0..left.num_rows {
         let mut matched = false;
         for &r in right_row_ids {
-            if filter_row::filter_join_row(on, left, right_table, right_source, l, r) {
+            if filter_row::filter_join_row(ctx, on, left, right_table, right_source, l, r) {
                 matched = true;
                 for ti in 0..num_existing {
                     new_row_ids[ti].push(left.row_ids[ti][l]);
@@ -40,6 +41,8 @@ pub fn nested_loop_join<'a>(
     let num_rows = new_row_ids.first().map_or(0, |v| v.len());
     let mut tables = left.tables.clone();
     tables.push(right_table);
+
+    ctx.trace.push(TraceEvent::Join { rows_out: num_rows });
 
     RowSet {
         tables,
@@ -98,12 +101,14 @@ mod tests {
 
     #[test]
     fn test_inner_join() {
+        let mut ctx = ExecutionContext::new();
         let ut = make_users_table();
         let ot = make_orders_table();
-        let left = RowSet::from_scan(&ut, scan_row_ids(&ut));
-        let right_ids = scan_row_ids(&ot);
+        let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));
+        let right_ids = scan_row_ids(&mut ctx, &ot);
 
         let result = nested_loop_join(
+            &mut ctx,
             &left,
             &ot,
             &right_ids,
@@ -120,12 +125,14 @@ mod tests {
 
     #[test]
     fn test_left_join_with_nulls() {
+        let mut ctx = ExecutionContext::new();
         let ut = make_users_table();
         let ot = make_orders_table();
-        let left = RowSet::from_scan(&ut, scan_row_ids(&ut));
-        let right_ids = scan_row_ids(&ot);
+        let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));
+        let right_ids = scan_row_ids(&mut ctx, &ot);
 
         let result = nested_loop_join(
+            &mut ctx,
             &left,
             &ot,
             &right_ids,
@@ -144,13 +151,14 @@ mod tests {
 
     #[test]
     fn test_join_condition_column_equals() {
+        let mut ctx = ExecutionContext::new();
         let ut = make_users_table();
         let ot = make_orders_table();
-        let left = RowSet::from_scan(&ut, scan_row_ids(&ut));
-        let right_ids = scan_row_ids(&ot);
+        let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));
+        let right_ids = scan_row_ids(&mut ctx, &ot);
 
         let result = nested_loop_join(
-            &left, &ot, &right_ids, 1,
+            &mut ctx, &left, &ot, &right_ids, 1,
             &PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
             JoinType::Inner,
         );

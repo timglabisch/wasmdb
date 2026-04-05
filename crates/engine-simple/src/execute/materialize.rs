@@ -8,22 +8,23 @@ use crate::storage::Table;
 use query_engine::ast::{Operator, Value};
 
 use super::pipeline::execute;
-use super::{cell_to_value, Columns, ExecuteError};
+use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, TraceEvent};
 
 /// Execute an ExecutionPlan: run materializations first, resolve placeholders, then run main query.
 pub fn execute_plan(
+    ctx: &mut ExecutionContext,
     plan: &ExecutionPlan,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
     if plan.materializations.is_empty() {
-        return execute(&plan.main, db);
+        return execute(ctx, &plan.main, db);
     }
 
     let mut materialized: Vec<Vec<Value>> = Vec::new();
 
-    for step in &plan.materializations {
+    for (i, step) in plan.materializations.iter().enumerate() {
         let resolved = resolve_materialized(&step.plan, &materialized);
-        let result = execute(&resolved, db)?;
+        let result = execute(ctx, &resolved, db)?;
 
         if result.len() != 1 {
             return Err(ExecuteError::MaterializeError(
@@ -36,12 +37,14 @@ pub fn execute_plan(
             ));
         }
 
+        let rows = result[0].len();
         let values = result[0].iter().map(cell_to_value).collect();
         materialized.push(values);
+        ctx.trace.push(TraceEvent::Materialize { step: i, rows });
     }
 
     let resolved = resolve_materialized(&plan.main, &materialized);
-    execute(&resolved, db)
+    execute(ctx, &resolved, db)
 }
 
 fn resolve_materialized(plan: &PlanSelect, materialized: &[Vec<Value>]) -> PlanSelect {

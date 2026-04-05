@@ -19,6 +19,35 @@ pub use rowset::{RowSet, NULL_ROW};
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 
+// ── Execution context ─────────────────────────────────────────────────────
+
+/// Traces a single operation during query execution.
+#[derive(Debug, Clone)]
+pub enum TraceEvent {
+    FullScan { table: String, rows: usize },
+    IndexScan { table: String, index_columns: Vec<usize>, prefix_len: usize, rows: usize },
+    Filter { rows_in: usize, rows_out: usize },
+    Join { rows_out: usize },
+    Aggregate { groups: usize },
+    Sort { rows: usize },
+    Project { columns: usize, rows: usize },
+    Materialize { step: usize, rows: usize },
+}
+
+/// Threaded through all execution functions.
+/// Collects trace events so callers can inspect the exact execution path.
+pub struct ExecutionContext {
+    pub trace: Vec<TraceEvent>,
+}
+
+impl ExecutionContext {
+    pub fn new() -> Self {
+        Self { trace: Vec::new() }
+    }
+}
+
+// ── Error ─────────────────────────────────────────────────────────────────
+
 #[derive(Debug)]
 pub enum ExecuteError {
     TableNotFound(String),
@@ -35,6 +64,8 @@ impl std::fmt::Display for ExecuteError {
 }
 
 impl std::error::Error for ExecuteError {}
+
+// ── Value conversion ──────────────────────────────────────────────────────
 
 pub fn value_to_cell(v: &Value) -> CellValue {
     match v {

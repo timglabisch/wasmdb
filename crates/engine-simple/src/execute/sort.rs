@@ -2,9 +2,10 @@ use crate::planner::plan::{PlanOrderSpec, PlanResultColumn};
 use crate::storage::CellValue;
 use query_engine::ast::OrderDirection;
 
-use super::Columns;
+use super::{Columns, ExecutionContext, TraceEvent};
 
 pub fn sort_materialized(
+    ctx: &mut ExecutionContext,
     cols: &mut Columns,
     order_by: &[PlanOrderSpec],
     result_columns: &[PlanResultColumn],
@@ -45,4 +46,6 @@ pub fn sort_materialized(
         let sorted: Vec<CellValue> = row_order.iter().map(|&i| col[i].clone()).collect();
         *col = sorted;
     }
+
+    ctx.trace.push(TraceEvent::Sort { rows: num_rows });
 }

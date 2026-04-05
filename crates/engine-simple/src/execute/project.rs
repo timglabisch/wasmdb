@@ -1,9 +1,10 @@
 use crate::planner::plan::{ColumnRef, PlanResultColumn};
 
-use super::Columns;
+use super::{Columns, ExecutionContext, TraceEvent};
 
 /// Project result columns directly from a RowSet — only result columns are materialized.
 pub fn project_rowset(
+    ctx: &mut ExecutionContext,
     rs: &super::RowSet,
     result_columns: &[PlanResultColumn],
 ) -> Columns {
@@ -20,10 +21,13 @@ pub fn project_rowset(
             }
         }
     }
+    let rows = result.first().map_or(0, |c| c.len());
+    ctx.trace.push(TraceEvent::Project { columns: result.len(), rows });
     result
 }
 
 pub fn project(
+    ctx: &mut ExecutionContext,
     cols: &Columns,
     result_columns: &[PlanResultColumn],
     group_by: &[ColumnRef],
@@ -53,6 +57,8 @@ pub fn project(
         }
     }
 
+    let rows = result.first().map_or(0, |c| c.len());
+    ctx.trace.push(TraceEvent::Project { columns: result.len(), rows });
     result
 }
 
@@ -68,6 +74,7 @@ mod tests {
 
     #[test]
     fn test_project_simple() {
+        let mut ctx = ExecutionContext::new();
         let cols: Columns = vec![
             vec![CellValue::I64(1), CellValue::I64(2)],
             vec![CellValue::Str("a".into()), CellValue::Str("b".into())],
@@ -75,6 +82,7 @@ mod tests {
         ];
 
         let result = project(
+            &mut ctx,
             &cols,
             &[
                 PlanResultColumn::Column { col: c(0, 2), alias: None },
@@ -91,12 +99,14 @@ mod tests {
 
     #[test]
     fn test_project_after_aggregate() {
+        let mut ctx = ExecutionContext::new();
         let cols: Columns = vec![
             vec![CellValue::Str("Alice".into()), CellValue::Str("Bob".into())],
             vec![CellValue::I64(25), CellValue::I64(30)],
         ];
 
         let result = project(
+            &mut ctx,
             &cols,
             &[
                 PlanResultColumn::Column { col: c(0, 1), alias: None },

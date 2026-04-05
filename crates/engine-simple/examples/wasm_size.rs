@@ -39,7 +39,8 @@ pub extern "C" fn run() -> i64 {
 
     let ast = parser::parse("SELECT users.name, users.age FROM users WHERE users.age > 28").unwrap();
     let plan = planner::plan_select(&ast, &schemas).unwrap();
-    let result = execute::execute(&plan, &tables).unwrap();
+    let mut ctx = execute::ExecutionContext::new();
+    let result = execute::execute(&mut ctx, &plan, &tables).unwrap();
 
     result[0].len() as i64
 }

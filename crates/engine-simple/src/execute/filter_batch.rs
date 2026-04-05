@@ -13,8 +13,9 @@ use crate::storage::{CellValue, Table, TypedColumn};
 use query_engine::ast::Value;
 
 use super::value_to_cell;
+use super::ExecutionContext;
 
-/// Normalized value for typed comparison — avoids repeating Bool/Float→I64 conversion.
+/// Normalized value for typed comparison — avoids repeating Bool/Float->I64 conversion.
 enum NormalizedValue<'a> {
     I64(i64),
     Str(&'a str),
@@ -39,25 +40,25 @@ impl PlanFilterPredicate {
     /// reference a single table (i.e. after pushdown to `pre_filter`).
     ///
     /// For the general row-wise path, see [`super::filter_row::filter_row`].
-    pub fn filter_batch(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
+    pub fn filter_batch(&self, ctx: &mut ExecutionContext, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::None => row_ids.to_vec(),
 
             PlanFilterPredicate::And(l, r) => {
-                let left_ids = l.filter_batch(table, row_ids);
-                r.filter_batch(table, &left_ids)
+                let left_ids = l.filter_batch(ctx, table, row_ids);
+                r.filter_batch(ctx, table, &left_ids)
             }
             PlanFilterPredicate::Or(l, r) => {
-                let left_ids = l.filter_batch(table, row_ids);
-                let right_ids = r.filter_batch(table, row_ids);
+                let left_ids = l.filter_batch(ctx, table, row_ids);
+                let right_ids = r.filter_batch(ctx, table, row_ids);
                 sorted_union(&left_ids, &right_ids)
             }
 
-            _ => self.filter_batch_leaf(table, row_ids),
+            _ => self.filter_batch_leaf(ctx, table, row_ids),
         }
     }
 
-    fn filter_batch_leaf(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
+    fn filter_batch_leaf(&self, _ctx: &mut ExecutionContext, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::Equals { col, value } => {
                 filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Eq)
@@ -288,54 +289,61 @@ mod tests {
 
     #[test]
     fn test_filter_batch_equals_i64() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[1, 2, 3, 2, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 3]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1, 3]);
     }
 
     #[test]
     fn test_filter_batch_greater_than() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[1, 5, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(2) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 2]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1, 2]);
     }
 
     #[test]
     fn test_filter_batch_string_equals() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1]);
     }
 
     #[test]
     fn test_filter_batch_nullable_skips_null() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(20) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 1]);
     }
 
     #[test]
     fn test_filter_batch_is_null() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNull { col: c(0, 2) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![2]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![2]);
     }
 
     #[test]
     fn test_filter_batch_is_not_null_on_non_nullable() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNotNull { col: c(0, 0) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1, 2]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 1, 2]);
     }
 
     #[test]
     fn test_filter_batch_column_equals() {
+        let mut ctx = ExecutionContext::new();
         let schema = TableSchema {
             name: "t".into(),
             columns: vec![
@@ -351,77 +359,84 @@ mod tests {
         table.insert(&[CellValue::I64(3), CellValue::I64(3)]).unwrap();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 2]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
     }
 
     #[test]
     fn test_filter_batch_and() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::And(
             Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(1) }),
             Box::new(PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) }),
         );
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1]);
     }
 
     #[test]
     fn test_filter_batch_subset_row_ids() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[10, 20, 30, 40, 50]);
         let row_ids = vec![1, 3];
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(25) };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![3]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![3]);
     }
 
     #[test]
     fn test_filter_batch_null_value_always_false() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
-        assert_eq!(pred.filter_batch(&table, &row_ids), Vec::<usize>::new());
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), Vec::<usize>::new());
     }
 
     #[test]
     fn test_filter_batch_in_i64() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[1, 2, 3, 4, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 0),
             values: vec![Value::Int(2), Value::Int(4)],
         };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 3]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1, 3]);
     }
 
     #[test]
     fn test_filter_batch_in_string() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 1),
             values: vec![Value::Text("Alice".into()), Value::Text("Carol".into())],
         };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 2]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
     }
 
     #[test]
     fn test_filter_batch_in_null_skipped() {
+        let mut ctx = ExecutionContext::new();
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 2),
             values: vec![Value::Int(25), Value::Int(30)],
         };
-        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1]);
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 1]);
     }
 
     #[test]
     fn test_filter_batch_in_empty() {
+        let mut ctx = ExecutionContext::new();
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 0),
             values: vec![],
         };
-        assert_eq!(pred.filter_batch(&table, &row_ids), Vec::<usize>::new());
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), Vec::<usize>::new());
     }
 }
