@@ -555,3 +555,99 @@ fn index_with_limit() {
     let result = db.run("SELECT users.name FROM users WHERE users.id > 0 ORDER BY users.name LIMIT 2");
     assert_eq!(result[0], vec![s("Alice"), s("Bob")]);
 }
+
+// ── Composite index queries ──────────────────────────────────────────────
+
+fn make_composite_indexed_db() -> TestDb {
+    let mut db = TestDb::new();
+
+    let events = db.add_table_with_indexes(
+        "events",
+        &[
+            ("user_id", DataType::I64, false),
+            ("category", DataType::I64, false),
+            ("score", DataType::I64, false),
+        ],
+        vec![
+            IndexSchema {
+                name: Some("idx_user_cat".into()),
+                columns: vec![0, 1],
+                index_type: IndexType::BTree,
+            },
+        ],
+    );
+    // (user_id, category, score)
+    events.insert(&[i(1), i(10), i(100)]).unwrap();
+    events.insert(&[i(1), i(20), i(200)]).unwrap();
+    events.insert(&[i(2), i(10), i(300)]).unwrap();
+    events.insert(&[i(2), i(20), i(400)]).unwrap();
+    events.insert(&[i(2), i(30), i(500)]).unwrap();
+
+    db
+}
+
+#[test]
+fn composite_index_full_eq() {
+    let db = make_composite_indexed_db();
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.user_id = 2 AND events.category = 20",
+    );
+    assert_eq!(result[0], vec![i(400)]);
+}
+
+#[test]
+fn composite_index_prefix_eq() {
+    let db = make_composite_indexed_db();
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.user_id = 1",
+    );
+    assert_eq!(result[0], vec![i(100), i(200)]);
+}
+
+#[test]
+fn composite_index_prefix_eq_with_range() {
+    let db = make_composite_indexed_db();
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.user_id = 2 AND events.category > 10",
+    );
+    assert_eq!(result[0], vec![i(400), i(500)]);
+}
+
+#[test]
+fn composite_index_prefix_eq_with_range_lt() {
+    let db = make_composite_indexed_db();
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.user_id = 2 AND events.category < 30",
+    );
+    assert_eq!(result[0], vec![i(300), i(400)]);
+}
+
+#[test]
+fn composite_index_with_remaining_filter() {
+    let db = make_composite_indexed_db();
+    // Index covers (user_id, category), score filter applied as post-filter.
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.user_id = 2 AND events.category >= 10 AND events.score > 350",
+    );
+    assert_eq!(result[0], vec![i(400), i(500)]);
+}
+
+#[test]
+fn composite_index_no_prefix_falls_back() {
+    let db = make_composite_indexed_db();
+    // category-only filter can't use the (user_id, category) index — falls back to scan.
+    let result = db.run(
+        "SELECT events.score FROM events WHERE events.category = 10",
+    );
+    assert_eq!(result[0], vec![i(100), i(300)]);
+}
+
+#[test]
+fn composite_index_with_order_by() {
+    let db = make_composite_indexed_db();
+    let result = db.run(
+        "SELECT events.category, events.score FROM events WHERE events.user_id = 2 ORDER BY events.score DESC",
+    );
+    assert_eq!(result[0], vec![i(30), i(20), i(10)]);
+    assert_eq!(result[1], vec![i(500), i(400), i(300)]);
+}
