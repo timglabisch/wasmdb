@@ -6,6 +6,19 @@ use query_engine::ast;
 use query_engine::schema::Schema;
 use plan::*;
 
+struct PlanContext<'a> {
+    schemas: &'a HashMap<String, Schema>,
+    materializations: Vec<MaterializeStep>,
+}
+
+impl<'a> PlanContext<'a> {
+    fn add_materialization(&mut self, plan: PlanSelect, kind: MaterializeKind) -> usize {
+        let id = self.materializations.len();
+        self.materializations.push(MaterializeStep { plan, kind });
+        id
+    }
+}
+
 #[derive(Debug)]
 pub enum PlanError {
     UnknownTable(String),
@@ -29,10 +42,40 @@ impl std::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
-/// Translate an AstSelect into an executable PlanSelect.
+/// Translate an AstSelect into an ExecutionPlan with materialization steps for subqueries.
+pub fn plan(
+    ast: &ast::AstSelect,
+    table_schemas: &HashMap<String, Schema>,
+) -> Result<ExecutionPlan, PlanError> {
+    let mut ctx = PlanContext {
+        schemas: table_schemas,
+        materializations: Vec::new(),
+    };
+    let main = plan_select_ctx(ast, &mut ctx)?;
+    Ok(ExecutionPlan {
+        materializations: ctx.materializations,
+        main,
+    })
+}
+
+/// Translate an AstSelect into a PlanSelect (convenience wrapper).
+/// Errors if the AST contains subqueries — use `plan()` instead.
 pub fn plan_select(
     select: &ast::AstSelect,
     table_schemas: &HashMap<String, Schema>,
+) -> Result<PlanSelect, PlanError> {
+    let ep = plan(select, table_schemas)?;
+    if !ep.materializations.is_empty() {
+        return Err(PlanError::UnsupportedExpr(
+            "unexpected subqueries; use plan() instead".into(),
+        ));
+    }
+    Ok(ep.main)
+}
+
+fn plan_select_ctx(
+    select: &ast::AstSelect,
+    ctx: &mut PlanContext,
 ) -> Result<PlanSelect, PlanError> {
     if select.sources.is_empty() {
         return Err(PlanError::EmptySources);
@@ -41,7 +84,7 @@ pub fn plan_select(
     let mut sources = Vec::new();
 
     for entry in &select.sources {
-        let table_schema = table_schemas
+        let table_schema = ctx.schemas
             .get(&entry.table)
             .ok_or_else(|| PlanError::UnknownTable(entry.table.clone()))?
             .clone();
@@ -55,7 +98,7 @@ pub fn plan_select(
 
         // Resolve join condition against all sources added so far.
         if let Some(jc) = &entry.join {
-            let on = plan_filter(&jc.on, &sources)?;
+            let on = plan_filter(&jc.on, &sources, ctx)?;
             sources.last_mut().unwrap().join = Some(PlanJoin {
                 join_type: jc.join_type,
                 on,
@@ -63,7 +106,7 @@ pub fn plan_select(
         }
     }
 
-    let filter = plan_filter(&select.filter, &sources)?;
+    let filter = plan_filter(&select.filter, &sources, ctx)?;
 
     let group_by = select
         .group_by
@@ -183,7 +226,9 @@ pub fn predicate_column_refs(pred: &PlanFilterPredicate) -> Vec<ColumnRef> {
             vec![*left, *right]
         }
 
-        PlanFilterPredicate::In { col, .. } => vec![*col],
+        PlanFilterPredicate::In { col, .. }
+        | PlanFilterPredicate::InMaterialized { col, .. }
+        | PlanFilterPredicate::CompareMaterialized { col, .. } => vec![*col],
 
         PlanFilterPredicate::And(l, r) | PlanFilterPredicate::Or(l, r) => {
             let mut v = predicate_column_refs(l);
@@ -197,10 +242,11 @@ pub fn predicate_column_refs(pred: &PlanFilterPredicate) -> Vec<ColumnRef> {
 fn plan_filter(
     exprs: &[ast::AstExpr],
     sources: &[PlanSourceEntry],
+    ctx: &mut PlanContext,
 ) -> Result<PlanFilterPredicate, PlanError> {
     let mut predicates: Vec<PlanFilterPredicate> = exprs
         .iter()
-        .map(|e| plan_expr_to_predicate(e, sources))
+        .map(|e| plan_expr_to_predicate(e, sources, ctx))
         .collect::<Result<Vec<_>, _>>()?;
 
     match predicates.len() {
@@ -219,17 +265,18 @@ fn plan_filter(
 fn plan_expr_to_predicate(
     expr: &ast::AstExpr,
     sources: &[PlanSourceEntry],
+    ctx: &mut PlanContext,
 ) -> Result<PlanFilterPredicate, PlanError> {
     match expr {
         ast::AstExpr::Binary { left, op, right } => {
             if *op == ast::Operator::And {
-                let l = plan_expr_to_predicate(left, sources)?;
-                let r = plan_expr_to_predicate(right, sources)?;
+                let l = plan_expr_to_predicate(left, sources, ctx)?;
+                let r = plan_expr_to_predicate(right, sources, ctx)?;
                 return Ok(PlanFilterPredicate::And(Box::new(l), Box::new(r)));
             }
             if *op == ast::Operator::Or {
-                let l = plan_expr_to_predicate(left, sources)?;
-                let r = plan_expr_to_predicate(right, sources)?;
+                let l = plan_expr_to_predicate(left, sources, ctx)?;
+                let r = plan_expr_to_predicate(right, sources, ctx)?;
                 return Ok(PlanFilterPredicate::Or(Box::new(l), Box::new(r)));
             }
 
@@ -247,8 +294,20 @@ fn plan_expr_to_predicate(
                     let right_cr = resolve_column_ref(right_col, sources)?;
                     column_column_predicate(left_cr, *op, right_cr)
                 }
+                (ast::AstExpr::Column(col), ast::AstExpr::Subquery(subquery)) => {
+                    let cr = resolve_column_ref(col, sources)?;
+                    let subquery_plan = plan_select_ctx(subquery, ctx)?;
+                    let mat_id = ctx.add_materialization(subquery_plan, MaterializeKind::Scalar);
+                    Ok(PlanFilterPredicate::CompareMaterialized { col: cr, op: *op, mat_id })
+                }
+                (ast::AstExpr::Subquery(subquery), ast::AstExpr::Column(col)) => {
+                    let cr = resolve_column_ref(col, sources)?;
+                    let subquery_plan = plan_select_ctx(subquery, ctx)?;
+                    let mat_id = ctx.add_materialization(subquery_plan, MaterializeKind::Scalar);
+                    Ok(PlanFilterPredicate::CompareMaterialized { col: cr, op: flip_op(*op)?, mat_id })
+                }
                 _ => Err(PlanError::UnsupportedExpr(
-                    "only Column/Literal operands supported".into(),
+                    "only Column/Literal/Subquery operands supported".into(),
                 )),
             }
         }
@@ -259,14 +318,20 @@ fn plan_expr_to_predicate(
                 .map(|v| match v {
                     ast::AstExpr::Literal(val) => Ok(val.clone()),
                     _ => Err(PlanError::UnsupportedExpr(
-                        "IN values must be literals (subqueries should be materialized first)".into(),
+                        "IN values must be literals".into(),
                     )),
                 })
                 .collect::<Result<_, _>>()?;
             Ok(PlanFilterPredicate::In { col, values: vals })
         }
+        ast::AstExpr::InSubquery { expr, subquery } => {
+            let col = resolve_to_column_ref(expr, sources)?;
+            let subquery_plan = plan_select_ctx(subquery, ctx)?;
+            let mat_id = ctx.add_materialization(subquery_plan, MaterializeKind::List);
+            Ok(PlanFilterPredicate::InMaterialized { col, mat_id })
+        }
         _ => Err(PlanError::UnsupportedExpr(
-            "filter must be a binary expression or IN".into(),
+            "filter must be a binary expression, IN, or IN subquery".into(),
         )),
     }
 }

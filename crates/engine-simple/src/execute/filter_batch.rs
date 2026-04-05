@@ -1,20 +1,18 @@
+//! Columnar batch predicate evaluation (single-table fast path).
+//!
+//! Operates directly on typed column arrays ([`TypedColumn`]), avoiding per-row
+//! [`CellValue`] allocation. Returns filtered row IDs as `Vec<usize>`.
+//!
+//! Only works for single-source predicates (after pushdown to `pre_filter`).
+//! For the general row-wise path that works across tables, see [`super::filter_row`].
+
 use std::collections::HashSet;
 
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
+use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::{CellValue, Table, TypedColumn};
 use query_engine::ast::Value;
 
 use super::value_to_cell;
-
-#[derive(Debug, Clone, Copy)]
-pub enum CmpOp {
-    Eq,
-    Neq,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-}
 
 /// Normalized value for typed comparison — avoids repeating Bool/Float→I64 conversion.
 enum NormalizedValue<'a> {
@@ -34,27 +32,32 @@ fn normalize_value<'a>(v: &'a Value) -> NormalizedValue<'a> {
 }
 
 impl PlanFilterPredicate {
-    /// Evaluate predicate on Table storage, returning matching row IDs.
-    /// Column refs use .col (local column position within the table).
-    pub fn eval_table(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
+    /// Filter row IDs by evaluating this predicate against a single table's columns.
+    ///
+    /// This is the fast path: it reads typed column arrays directly, without
+    /// boxing each cell into [`CellValue`]. Only usable for predicates that
+    /// reference a single table (i.e. after pushdown to `pre_filter`).
+    ///
+    /// For the general row-wise path, see [`super::filter_row::filter_row`].
+    pub fn filter_batch(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::None => row_ids.to_vec(),
 
             PlanFilterPredicate::And(l, r) => {
-                let left_ids = l.eval_table(table, row_ids);
-                r.eval_table(table, &left_ids)
+                let left_ids = l.filter_batch(table, row_ids);
+                r.filter_batch(table, &left_ids)
             }
             PlanFilterPredicate::Or(l, r) => {
-                let left_ids = l.eval_table(table, row_ids);
-                let right_ids = r.eval_table(table, row_ids);
+                let left_ids = l.filter_batch(table, row_ids);
+                let right_ids = r.filter_batch(table, row_ids);
                 sorted_union(&left_ids, &right_ids)
             }
 
-            _ => self.eval_leaf_filtered(table, row_ids),
+            _ => self.filter_batch_leaf(table, row_ids),
         }
     }
 
-    fn eval_leaf_filtered(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
+    fn filter_batch_leaf(&self, table: &Table, row_ids: &[usize]) -> Vec<usize> {
         match self {
             PlanFilterPredicate::Equals { col, value } => {
                 filter_typed_cmp(&table.columns[col.col], row_ids, value, CmpOp::Eq)
@@ -101,65 +104,18 @@ impl PlanFilterPredicate {
             PlanFilterPredicate::In { col, values } => {
                 filter_typed_in(&table.columns[col.col], row_ids, values)
             }
+            PlanFilterPredicate::InMaterialized { .. }
+            | PlanFilterPredicate::CompareMaterialized { .. } => {
+                unreachable!("must be resolved before execution")
+            }
             _ => unreachable!(),
         }
     }
 }
 
-// --- Generic predicate evaluation on a cell accessor (no materialization) ---
+// ── Typed column helpers ────────────────────────────────────────────────────
 
-/// Evaluate a predicate using a closure that resolves ColumnRef → CellValue.
-pub fn eval_pred_row<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
-    match pred {
-        PlanFilterPredicate::None => true,
-        PlanFilterPredicate::Equals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Eq),
-        PlanFilterPredicate::NotEquals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Neq),
-        PlanFilterPredicate::GreaterThan { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Gt),
-        PlanFilterPredicate::GreaterThanOrEqual { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Gte),
-        PlanFilterPredicate::LessThan { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Lt),
-        PlanFilterPredicate::LessThanOrEqual { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Lte),
-        PlanFilterPredicate::ColumnEquals { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Eq),
-        PlanFilterPredicate::ColumnNotEquals { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Neq),
-        PlanFilterPredicate::ColumnGreaterThan { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Gt),
-        PlanFilterPredicate::ColumnGreaterThanOrEqual { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Gte),
-        PlanFilterPredicate::ColumnLessThan { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Lt),
-        PlanFilterPredicate::ColumnLessThanOrEqual { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Lte),
-        PlanFilterPredicate::IsNull { col } => matches!(get(*col), CellValue::Null),
-        PlanFilterPredicate::IsNotNull { col } => !matches!(get(*col), CellValue::Null),
-        PlanFilterPredicate::In { col, values } => {
-            let cell = get(*col);
-            if matches!(cell, CellValue::Null) { return false; }
-            values.iter().any(|v| cmp_cell(&cell, &value_to_cell(v), CmpOp::Eq))
-        }
-        PlanFilterPredicate::And(a, b) => eval_pred_row(a, get) && eval_pred_row(b, get),
-        PlanFilterPredicate::Or(a, b) => eval_pred_row(a, get) || eval_pred_row(b, get),
-    }
-}
-
-/// Evaluate predicate on a single RowSet row.
-pub fn eval_rowset_row(pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
-    eval_pred_row(pred, &|col| rs.get(row, col))
-}
-
-/// Evaluate join predicate: left columns from RowSet, right columns from Table.
-pub fn eval_join_row(
-    pred: &PlanFilterPredicate,
-    left: &super::RowSet,
-    right_table: &Table,
-    right_source: usize,
-    l: usize,
-    r: usize,
-) -> bool {
-    eval_pred_row(pred, &|col| {
-        if col.source < right_source {
-            left.get(l, col)
-        } else {
-            right_table.get(r, col.col)
-        }
-    })
-}
-
-// --- Typed helpers for eval_table: directly produce Vec<usize> (no Vec<bool> intermediate) ---
+use super::filter_row::CmpOp;
 
 fn filter_typed_cmp(
     col: &TypedColumn,
@@ -286,26 +242,10 @@ fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
     result
 }
 
-// --- Shared utility ---
-
-/// SQL comparison semantics: any comparison involving NULL returns false.
-pub fn cmp_cell(left: &CellValue, right: &CellValue, op: CmpOp) -> bool {
-    if matches!(left, CellValue::Null) || matches!(right, CellValue::Null) {
-        return false;
-    }
-    match op {
-        CmpOp::Eq => left == right,
-        CmpOp::Neq => left != right,
-        CmpOp::Lt => left < right,
-        CmpOp::Lte => left <= right,
-        CmpOp::Gt => left > right,
-        CmpOp::Gte => left >= right,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planner::plan::ColumnRef;
     use schema_engine::schema::{ColumnSchema, DataType, TableSchema};
 
     fn make_i64_table(name: &str, col_name: &str, values: &[i64]) -> Table {
@@ -347,55 +287,55 @@ mod tests {
     }
 
     #[test]
-    fn test_eval_table_equals_i64() {
+    fn test_filter_batch_equals_i64() {
         let table = make_i64_table("t", "x", &[1, 2, 3, 2, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 3]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 3]);
     }
 
     #[test]
-    fn test_eval_table_greater_than() {
+    fn test_filter_batch_greater_than() {
         let table = make_i64_table("t", "x", &[1, 5, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(2) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 2]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 2]);
     }
 
     #[test]
-    fn test_eval_table_string_equals() {
+    fn test_filter_batch_string_equals() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![1]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1]);
     }
 
     #[test]
-    fn test_eval_table_nullable_skips_null() {
+    fn test_filter_batch_nullable_skips_null() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(20) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1]);
     }
 
     #[test]
-    fn test_eval_table_is_null() {
+    fn test_filter_batch_is_null() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNull { col: c(0, 2) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![2]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![2]);
     }
 
     #[test]
-    fn test_eval_table_is_not_null_on_non_nullable() {
+    fn test_filter_batch_is_not_null_on_non_nullable() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNotNull { col: c(0, 0) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1, 2]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1, 2]);
     }
 
     #[test]
-    fn test_eval_table_column_equals() {
+    fn test_filter_batch_column_equals() {
         let schema = TableSchema {
             name: "t".into(),
             columns: vec![
@@ -411,78 +351,77 @@ mod tests {
         table.insert(&[CellValue::I64(3), CellValue::I64(3)]).unwrap();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 2]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 2]);
     }
 
     #[test]
-    fn test_eval_table_and() {
+    fn test_filter_batch_and() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::And(
             Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(1) }),
             Box::new(PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) }),
         );
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![1]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1]);
     }
 
     #[test]
-    fn test_eval_table_subset_row_ids() {
+    fn test_filter_batch_subset_row_ids() {
         let table = make_i64_table("t", "x", &[10, 20, 30, 40, 50]);
         let row_ids = vec![1, 3];
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(25) };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![3]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![3]);
     }
 
     #[test]
-    fn test_eval_table_null_value_always_false() {
+    fn test_filter_batch_null_value_always_false() {
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
-        assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
+        assert_eq!(pred.filter_batch(&table, &row_ids), Vec::<usize>::new());
     }
 
     #[test]
-    fn test_eval_table_in_i64() {
+    fn test_filter_batch_in_i64() {
         let table = make_i64_table("t", "x", &[1, 2, 3, 4, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 0),
             values: vec![Value::Int(2), Value::Int(4)],
         };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 3]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![1, 3]);
     }
 
     #[test]
-    fn test_eval_table_in_string() {
+    fn test_filter_batch_in_string() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 1),
             values: vec![Value::Text("Alice".into()), Value::Text("Carol".into())],
         };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 2]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 2]);
     }
 
     #[test]
-    fn test_eval_table_in_null_skipped() {
+    fn test_filter_batch_in_null_skipped() {
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
-        // age column: 30, 25, NULL — IN (25, 30) should skip the NULL row
         let pred = PlanFilterPredicate::In {
             col: c(0, 2),
             values: vec![Value::Int(25), Value::Int(30)],
         };
-        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1]);
+        assert_eq!(pred.filter_batch(&table, &row_ids), vec![0, 1]);
     }
 
     #[test]
-    fn test_eval_table_in_empty() {
+    fn test_filter_batch_in_empty() {
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
             col: c(0, 0),
             values: vec![],
         };
-        assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
+        assert_eq!(pred.filter_batch(&table, &row_ids), Vec::<usize>::new());
     }
 }

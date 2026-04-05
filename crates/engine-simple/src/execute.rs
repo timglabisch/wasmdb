@@ -1,5 +1,6 @@
 pub mod aggregate;
-pub mod eval;
+pub mod filter_batch;
+pub mod filter_row;
 pub mod join;
 pub mod project;
 pub mod scan;
@@ -9,8 +10,7 @@ use std::collections::HashMap;
 
 use crate::planner::plan::*;
 use crate::storage::{CellValue, Table};
-use query_engine::ast::{AstExpr, AstSelect, OrderDirection, Value};
-use query_engine::schema::Schema;
+use query_engine::ast::{Operator, OrderDirection, Value};
 
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
@@ -78,7 +78,7 @@ impl<'a> RowSet<'a> {
             (0..self.tables.len()).map(|_| Vec::new()).collect();
         let mut count = 0;
         for row in 0..self.num_rows {
-            if eval::eval_rowset_row(pred, self, row) {
+            if filter_row::filter_rowset_row(pred, self, row) {
                 for (ti, ids) in self.row_ids.iter().enumerate() {
                     new_row_ids[ti].push(ids[row]);
                 }
@@ -128,88 +128,85 @@ fn cell_to_value(cell: &CellValue) -> Value {
     }
 }
 
-/// Execute a subquery and return its single-column result as a list of Values.
-fn execute_subquery(
-    select: &mut AstSelect,
+/// Execute an ExecutionPlan: run materializations first, resolve placeholders, then run main query.
+pub fn execute_plan(
+    plan: &ExecutionPlan,
     db: &HashMap<String, Table>,
-    table_schemas: &HashMap<String, Schema>,
-) -> Result<Vec<Value>, ExecuteError> {
-    // Recursively materialize nested subqueries first (bottom-up).
-    materialize_subqueries(select, db, table_schemas)?;
-    let plan = crate::planner::plan_select(select, table_schemas)
-        .map_err(|e| ExecuteError::MaterializeError(e.to_string()))?;
-    let columns = execute(&plan, db)?;
-    if columns.len() != 1 {
-        return Err(ExecuteError::MaterializeError(
-            format!("subquery must return exactly 1 column, got {}", columns.len()),
-        ));
+) -> Result<Columns, ExecuteError> {
+    if plan.materializations.is_empty() {
+        return execute(&plan.main, db);
     }
-    Ok(columns[0].iter().map(cell_to_value).collect())
+
+    let mut materialized: Vec<Vec<Value>> = Vec::new();
+
+    for step in &plan.materializations {
+        let resolved = resolve_materialized(&step.plan, &materialized);
+        let result = execute(&resolved, db)?;
+
+        if result.len() != 1 {
+            return Err(ExecuteError::MaterializeError(
+                format!("subquery must return 1 column, got {}", result.len()),
+            ));
+        }
+        if matches!(step.kind, MaterializeKind::Scalar) && result[0].len() != 1 {
+            return Err(ExecuteError::MaterializeError(
+                format!("scalar subquery must return 1 row, got {}", result[0].len()),
+            ));
+        }
+
+        let values = result[0].iter().map(cell_to_value).collect();
+        materialized.push(values);
+    }
+
+    let resolved = resolve_materialized(&plan.main, &materialized);
+    execute(&resolved, db)
 }
 
-/// Recursively replace all Subquery nodes in the AST with materialized values.
-fn materialize_expr(
-    expr: &mut AstExpr,
-    db: &HashMap<String, Table>,
-    table_schemas: &HashMap<String, Schema>,
-) -> Result<(), ExecuteError> {
-    match expr {
-        AstExpr::InSubquery { expr: inner_expr, subquery } => {
-            materialize_expr(inner_expr, db, table_schemas)?;
-            let result = execute_subquery(subquery, db, table_schemas)?;
-            *expr = AstExpr::InList {
-                expr: inner_expr.clone(),
-                values: result.into_iter().map(AstExpr::Literal).collect(),
-            };
+fn resolve_materialized(plan: &PlanSelect, materialized: &[Vec<Value>]) -> PlanSelect {
+    let mut resolved = plan.clone();
+    resolved.filter = resolve_materialized_filter(&resolved.filter, materialized);
+    for source in &mut resolved.sources {
+        source.pre_filter = resolve_materialized_filter(&source.pre_filter, materialized);
+        if let Some(ref mut join) = source.join {
+            join.on = resolve_materialized_filter(&join.on, materialized);
         }
-        AstExpr::InList { expr: inner_expr, values } => {
-            materialize_expr(inner_expr, db, table_schemas)?;
-            for v in values.iter_mut() {
-                materialize_expr(v, db, table_schemas)?;
-            }
-        }
-        AstExpr::Subquery(ref mut subquery) => {
-            // Scalar subquery: must return exactly 1 row.
-            let result = execute_subquery(subquery, db, table_schemas)?;
-            if result.len() != 1 {
-                return Err(ExecuteError::MaterializeError(
-                    format!("scalar subquery must return exactly 1 row, got {}", result.len()),
-                ));
-            }
-            *expr = AstExpr::Literal(result.into_iter().next().unwrap());
-        }
-        AstExpr::Binary { left, right, .. } => {
-            materialize_expr(left, db, table_schemas)?;
-            materialize_expr(right, db, table_schemas)?;
-        }
-        AstExpr::Aggregate { arg, .. } => {
-            materialize_expr(arg, db, table_schemas)?;
-        }
-        AstExpr::Column(_) | AstExpr::Literal(_) => {}
     }
-    Ok(())
+    resolved
 }
 
-/// Resolve all subqueries in an AST bottom-up, replacing them with literals or value lists.
-pub fn materialize_subqueries(
-    select: &mut AstSelect,
-    db: &HashMap<String, Table>,
-    table_schemas: &HashMap<String, Schema>,
-) -> Result<(), ExecuteError> {
-    for filter_expr in &mut select.filter {
-        materialize_expr(filter_expr, db, table_schemas)?;
-    }
-    for rc in &mut select.result_columns {
-        materialize_expr(&mut rc.expr, db, table_schemas)?;
-    }
-    for source in &mut select.sources {
-        if let Some(ref mut jc) = source.join {
-            for on_expr in &mut jc.on {
-                materialize_expr(on_expr, db, table_schemas)?;
+fn resolve_materialized_filter(
+    pred: &PlanFilterPredicate,
+    materialized: &[Vec<Value>],
+) -> PlanFilterPredicate {
+    match pred {
+        PlanFilterPredicate::InMaterialized { col, mat_id } => {
+            PlanFilterPredicate::In {
+                col: *col,
+                values: materialized[*mat_id].clone(),
             }
         }
+        PlanFilterPredicate::CompareMaterialized { col, op, mat_id } => {
+            let value = materialized[*mat_id][0].clone();
+            match op {
+                Operator::Eq => PlanFilterPredicate::Equals { col: *col, value },
+                Operator::Neq => PlanFilterPredicate::NotEquals { col: *col, value },
+                Operator::Gt => PlanFilterPredicate::GreaterThan { col: *col, value },
+                Operator::Gte => PlanFilterPredicate::GreaterThanOrEqual { col: *col, value },
+                Operator::Lt => PlanFilterPredicate::LessThan { col: *col, value },
+                Operator::Lte => PlanFilterPredicate::LessThanOrEqual { col: *col, value },
+                _ => unreachable!("And/Or not valid for CompareMaterialized"),
+            }
+        }
+        PlanFilterPredicate::And(l, r) => PlanFilterPredicate::And(
+            Box::new(resolve_materialized_filter(l, materialized)),
+            Box::new(resolve_materialized_filter(r, materialized)),
+        ),
+        PlanFilterPredicate::Or(l, r) => PlanFilterPredicate::Or(
+            Box::new(resolve_materialized_filter(l, materialized)),
+            Box::new(resolve_materialized_filter(r, materialized)),
+        ),
+        other => other.clone(),
     }
-    Ok(())
 }
 
 pub fn execute(

@@ -24,7 +24,7 @@ pub fn scan_row_ids(table: &Table) -> Vec<usize> {
 
 pub fn scan_filtered(table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {
     let row_ids = scan_row_ids(table);
-    pred.eval_table(table, &row_ids)
+    pred.filter_batch(table, &row_ids)
 }
 
 // ── Index scan helpers ────────────────────────────────────────────────────
@@ -58,6 +58,8 @@ fn classify_pred(pred: &PlanFilterPredicate) -> PredClass<'_> {
         PlanFilterPredicate::LessThan { value, .. } => PredClass::Range(RangeOp::Lt, value),
         PlanFilterPredicate::LessThanOrEqual { value, .. } => PredClass::Range(RangeOp::Lte, value),
         PlanFilterPredicate::In { values, .. } => PredClass::In(values),
+        PlanFilterPredicate::InMaterialized { .. }
+        | PlanFilterPredicate::CompareMaterialized { .. } => PredClass::Other,
         _ => PredClass::Other,
     }
 }
@@ -70,7 +72,9 @@ fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
         | PlanFilterPredicate::GreaterThanOrEqual { col, .. }
         | PlanFilterPredicate::LessThan { col, .. }
         | PlanFilterPredicate::LessThanOrEqual { col, .. }
-        | PlanFilterPredicate::In { col, .. } => Some(col.col),
+        | PlanFilterPredicate::In { col, .. }
+        | PlanFilterPredicate::InMaterialized { col, .. }
+        | PlanFilterPredicate::CompareMaterialized { col, .. } => Some(col.col),
         _ => None,
     }
 }
@@ -197,7 +201,7 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
     // Apply remaining leaf predicates not covered by the index.
     for (li, leaf) in leaves.iter().enumerate() {
         if !best_used.contains(&li) {
-            ids = leaf.eval_table(table, &ids);
+            ids = leaf.filter_batch(table, &ids);
         }
     }
 

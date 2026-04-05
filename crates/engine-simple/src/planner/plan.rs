@@ -1,4 +1,4 @@
-use query_engine::ast::{AggFunc, JoinType, OrderDirection, Value};
+use query_engine::ast::{AggFunc, JoinType, Operator, OrderDirection, Value};
 use query_engine::schema::Schema;
 
 /// Reference to a column: (source table position, column position within that table).
@@ -31,6 +31,12 @@ pub enum PlanFilterPredicate {
     Or(Box<PlanFilterPredicate>, Box<PlanFilterPredicate>),
 
     In { col: ColumnRef, values: Vec<Value> },
+
+    /// IN from materialized subquery. Resolved to In{} before execution.
+    InMaterialized { col: ColumnRef, mat_id: usize },
+
+    /// Column comparison against materialized scalar. Resolved before execution.
+    CompareMaterialized { col: ColumnRef, op: Operator, mat_id: usize },
 
     /// Accept all rows
     None,
@@ -71,6 +77,29 @@ pub struct PlanJoin {
 pub struct PlanAggregate {
     pub func: AggFunc,
     pub col: ColumnRef,
+}
+
+/// Top-level execution plan: materialization steps + main query.
+#[derive(Debug, Clone)]
+pub struct ExecutionPlan {
+    /// Materialization steps in bottom-up order (inner-most subquery first).
+    pub materializations: Vec<MaterializeStep>,
+    /// Main query — may contain InMaterialized/CompareMaterialized predicates.
+    pub main: PlanSelect,
+}
+
+#[derive(Debug, Clone)]
+pub struct MaterializeStep {
+    pub plan: PlanSelect,
+    pub kind: MaterializeKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MaterializeKind {
+    /// 1 column, 1 row — scalar value for comparison.
+    Scalar,
+    /// 1 column, N rows — value list for IN.
+    List,
 }
 
 #[derive(Debug, Clone)]

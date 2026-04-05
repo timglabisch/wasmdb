@@ -2,7 +2,7 @@ use crate::planner::plan::PlanFilterPredicate;
 use crate::storage::Table;
 use query_engine::ast::JoinType;
 
-use super::eval;
+use super::filter_row;
 use super::RowSet;
 
 pub fn nested_loop_join<'a>(
@@ -21,7 +21,7 @@ pub fn nested_loop_join<'a>(
     for l in 0..left.num_rows {
         let mut matched = false;
         for &r in right_row_ids {
-            if eval::eval_join_row(on, left, right_table, right_source, l, r) {
+            if filter_row::filter_join_row(on, left, right_table, right_source, l, r) {
                 matched = true;
                 for ti in 0..num_existing {
                     new_row_ids[ti].push(left.row_ids[ti][l]);

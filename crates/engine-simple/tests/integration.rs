@@ -68,11 +68,9 @@ impl TestDb {
     }
 
     fn run(&self, sql: &str) -> Columns {
-        let mut ast = parser::parse(sql).expect("parse failed");
-        execute::materialize_subqueries(&mut ast, &self.tables, &self.schemas)
-            .expect("materialize failed");
-        let plan = planner::plan_select(&ast, &self.schemas).expect("plan failed");
-        execute::execute(&plan, &self.tables).expect("execute failed")
+        let ast = parser::parse(sql).expect("parse failed");
+        let plan = planner::plan(&ast, &self.schemas).expect("plan failed");
+        execute::execute_plan(&plan, &self.tables).expect("execute failed")
     }
 }
 
