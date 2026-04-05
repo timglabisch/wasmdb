@@ -154,9 +154,81 @@ fn plan_select_ctx(
         result_columns,
     };
 
+    plan.filter = optimize_or_to_in(plan.filter);
+    for source in &mut plan.sources {
+        if let Some(ref mut join) = source.join {
+            join.on = optimize_or_to_in(join.on.clone());
+        }
+    }
+
     pushdown_filters(&mut plan);
 
     Ok(plan)
+}
+
+// ── OR → IN rewrite ──────────────────────────────────────────────────────
+
+/// Rewrite `col = A OR col = B` into `col IN (A, B)` so index scans can be used.
+/// Works recursively on nested OR chains and merges existing IN predicates.
+fn optimize_or_to_in(pred: PlanFilterPredicate) -> PlanFilterPredicate {
+    match pred {
+        PlanFilterPredicate::Or(l, r) => {
+            let l = optimize_or_to_in(*l);
+            let r = optimize_or_to_in(*r);
+            let or_pred = PlanFilterPredicate::Or(Box::new(l), Box::new(r));
+            try_merge_or_to_in(&or_pred).unwrap_or(or_pred)
+        }
+        PlanFilterPredicate::And(l, r) => {
+            PlanFilterPredicate::And(
+                Box::new(optimize_or_to_in(*l)),
+                Box::new(optimize_or_to_in(*r)),
+            )
+        }
+        other => other,
+    }
+}
+
+/// If the predicate is an OR-chain where every leaf is `Equals` or `In` on the
+/// same column, merge into a single `In`.
+fn try_merge_or_to_in(pred: &PlanFilterPredicate) -> Option<PlanFilterPredicate> {
+    let mut col: Option<ColumnRef> = None;
+    let mut values = Vec::new();
+    if collect_or_eq_values(pred, &mut col, &mut values) {
+        Some(PlanFilterPredicate::In { col: col?, values })
+    } else {
+        None
+    }
+}
+
+fn collect_or_eq_values(
+    pred: &PlanFilterPredicate,
+    col: &mut Option<ColumnRef>,
+    values: &mut Vec<ast::Value>,
+) -> bool {
+    match pred {
+        PlanFilterPredicate::Equals { col: c, value } => {
+            if col.map_or(true, |existing| existing == *c) {
+                *col = Some(*c);
+                values.push(value.clone());
+                true
+            } else {
+                false
+            }
+        }
+        PlanFilterPredicate::In { col: c, values: vs } => {
+            if col.map_or(true, |existing| existing == *c) {
+                *col = Some(*c);
+                values.extend(vs.iter().cloned());
+                true
+            } else {
+                false
+            }
+        }
+        PlanFilterPredicate::Or(l, r) => {
+            collect_or_eq_values(l, col, values) && collect_or_eq_values(r, col, values)
+        }
+        _ => false,
+    }
 }
 
 fn pushdown_filters(plan: &mut PlanSelect) {

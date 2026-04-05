@@ -159,11 +159,16 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
             combined.dedup();
             Some(combined)
         } else if let Some((op, ref value)) = range_on_last {
-            Some(idx.lookup_prefix_range(&prefix_eq_values, op, value).unwrap_or_default())
+            // Range: BTree returns Some(vec) always, Hash returns None (can't do range).
+            // None means "index can't handle this" — don't force to empty vec.
+            idx.lookup_prefix_range(&prefix_eq_values, op, value)
         } else if is_full_key_eq {
+            // Eq: both BTree and Hash can handle this, None just means "key not found" → 0 rows.
             Some(idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec()).unwrap_or_default())
         } else {
-            Some(idx.lookup_prefix_eq(&prefix_eq_values).unwrap_or_default())
+            // Prefix eq: BTree can handle, Hash returns None (can't do prefix).
+            // None means "index can't handle this".
+            idx.lookup_prefix_eq(&prefix_eq_values)
         };
 
         if let Some(ids) = ids {

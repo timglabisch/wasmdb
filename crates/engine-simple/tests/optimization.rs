@@ -249,10 +249,10 @@ Execute
 #[test]
 fn index_no_match_zero_rows() {
     let db = make_indexed_db();
-    // BTree lookup returns None for missing key → fallback to full scan
+    // Missing key → index still used, 0 rows returned (not a full scan fallback)
     assert_trace(&db.trace("SELECT users.name FROM users WHERE users.id = 999"), "
 Execute
-  Scan table=users method=Full rows=0
+  Scan table=users method=BTree([0] prefix=1) rows=0
   Project columns=1 rows=0
 ");
 }
@@ -636,11 +636,12 @@ Execute
 }
 
 #[test]
-fn or_on_single_table_pushed_to_scan() {
+fn or_on_single_table_rewritten_to_in() {
     let db = make_db();
+    // OR on same column rewritten to IN → uses Hash index on PK
     assert_trace(&db.trace("SELECT users.name FROM users WHERE users.id = 1 OR users.id = 3"), "
 Execute
-  Scan table=users method=Full rows=2
+  Scan table=users method=Hash([0] prefix=1) rows=2
   Project columns=1 rows=2
 ");
 }
