@@ -98,6 +98,7 @@ pub enum TokenKind {
     Order,
     Asc,
     Desc,
+    In,
     // LIMIT
     Limit,
     // Literals
@@ -150,6 +151,7 @@ impl TokenKind {
             Self::Order => "ORDER",
             Self::Asc => "ASC",
             Self::Desc => "DESC",
+            Self::In => "IN",
             Self::Limit => "LIMIT",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",

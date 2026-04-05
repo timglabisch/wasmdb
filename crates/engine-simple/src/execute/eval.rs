@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::{CellValue, Table, TypedColumn};
 use query_engine::ast::Value;
@@ -96,6 +98,9 @@ impl PlanFilterPredicate {
             PlanFilterPredicate::IsNotNull { col } => {
                 filter_typed_is_null(&table.columns[col.col], row_ids, false)
             }
+            PlanFilterPredicate::In { col, values } => {
+                filter_typed_in(&table.columns[col.col], row_ids, values)
+            }
             _ => unreachable!(),
         }
     }
@@ -121,6 +126,11 @@ pub fn eval_pred_row<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, 
         PlanFilterPredicate::ColumnLessThanOrEqual { left, right } => cmp_cell(&get(*left), &get(*right), CmpOp::Lte),
         PlanFilterPredicate::IsNull { col } => matches!(get(*col), CellValue::Null),
         PlanFilterPredicate::IsNotNull { col } => !matches!(get(*col), CellValue::Null),
+        PlanFilterPredicate::In { col, values } => {
+            let cell = get(*col);
+            if matches!(cell, CellValue::Null) { return false; }
+            values.iter().any(|v| cmp_cell(&cell, &value_to_cell(v), CmpOp::Eq))
+        }
         PlanFilterPredicate::And(a, b) => eval_pred_row(a, get) && eval_pred_row(b, get),
         PlanFilterPredicate::Or(a, b) => eval_pred_row(a, get) || eval_pred_row(b, get),
     }
@@ -213,6 +223,14 @@ fn filter_typed_col_col(
         }
         _ => Vec::new(),
     }
+}
+
+fn filter_typed_in(col: &TypedColumn, row_ids: &[usize], values: &[Value]) -> Vec<usize> {
+    let cell_values: HashSet<CellValue> = values.iter().map(|v| value_to_cell(v)).collect();
+    row_ids.iter().filter(|&&i| {
+        let cell = col.get(i);
+        !matches!(cell, CellValue::Null) && cell_values.contains(&cell)
+    }).copied().collect()
 }
 
 fn filter_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -> Vec<usize> {
@@ -420,6 +438,51 @@ mod tests {
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
+        assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_eval_table_in_i64() {
+        let table = make_i64_table("t", "x", &[1, 2, 3, 4, 5]);
+        let row_ids: Vec<usize> = (0..5).collect();
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 0),
+            values: vec![Value::Int(2), Value::Int(4)],
+        };
+        assert_eq!(pred.eval_table(&table, &row_ids), vec![1, 3]);
+    }
+
+    #[test]
+    fn test_eval_table_in_string() {
+        let table = make_users_table();
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 1),
+            values: vec![Value::Text("Alice".into()), Value::Text("Carol".into())],
+        };
+        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_eval_table_in_null_skipped() {
+        let table = make_users_table();
+        let row_ids: Vec<usize> = (0..3).collect();
+        // age column: 30, 25, NULL — IN (25, 30) should skip the NULL row
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 2),
+            values: vec![Value::Int(25), Value::Int(30)],
+        };
+        assert_eq!(pred.eval_table(&table, &row_ids), vec![0, 1]);
+    }
+
+    #[test]
+    fn test_eval_table_in_empty() {
+        let table = make_i64_table("t", "x", &[1, 2, 3]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 0),
+            values: vec![],
+        };
         assert_eq!(pred.eval_table(&table, &row_ids), Vec::<usize>::new());
     }
 }

@@ -68,7 +68,9 @@ impl TestDb {
     }
 
     fn run(&self, sql: &str) -> Columns {
-        let ast = parser::parse(sql).expect("parse failed");
+        let mut ast = parser::parse(sql).expect("parse failed");
+        execute::materialize_subqueries(&mut ast, &self.tables, &self.schemas)
+            .expect("materialize failed");
         let plan = planner::plan_select(&ast, &self.schemas).expect("plan failed");
         execute::execute(&plan, &self.tables).expect("execute failed")
     }
@@ -650,4 +652,105 @@ fn composite_index_with_order_by() {
     );
     assert_eq!(result[0], vec![i(30), i(20), i(10)]);
     assert_eq!(result[1], vec![i(500), i(400), i(300)]);
+}
+
+// ── IN queries ────────────────────────────────────────────────────────────
+
+#[test]
+fn in_literal_list() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id IN (1, 3)");
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn in_literal_strings() {
+    let db = make_db();
+    let result = db.run("SELECT users.id FROM users WHERE users.name IN ('Bob', 'Dave')");
+    assert_eq!(result[0], vec![i(2), i(4)]);
+}
+
+#[test]
+fn in_literal_no_match() {
+    let db = make_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id IN (99, 100)");
+    assert_eq!(result[0].len(), 0);
+}
+
+#[test]
+fn in_literal_with_and() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.id IN (1, 2, 3) AND users.age > 28",
+    );
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn in_literal_with_order_by() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.id IN (3, 1) ORDER BY users.name",
+    );
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn in_subquery() {
+    let db = make_db();
+    // Users who have orders with amount > 100
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.id IN (SELECT orders.user_id FROM orders WHERE orders.amount > 100)",
+    );
+    // orders with amount > 100: (11, user_id=1, 200), (13, user_id=3, 300)
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn in_subquery_empty() {
+    let db = make_db();
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.id IN (SELECT orders.user_id FROM orders WHERE orders.amount > 9999)",
+    );
+    assert_eq!(result[0].len(), 0);
+}
+
+#[test]
+fn scalar_subquery_comparison() {
+    let db = make_db();
+    // orders.id=12 has amount=50, users with age > 50: none
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.age > (SELECT orders.amount FROM orders WHERE orders.id = 12)",
+    );
+    assert_eq!(result[0].len(), 0);
+
+    // orders.id=10 has amount=100, users with age > 100: none
+    let result2 = db.run(
+        "SELECT users.name FROM users WHERE users.age > (SELECT orders.amount FROM orders WHERE orders.id = 10)",
+    );
+    assert_eq!(result2[0].len(), 0);
+}
+
+#[test]
+fn scalar_subquery_eq() {
+    let db = make_db();
+    // Find user whose age equals the amount of order 12 (amount=50)
+    let result = db.run(
+        "SELECT users.name FROM users WHERE users.age = (SELECT orders.amount FROM orders WHERE orders.id = 12)",
+    );
+    // amount=50, no user has age 50
+    assert_eq!(result[0].len(), 0);
+
+    // Find user whose id equals user_id of order 12 (user_id=2)
+    let result2 = db.run(
+        "SELECT users.name FROM users WHERE users.id = (SELECT orders.user_id FROM orders WHERE orders.id = 12)",
+    );
+    assert_eq!(result2[0], vec![s("Bob")]);
+}
+
+#[test]
+fn in_with_index() {
+    let db = make_indexed_db();
+    let result = db.run("SELECT users.name FROM users WHERE users.id IN (1, 3)");
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
 }

@@ -9,7 +9,8 @@ use std::collections::HashMap;
 
 use crate::planner::plan::*;
 use crate::storage::{CellValue, Table};
-use query_engine::ast::{OrderDirection, Value};
+use query_engine::ast::{AstExpr, AstSelect, OrderDirection, Value};
+use query_engine::schema::Schema;
 
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
@@ -95,12 +96,14 @@ impl<'a> RowSet<'a> {
 #[derive(Debug)]
 pub enum ExecuteError {
     TableNotFound(String),
+    MaterializeError(String),
 }
 
 impl std::fmt::Display for ExecuteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExecuteError::TableNotFound(t) => write!(f, "table not found: {t}"),
+            ExecuteError::MaterializeError(msg) => write!(f, "subquery materialization error: {msg}"),
         }
     }
 }
@@ -115,6 +118,98 @@ pub fn value_to_cell(v: &Value) -> CellValue {
         Value::Bool(b) => CellValue::I64(if *b { 1 } else { 0 }),
         Value::Float(f) => CellValue::I64(*f as i64),
     }
+}
+
+fn cell_to_value(cell: &CellValue) -> Value {
+    match cell {
+        CellValue::I64(n) => Value::Int(*n),
+        CellValue::Str(s) => Value::Text(s.clone()),
+        CellValue::Null => Value::Null,
+    }
+}
+
+/// Execute a subquery and return its single-column result as a list of Values.
+fn execute_subquery(
+    select: &mut AstSelect,
+    db: &HashMap<String, Table>,
+    table_schemas: &HashMap<String, Schema>,
+) -> Result<Vec<Value>, ExecuteError> {
+    // Recursively materialize nested subqueries first (bottom-up).
+    materialize_subqueries(select, db, table_schemas)?;
+    let plan = crate::planner::plan_select(select, table_schemas)
+        .map_err(|e| ExecuteError::MaterializeError(e.to_string()))?;
+    let columns = execute(&plan, db)?;
+    if columns.len() != 1 {
+        return Err(ExecuteError::MaterializeError(
+            format!("subquery must return exactly 1 column, got {}", columns.len()),
+        ));
+    }
+    Ok(columns[0].iter().map(cell_to_value).collect())
+}
+
+/// Recursively replace all Subquery nodes in the AST with materialized values.
+fn materialize_expr(
+    expr: &mut AstExpr,
+    db: &HashMap<String, Table>,
+    table_schemas: &HashMap<String, Schema>,
+) -> Result<(), ExecuteError> {
+    match expr {
+        AstExpr::InSubquery { expr: inner_expr, subquery } => {
+            materialize_expr(inner_expr, db, table_schemas)?;
+            let result = execute_subquery(subquery, db, table_schemas)?;
+            *expr = AstExpr::InList {
+                expr: inner_expr.clone(),
+                values: result.into_iter().map(AstExpr::Literal).collect(),
+            };
+        }
+        AstExpr::InList { expr: inner_expr, values } => {
+            materialize_expr(inner_expr, db, table_schemas)?;
+            for v in values.iter_mut() {
+                materialize_expr(v, db, table_schemas)?;
+            }
+        }
+        AstExpr::Subquery(ref mut subquery) => {
+            // Scalar subquery: must return exactly 1 row.
+            let result = execute_subquery(subquery, db, table_schemas)?;
+            if result.len() != 1 {
+                return Err(ExecuteError::MaterializeError(
+                    format!("scalar subquery must return exactly 1 row, got {}", result.len()),
+                ));
+            }
+            *expr = AstExpr::Literal(result.into_iter().next().unwrap());
+        }
+        AstExpr::Binary { left, right, .. } => {
+            materialize_expr(left, db, table_schemas)?;
+            materialize_expr(right, db, table_schemas)?;
+        }
+        AstExpr::Aggregate { arg, .. } => {
+            materialize_expr(arg, db, table_schemas)?;
+        }
+        AstExpr::Column(_) | AstExpr::Literal(_) => {}
+    }
+    Ok(())
+}
+
+/// Resolve all subqueries in an AST bottom-up, replacing them with literals or value lists.
+pub fn materialize_subqueries(
+    select: &mut AstSelect,
+    db: &HashMap<String, Table>,
+    table_schemas: &HashMap<String, Schema>,
+) -> Result<(), ExecuteError> {
+    for filter_expr in &mut select.filter {
+        materialize_expr(filter_expr, db, table_schemas)?;
+    }
+    for rc in &mut select.result_columns {
+        materialize_expr(&mut rc.expr, db, table_schemas)?;
+    }
+    for source in &mut select.sources {
+        if let Some(ref mut jc) = source.join {
+            for on_expr in &mut jc.on {
+                materialize_expr(on_expr, db, table_schemas)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn execute(

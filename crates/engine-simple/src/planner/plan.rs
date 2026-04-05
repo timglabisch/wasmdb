@@ -30,6 +30,8 @@ pub enum PlanFilterPredicate {
     And(Box<PlanFilterPredicate>, Box<PlanFilterPredicate>),
     Or(Box<PlanFilterPredicate>, Box<PlanFilterPredicate>),
 
+    In { col: ColumnRef, values: Vec<Value> },
+
     /// Accept all rows
     None,
 }

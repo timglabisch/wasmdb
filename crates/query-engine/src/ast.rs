@@ -52,6 +52,15 @@ pub enum AstExpr {
         func: AggFunc,
         arg: Box<AstExpr>,
     },
+    InList {
+        expr: Box<AstExpr>,
+        values: Vec<AstExpr>,
+    },
+    InSubquery {
+        expr: Box<AstExpr>,
+        subquery: Box<AstSelect>,
+    },
+    Subquery(Box<AstSelect>),
 }
 
 #[derive(Debug, Clone)]

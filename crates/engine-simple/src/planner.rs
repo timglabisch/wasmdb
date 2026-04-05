@@ -183,6 +183,8 @@ pub fn predicate_column_refs(pred: &PlanFilterPredicate) -> Vec<ColumnRef> {
             vec![*left, *right]
         }
 
+        PlanFilterPredicate::In { col, .. } => vec![*col],
+
         PlanFilterPredicate::And(l, r) | PlanFilterPredicate::Or(l, r) => {
             let mut v = predicate_column_refs(l);
             v.extend(predicate_column_refs(r));
@@ -250,8 +252,21 @@ fn plan_expr_to_predicate(
                 )),
             }
         }
+        ast::AstExpr::InList { expr, values } => {
+            let col = resolve_to_column_ref(expr, sources)?;
+            let vals: Vec<ast::Value> = values
+                .iter()
+                .map(|v| match v {
+                    ast::AstExpr::Literal(val) => Ok(val.clone()),
+                    _ => Err(PlanError::UnsupportedExpr(
+                        "IN values must be literals (subqueries should be materialized first)".into(),
+                    )),
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(PlanFilterPredicate::In { col, values: vals })
+        }
         _ => Err(PlanError::UnsupportedExpr(
-            "filter must be a binary expression".into(),
+            "filter must be a binary expression or IN".into(),
         )),
     }
 }

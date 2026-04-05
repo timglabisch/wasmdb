@@ -45,6 +45,7 @@ fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
 enum PredClass<'a> {
     Eq(&'a query_engine::ast::Value),
     Range(RangeOp, &'a query_engine::ast::Value),
+    In(&'a [query_engine::ast::Value]),
     Other,
 }
 
@@ -56,6 +57,7 @@ fn classify_pred(pred: &PlanFilterPredicate) -> PredClass<'_> {
         PlanFilterPredicate::GreaterThanOrEqual { value, .. } => PredClass::Range(RangeOp::Gte, value),
         PlanFilterPredicate::LessThan { value, .. } => PredClass::Range(RangeOp::Lt, value),
         PlanFilterPredicate::LessThanOrEqual { value, .. } => PredClass::Range(RangeOp::Lte, value),
+        PlanFilterPredicate::In { values, .. } => PredClass::In(values),
         _ => PredClass::Other,
     }
 }
@@ -67,7 +69,8 @@ fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
         | PlanFilterPredicate::GreaterThan { col, .. }
         | PlanFilterPredicate::GreaterThanOrEqual { col, .. }
         | PlanFilterPredicate::LessThan { col, .. }
-        | PlanFilterPredicate::LessThanOrEqual { col, .. } => Some(col.col),
+        | PlanFilterPredicate::LessThanOrEqual { col, .. }
+        | PlanFilterPredicate::In { col, .. } => Some(col.col),
         _ => None,
     }
 }
@@ -111,6 +114,8 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
         let mut range_on_last: Option<(RangeOp, CellValue)> = None;
         let mut used_leaves: Vec<usize> = Vec::new();
 
+        let mut in_on_last: Option<Vec<CellValue>> = None;
+
         for &col in idx_cols {
             if let Some(&(li, _, pred)) = indexable.iter().find(|(_, c, _)| *c == col) {
                 match classify_pred(pred) {
@@ -122,6 +127,11 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
                         range_on_last = Some((op, value_to_cell(value)));
                         used_leaves.push(li);
                         break; // range can only be on the last prefix column
+                    }
+                    PredClass::In(values) => {
+                        in_on_last = Some(values.iter().map(|v| value_to_cell(v)).collect());
+                        used_leaves.push(li);
+                        break; // IN can only be on the last prefix column
                     }
                     PredClass::Other => break,
                 }
@@ -135,7 +145,7 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
             continue;
         }
 
-        let is_full_key_eq = range_on_last.is_none() && prefix_eq_values.len() == idx_cols.len();
+        let is_full_key_eq = range_on_last.is_none() && in_on_last.is_none() && prefix_eq_values.len() == idx_cols.len();
         let tie_break = if is_full_key_eq && idx.is_hash() {
             2 // Hash full-key eq — O(1)
         } else if is_full_key_eq {
@@ -150,7 +160,20 @@ fn try_index_scan(table: &Table, pred: &PlanFilterPredicate) -> Option<Vec<usize
         }
 
         // Perform the lookup.
-        let ids = if let Some((op, ref value)) = range_on_last {
+        let ids = if let Some(ref in_values) = in_on_last {
+            // IN: multiple lookups, union results.
+            let mut combined: Vec<usize> = Vec::new();
+            for v in in_values {
+                let mut key = prefix_eq_values.clone();
+                key.push(v.clone());
+                if let Some(hits) = idx.lookup_eq(&key).map(|s| s.to_vec()) {
+                    combined.extend(hits);
+                }
+            }
+            combined.sort_unstable();
+            combined.dedup();
+            Some(combined)
+        } else if let Some((op, ref value)) = range_on_last {
             idx.lookup_prefix_range(&prefix_eq_values, op, value)
         } else if is_full_key_eq {
             idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec())

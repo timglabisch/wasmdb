@@ -60,7 +60,7 @@ impl TypedColumn {
         Ok(())
     }
 
-    fn get(&self, row_idx: usize) -> CellValue {
+    pub fn get(&self, row_idx: usize) -> CellValue {
         match self {
             TypedColumn::I64(v) => CellValue::I64(v[row_idx]),
             TypedColumn::Str(v) => CellValue::Str(v[row_idx].clone()),

@@ -68,7 +68,8 @@ impl<'a> Parser<'a> {
 
     // ── Statement parsing ────────────────���──────────────────────────────
 
-    fn parse_select(&mut self) -> Result<AstSelect, ParseError> {
+    /// Parse a SELECT statement without consuming EOF (used for subqueries).
+    fn parse_select_inner(&mut self) -> Result<AstSelect, ParseError> {
         self.expect(TokenKind::Select)?;
         let result_columns = self.parse_result_columns()?;
         self.expect(TokenKind::From)?;
@@ -103,8 +104,6 @@ impl<'a> Parser<'a> {
             None
         };
 
-        self.expect(TokenKind::Eof)?;
-
         Ok(AstSelect {
             sources,
             filter,
@@ -113,6 +112,12 @@ impl<'a> Parser<'a> {
             limit,
             result_columns,
         })
+    }
+
+    fn parse_select(&mut self) -> Result<AstSelect, ParseError> {
+        let select = self.parse_select_inner()?;
+        self.expect(TokenKind::Eof)?;
+        Ok(select)
     }
 
     fn parse_result_columns(&mut self) -> Result<Vec<AstResultColumn>, ParseError> {
@@ -227,6 +232,32 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_atom()?;
 
         loop {
+            // IN has higher precedence than any binary operator.
+            if self.at(&TokenKind::In)? {
+                self.eat()?;
+                self.expect(TokenKind::LParen)?;
+                if self.at(&TokenKind::Select)? {
+                    let subquery = self.parse_select_inner()?;
+                    self.expect(TokenKind::RParen)?;
+                    left = AstExpr::InSubquery {
+                        expr: Box::new(left),
+                        subquery: Box::new(subquery),
+                    };
+                } else {
+                    let mut values = vec![self.parse_expr(0)?];
+                    while self.at(&TokenKind::Comma)? {
+                        self.eat()?;
+                        values.push(self.parse_expr(0)?);
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    left = AstExpr::InList {
+                        expr: Box::new(left),
+                        values,
+                    };
+                }
+                continue;
+            }
+
             let Some((op, prec)) = self.peek_operator()? else {
                 break;
             };
@@ -301,9 +332,15 @@ impl<'a> Parser<'a> {
 
             TokenKind::LParen => {
                 self.eat()?;
-                let expr = self.parse_expr(0)?;
-                self.expect(TokenKind::RParen)?;
-                Ok(expr)
+                if self.at(&TokenKind::Select)? {
+                    let subquery = self.parse_select_inner()?;
+                    self.expect(TokenKind::RParen)?;
+                    Ok(AstExpr::Subquery(Box::new(subquery)))
+                } else {
+                    let expr = self.parse_expr(0)?;
+                    self.expect(TokenKind::RParen)?;
+                    Ok(expr)
+                }
             }
 
             _ => Err(ParseError::new(
@@ -570,5 +607,53 @@ mod tests {
     fn test_error_unexpected_token_in_expr() {
         let err = parse("SELECT FROM users").unwrap_err();
         assert!(err.message.contains("expected expression"));
+    }
+
+    // ── IN + Subquery tests ────���───────────────────────────────────────
+
+    #[test]
+    fn test_parse_in_list() {
+        let ast = parse("SELECT u.x FROM u WHERE u.id IN (1, 2, 3)").unwrap();
+        assert!(matches!(&ast.filter[0], AstExpr::InList { values, .. } if values.len() == 3));
+    }
+
+    #[test]
+    fn test_parse_in_strings() {
+        let ast = parse("SELECT u.x FROM u WHERE u.name IN ('Alice', 'Bob')").unwrap();
+        if let AstExpr::InList { values, .. } = &ast.filter[0] {
+            assert_eq!(values.len(), 2);
+            assert!(matches!(&values[0], AstExpr::Literal(Value::Text(s)) if s == "Alice"));
+            assert!(matches!(&values[1], AstExpr::Literal(Value::Text(s)) if s == "Bob"));
+        } else {
+            panic!("expected InList");
+        }
+    }
+
+    #[test]
+    fn test_parse_in_subquery() {
+        let ast = parse(
+            "SELECT u.x FROM u WHERE u.id IN (SELECT o.user_id FROM o WHERE o.amount > 100)"
+        ).unwrap();
+        assert!(matches!(&ast.filter[0], AstExpr::InSubquery { .. }));
+    }
+
+    #[test]
+    fn test_parse_scalar_subquery() {
+        let ast = parse(
+            "SELECT u.x FROM u WHERE u.age > (SELECT MIN(o.amount) FROM o)"
+        ).unwrap();
+        assert!(matches!(
+            &ast.filter[0],
+            AstExpr::Binary { op: Operator::Gt, right, .. }
+            if matches!(right.as_ref(), AstExpr::Subquery(_))
+        ));
+    }
+
+    #[test]
+    fn test_parse_in_with_and() {
+        let ast = parse(
+            "SELECT u.x FROM u WHERE u.id IN (1, 2) AND u.age > 18"
+        ).unwrap();
+        assert!(matches!(&ast.filter[0], AstExpr::Binary { op: Operator::And, .. }));
     }
 }
