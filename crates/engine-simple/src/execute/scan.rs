@@ -159,11 +159,11 @@ fn try_index_scan(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPr
             combined.dedup();
             Some(combined)
         } else if let Some((op, ref value)) = range_on_last {
-            idx.lookup_prefix_range(&prefix_eq_values, op, value)
+            Some(idx.lookup_prefix_range(&prefix_eq_values, op, value).unwrap_or_default())
         } else if is_full_key_eq {
-            idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec())
+            Some(idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec()).unwrap_or_default())
         } else {
-            idx.lookup_prefix_eq(&prefix_eq_values)
+            Some(idx.lookup_prefix_eq(&prefix_eq_values).unwrap_or_default())
         };
 
         if let Some(ids) = ids {
