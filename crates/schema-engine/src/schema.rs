@@ -13,10 +13,17 @@ pub struct ColumnSchema {
     pub nullable: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexType {
+    BTree,
+    Hash,
+}
+
 #[derive(Debug, Clone)]
 pub struct IndexSchema {
     pub name: Option<String>,
     pub columns: Vec<usize>,
+    pub index_type: IndexType,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +118,7 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         if let ast::AstTableConstraint::Index {
             name,
             columns: idx_cols,
+            index_type,
         } = constraint
         {
             let col_positions = idx_cols
@@ -120,6 +128,7 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
             indexes.push(IndexSchema {
                 name: name.clone(),
                 columns: col_positions,
+                index_type: convert_index_type(*index_type),
             });
         }
     }
@@ -136,6 +145,13 @@ fn convert_data_type(dt: ast::AstDataType) -> DataType {
     match dt {
         ast::AstDataType::I64 => DataType::I64,
         ast::AstDataType::String => DataType::String,
+    }
+}
+
+fn convert_index_type(it: ast::AstIndexType) -> IndexType {
+    match it {
+        ast::AstIndexType::BTree => IndexType::BTree,
+        ast::AstIndexType::Hash => IndexType::Hash,
     }
 }
 
@@ -209,8 +225,26 @@ mod tests {
         assert_eq!(schema.indexes.len(), 2);
         assert_eq!(schema.indexes[0].name.as_deref(), Some("idx_name"));
         assert_eq!(schema.indexes[0].columns, vec![1]);
+        assert_eq!(schema.indexes[0].index_type, IndexType::BTree); // default
         assert!(schema.indexes[1].name.is_none());
         assert_eq!(schema.indexes[1].columns, vec![1, 2]);
+        assert_eq!(schema.indexes[1].index_type, IndexType::BTree); // default
+    }
+
+    #[test]
+    fn test_index_type_hash() {
+        let schema = resolve_sql(
+            "CREATE TABLE t (id I64, INDEX idx_id (id) USING HASH)"
+        ).unwrap();
+        assert_eq!(schema.indexes[0].index_type, IndexType::Hash);
+    }
+
+    #[test]
+    fn test_index_type_btree_explicit() {
+        let schema = resolve_sql(
+            "CREATE TABLE t (id I64, INDEX idx_id (id) USING BTREE)"
+        ).unwrap();
+        assert_eq!(schema.indexes[0].index_type, IndexType::BTree);
     }
 
     #[test]

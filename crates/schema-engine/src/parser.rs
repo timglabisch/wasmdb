@@ -170,7 +170,27 @@ impl<'a> Parser<'a> {
             };
 
             let columns = self.parse_ident_list()?;
-            Ok(AstTableConstraint::Index { name, columns })
+
+            let index_type = if self.at(&TokenKind::Using)? {
+                self.eat()?;
+                if self.at(&TokenKind::BTree)? {
+                    self.eat()?;
+                    AstIndexType::BTree
+                } else if self.at(&TokenKind::Hash)? {
+                    self.eat()?;
+                    AstIndexType::Hash
+                } else {
+                    let tok = self.eat()?;
+                    return Err(ParseError {
+                        message: format!("expected BTREE or HASH, got {}", token_kind_name(&tok.kind)),
+                        span: tok.span,
+                    });
+                }
+            } else {
+                AstIndexType::BTree
+            };
+
+            Ok(AstTableConstraint::Index { name, columns, index_type })
         }
     }
 
@@ -199,6 +219,9 @@ fn token_kind_name(kind: &TokenKind) -> &str {
         TokenKind::Key => "KEY",
         TokenKind::Not => "NOT",
         TokenKind::Null => "NULL",
+        TokenKind::Using => "USING",
+        TokenKind::BTree => "BTREE",
+        TokenKind::Hash => "HASH",
         TokenKind::KwI64 => "I64",
         TokenKind::KwString => "STRING",
         TokenKind::Ident(_) => "identifier",
@@ -264,9 +287,10 @@ mod tests {
         let ast = parse("CREATE TABLE t (id I64, name STRING, INDEX idx_name (name))").unwrap();
         assert_eq!(ast.constraints.len(), 1);
         match &ast.constraints[0] {
-            AstTableConstraint::Index { name, columns } => {
+            AstTableConstraint::Index { name, columns, index_type } => {
                 assert_eq!(name.as_deref(), Some("idx_name"));
                 assert_eq!(columns, &["name"]);
+                assert_eq!(*index_type, AstIndexType::BTree); // default
             }
             _ => panic!("expected Index constraint"),
         }
@@ -276,9 +300,32 @@ mod tests {
     fn test_index_without_name() {
         let ast = parse("CREATE TABLE t (id I64, INDEX (id))").unwrap();
         match &ast.constraints[0] {
-            AstTableConstraint::Index { name, columns } => {
+            AstTableConstraint::Index { name, columns, index_type } => {
                 assert!(name.is_none());
                 assert_eq!(columns, &["id"]);
+                assert_eq!(*index_type, AstIndexType::BTree); // default
+            }
+            _ => panic!("expected Index constraint"),
+        }
+    }
+
+    #[test]
+    fn test_index_using_btree() {
+        let ast = parse("CREATE TABLE t (id I64, INDEX idx_id (id) USING BTREE)").unwrap();
+        match &ast.constraints[0] {
+            AstTableConstraint::Index { index_type, .. } => {
+                assert_eq!(*index_type, AstIndexType::BTree);
+            }
+            _ => panic!("expected Index constraint"),
+        }
+    }
+
+    #[test]
+    fn test_index_using_hash() {
+        let ast = parse("CREATE TABLE t (id I64, INDEX idx_id (id) USING HASH)").unwrap();
+        match &ast.constraints[0] {
+            AstTableConstraint::Index { index_type, .. } => {
+                assert_eq!(*index_type, AstIndexType::Hash);
             }
             _ => panic!("expected Index constraint"),
         }

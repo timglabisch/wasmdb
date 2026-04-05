@@ -19,8 +19,14 @@ pub enum AstDataType {
     String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AstIndexType {
+    BTree,
+    Hash,
+}
+
 #[derive(Debug, Clone)]
 pub enum AstTableConstraint {
     PrimaryKey { columns: Vec<String> },
-    Index { name: Option<String>, columns: Vec<String> },
+    Index { name: Option<String>, columns: Vec<String>, index_type: AstIndexType },
 }

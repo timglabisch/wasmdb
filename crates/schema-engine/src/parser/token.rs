@@ -20,6 +20,9 @@ pub enum TokenKind {
     Key,
     Not,
     Null,
+    Using,
+    BTree,
+    Hash,
     // Type keywords
     KwI64,
     KwString,
