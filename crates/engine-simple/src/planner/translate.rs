@@ -101,22 +101,12 @@ fn plan_filter(
     sources: &[PlanSourceEntry],
     ctx: &mut PlanContext,
 ) -> Result<PlanFilterPredicate, PlanError> {
-    let mut predicates: Vec<PlanFilterPredicate> = exprs
+    let predicates: Vec<PlanFilterPredicate> = exprs
         .iter()
         .map(|e| plan_expr_to_predicate(e, sources, ctx))
         .collect::<Result<Vec<_>, _>>()?;
 
-    match predicates.len() {
-        0 => Ok(PlanFilterPredicate::None),
-        1 => Ok(predicates.remove(0)),
-        _ => {
-            let mut combined = predicates.remove(0);
-            for p in predicates {
-                combined = PlanFilterPredicate::And(Box::new(combined), Box::new(p));
-            }
-            Ok(combined)
-        }
-    }
+    Ok(PlanFilterPredicate::combine_and(predicates))
 }
 
 fn plan_expr_to_predicate(

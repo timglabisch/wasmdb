@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::planner::optimize::physical;
+use crate::planner::optimize;
 use crate::planner::plan::*;
 use crate::storage::Table;
 use query_engine::ast::{Operator, Value};
@@ -67,8 +67,8 @@ fn resolve_materialized(
             join.on = resolve_materialized_filter(&join.on, materialized);
         }
     }
-    // Re-run access_path to pick indexes for resolved predicates.
-    physical::rewrite(&mut resolved, table_schemas);
+    // Re-run all optimization passes on resolved predicates.
+    optimize::run(&mut resolved, table_schemas);
     resolved
 }
 

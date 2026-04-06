@@ -10,7 +10,6 @@ use query_engine::schema::{ColumnDef, Schema};
 use schema_engine::schema::TableSchema;
 use plan::*;
 
-pub use optimize::predicate_column_refs;
 
 // ── Context ───────────────────────────────────────────────────────────────
 

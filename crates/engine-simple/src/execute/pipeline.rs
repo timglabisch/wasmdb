@@ -42,11 +42,11 @@ fn execute_inner(
                         source_idx, &j.on, j.join_type,
                     );
                 }
-                PlanJoinStrategy::IndexLookup { left_col, right_col, index_columns, is_hash } => {
+                PlanJoinStrategy::IndexLookup { left_col, index_columns, .. } => {
                     rs = join::index_nested_loop_join(
-                        ctx, &rs, table, source_idx,
-                        j.join_type, *left_col, *right_col,
-                        index_columns, *is_hash,
+                        ctx, &rs, table,
+                        j.join_type, *left_col,
+                        index_columns,
                         &source.pre_filter,
                     );
                 }

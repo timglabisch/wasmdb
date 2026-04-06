@@ -6,15 +6,13 @@
 
 use crate::planner::plan::*;
 
-use super::predicate_column_refs;
-
 pub fn rewrite(plan: &mut PlanSelect) {
     let filter = std::mem::replace(&mut plan.filter, PlanFilterPredicate::None);
     let conjuncts = flatten_and_conjuncts(filter);
 
     let mut remaining = Vec::new();
     for conjunct in conjuncts {
-        let refs = predicate_column_refs(&conjunct);
+        let refs = conjunct.column_refs();
         let first_source = refs.first().map(|r| r.source);
         let single_source = first_source.filter(|&s| refs.iter().all(|r| r.source == s));
 
@@ -33,13 +31,7 @@ pub fn rewrite(plan: &mut PlanSelect) {
         }
     }
 
-    plan.filter = match remaining.len() {
-        0 => PlanFilterPredicate::None,
-        _ => remaining
-            .into_iter()
-            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
-            .unwrap(),
-    };
+    plan.filter = PlanFilterPredicate::combine_and(remaining);
 }
 
 fn flatten_and_conjuncts(pred: PlanFilterPredicate) -> Vec<PlanFilterPredicate> {

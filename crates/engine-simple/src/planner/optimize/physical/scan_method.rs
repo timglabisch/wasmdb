@@ -78,12 +78,7 @@ fn build_post_filter(preds: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilt
         .map(|(_, p)| (*p).clone())
         .collect();
 
-    match remaining.len() {
-        0 => PlanFilterPredicate::None,
-        _ => remaining.into_iter()
-            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
-            .unwrap(),
-    }
+    PlanFilterPredicate::combine_and(remaining)
 }
 
 // ── Index candidate scoring ──────────────────────────────────────────────
@@ -91,7 +86,7 @@ fn build_post_filter(preds: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilt
 /// Lookup complexity, ordered worst → best for use in `max_by_key`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum LookupCost {
-    /// O(n) — partial prefix, needs scan within index range.
+    /// O(log n + k) — BTree prefix scan, seeks to range start then iterates k matches.
     LogN,
     /// O(log n) — full-key BTree lookup.
     LogNFullKey,
@@ -191,7 +186,7 @@ fn score_hash(idx: &IndexSchema, m: PrefixMatch) -> Option<IndexCandidate> {
     if !m.is_full_key_eq() && !full_key_in {
         return None;
     }
-    let cost = if m.is_full_key_eq() { LookupCost::Constant } else { LookupCost::Constant };
+    let cost = LookupCost::Constant;
     Some(IndexCandidate {
         score: IndexScore { matched_predicates: m.used_preds.len(), cost },
         used_preds: m.used_preds,
@@ -303,4 +298,200 @@ fn try_pk_lookup(
         index_predicates,
     };
     Some((method, post_filter))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use query_engine::ast::Value;
+    use schema_engine::schema::{ColumnSchema, DataType};
+
+    fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
+
+    fn ts_no_index() -> TableSchema {
+        TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        }
+    }
+
+    fn ts_btree_on_name() -> TableSchema {
+        TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+                ColumnSchema { name: "age".into(), data_type: DataType::I64, nullable: true },
+            ],
+            primary_key: vec![0],
+            indexes: vec![
+                IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
+            ],
+        }
+    }
+
+    fn ts_composite_btree() -> TableSchema {
+        TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "b".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "c".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![
+                IndexSchema { name: None, columns: vec![0, 1], index_type: IndexType::BTree },
+            ],
+        }
+    }
+
+    fn assert_full(result: &(PlanScanMethod, PlanFilterPredicate)) {
+        assert!(matches!(result.0, PlanScanMethod::Full));
+    }
+
+    fn assert_index(result: &(PlanScanMethod, PlanFilterPredicate), expected_cols: &[usize], expected_hash: bool, expected_prefix: usize) {
+        match &result.0 {
+            PlanScanMethod::Index { index_columns, is_hash, prefix_len, .. } => {
+                assert_eq!(index_columns, expected_cols);
+                assert_eq!(*is_hash, expected_hash);
+                assert_eq!(*prefix_len, expected_prefix);
+            }
+            PlanScanMethod::Full => panic!("expected Index, got Full"),
+        }
+    }
+
+    #[test]
+    fn no_filter_returns_full() {
+        let result = choose(&PlanFilterPredicate::None, &ts_no_index());
+        assert_full(&result);
+    }
+
+    #[test]
+    fn pk_eq_uses_hash() {
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) };
+        let result = choose(&pred, &ts_no_index());
+        assert_index(&result, &[0], true, 1);
+        assert!(matches!(result.1, PlanFilterPredicate::None));
+    }
+
+    #[test]
+    fn pk_range_falls_back_to_full() {
+        // Hash PK can't do range — no other index available → Full
+        let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(1) };
+        let result = choose(&pred, &ts_no_index());
+        assert_full(&result);
+    }
+
+    #[test]
+    fn btree_eq() {
+        let pred = PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Alice".into()) };
+        let result = choose(&pred, &ts_btree_on_name());
+        assert_index(&result, &[1], false, 1);
+    }
+
+    #[test]
+    fn btree_range() {
+        let pred = PlanFilterPredicate::GreaterThan { col: c(0, 1), value: Value::Text("A".into()) };
+        let result = choose(&pred, &ts_btree_on_name());
+        assert_index(&result, &[1], false, 1);
+    }
+
+    #[test]
+    fn non_indexable_pred_returns_full() {
+        // IsNull is not indexable
+        let pred = PlanFilterPredicate::IsNull { col: c(0, 1) };
+        let result = choose(&pred, &ts_btree_on_name());
+        assert_full(&result);
+    }
+
+    #[test]
+    fn composite_full_key() {
+        let pred = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) }),
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Int(2) }),
+        );
+        let result = choose(&pred, &ts_composite_btree());
+        assert_index(&result, &[0, 1], false, 2);
+        assert!(matches!(result.1, PlanFilterPredicate::None));
+    }
+
+    #[test]
+    fn composite_prefix_only() {
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) };
+        let result = choose(&pred, &ts_composite_btree());
+        assert_index(&result, &[0, 1], false, 1);
+    }
+
+    #[test]
+    fn composite_prefix_eq_plus_range() {
+        let pred = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) }),
+            Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 1), value: Value::Int(5) }),
+        );
+        let result = choose(&pred, &ts_composite_btree());
+        assert_index(&result, &[0, 1], false, 2);
+        assert!(matches!(result.1, PlanFilterPredicate::None));
+    }
+
+    #[test]
+    fn composite_with_post_filter() {
+        let pred = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) }),
+            Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(10) }),
+        );
+        let result = choose(&pred, &ts_composite_btree());
+        // Index covers col 0 only, col 2 is not in the index → post_filter
+        assert_index(&result, &[0, 1], false, 1);
+        assert!(matches!(result.1, PlanFilterPredicate::GreaterThan { .. }));
+    }
+
+    #[test]
+    fn in_predicate_uses_index() {
+        let pred = PlanFilterPredicate::In { col: c(0, 0), values: vec![Value::Int(1), Value::Int(2)] };
+        let result = choose(&pred, &ts_no_index());
+        // PK Hash index handles IN on full key
+        assert_index(&result, &[0], true, 1);
+    }
+
+    #[test]
+    fn hash_preferred_over_btree_for_full_key_eq() {
+        // Both Hash and BTree on same column — Hash should win (O(1) vs O(log n))
+        let ts = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![
+                IndexSchema { name: None, columns: vec![0], index_type: IndexType::BTree },
+                IndexSchema { name: None, columns: vec![0], index_type: IndexType::Hash },
+            ],
+        };
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) };
+        let result = choose(&pred, &ts);
+        assert_index(&result, &[0], true, 1);
+    }
+
+    #[test]
+    fn btree_on_pk_col_prevents_auto_hash() {
+        // Explicit BTree on PK columns → no auto Hash created → BTree used
+        let ts = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![
+                IndexSchema { name: None, columns: vec![0], index_type: IndexType::BTree },
+            ],
+        };
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) };
+        let result = choose(&pred, &ts);
+        assert_index(&result, &[0], false, 1);
+    }
 }

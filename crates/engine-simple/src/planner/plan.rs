@@ -42,6 +42,49 @@ pub enum PlanFilterPredicate {
     None,
 }
 
+impl PlanFilterPredicate {
+    /// Combine an iterator of predicates with AND. Returns `None` for empty input.
+    pub fn combine_and(preds: impl IntoIterator<Item = PlanFilterPredicate>) -> PlanFilterPredicate {
+        preds.into_iter()
+            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
+            .unwrap_or(PlanFilterPredicate::None)
+    }
+
+    /// Extract all column references from this predicate.
+    pub fn column_refs(&self) -> Vec<ColumnRef> {
+        match self {
+            PlanFilterPredicate::Equals { col, .. }
+            | PlanFilterPredicate::NotEquals { col, .. }
+            | PlanFilterPredicate::GreaterThan { col, .. }
+            | PlanFilterPredicate::GreaterThanOrEqual { col, .. }
+            | PlanFilterPredicate::LessThan { col, .. }
+            | PlanFilterPredicate::LessThanOrEqual { col, .. }
+            | PlanFilterPredicate::IsNull { col }
+            | PlanFilterPredicate::IsNotNull { col } => vec![*col],
+
+            PlanFilterPredicate::ColumnEquals { left, right }
+            | PlanFilterPredicate::ColumnNotEquals { left, right }
+            | PlanFilterPredicate::ColumnGreaterThan { left, right }
+            | PlanFilterPredicate::ColumnGreaterThanOrEqual { left, right }
+            | PlanFilterPredicate::ColumnLessThan { left, right }
+            | PlanFilterPredicate::ColumnLessThanOrEqual { left, right } => {
+                vec![*left, *right]
+            }
+
+            PlanFilterPredicate::In { col, .. }
+            | PlanFilterPredicate::InMaterialized { col, .. }
+            | PlanFilterPredicate::CompareMaterialized { col, .. } => vec![*col],
+
+            PlanFilterPredicate::And(l, r) | PlanFilterPredicate::Or(l, r) => {
+                let mut v = l.column_refs();
+                v.extend(r.column_refs());
+                v
+            }
+            PlanFilterPredicate::None => vec![],
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanSelect {
     pub sources: Vec<PlanSourceEntry>,

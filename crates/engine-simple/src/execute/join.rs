@@ -45,12 +45,9 @@ pub fn index_nested_loop_join<'a>(
     ctx: &mut ExecutionContext,
     left: &RowSet<'a>,
     right_table: &'a Table,
-    _right_source: usize,
     join_type: JoinType,
     left_col: ColumnRef,
-    _right_col: usize,
     index_columns: &[usize],
-    _is_hash: bool,
     right_pre_filter: &PlanFilterPredicate,
 ) -> RowSet<'a> {
     ctx.span_with(|ctx| {

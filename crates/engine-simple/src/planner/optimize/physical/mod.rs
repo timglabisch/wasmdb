@@ -9,7 +9,7 @@ mod scan_method;
 
 use std::collections::HashMap;
 
-use schema_engine::schema::{self, TableSchema};
+use schema_engine::schema::TableSchema;
 
 use crate::planner::plan::*;
 
@@ -35,8 +35,7 @@ pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchem
     for i in 1..plan.sources.len() {
         if let Some(ref join) = plan.sources[i].join {
             if let Some(ts) = table_schemas.get(&plan.sources[i].table) {
-                let indexes = schema::effective_indexes(ts);
-                let strategy = join_strategy::choose(&join.on, i, &indexes);
+                let strategy = join_strategy::choose(&join.on, i, ts);
                 plan.sources[i].join.as_mut().unwrap().strategy = strategy;
             }
         }
@@ -59,10 +58,5 @@ fn reconstruct_full_filter(
         all.push(pre_filter);
     }
 
-    match all.len() {
-        0 => PlanFilterPredicate::None,
-        _ => all.into_iter()
-            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
-            .unwrap(),
-    }
+    PlanFilterPredicate::combine_and(all)
 }

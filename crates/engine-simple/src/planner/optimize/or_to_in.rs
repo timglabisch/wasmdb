@@ -10,6 +10,7 @@ use crate::planner::plan::*;
 pub fn rewrite(plan: &mut PlanSelect) {
     plan.filter = optimize(std::mem::replace(&mut plan.filter, PlanFilterPredicate::None));
     for source in &mut plan.sources {
+        source.pre_filter = optimize(std::mem::replace(&mut source.pre_filter, PlanFilterPredicate::None));
         if let Some(ref mut join) = source.join {
             join.on = optimize(std::mem::replace(&mut join.on, PlanFilterPredicate::None));
         }
