@@ -13,7 +13,7 @@ pub mod sort;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::storage::CellValue;
+use crate::storage::{CellValue, Table};
 use sql_parser::ast::Value;
 
 // ── Prepared statement parameters ────────────────────────────────────────
@@ -74,19 +74,20 @@ struct OpenSpan {
 
 /// Threaded through all execution functions as first parameter.
 /// Builds a tree of [`Span`]s with timing information.
-pub struct ExecutionContext {
+pub struct ExecutionContext<'execution> {
+    pub db: &'execution HashMap<String, Table>,
     stack: Vec<OpenSpan>,
     pub spans: Vec<Span>,
     pub params: Params,
 }
 
-impl ExecutionContext {
-    pub fn new() -> Self {
-        Self { stack: Vec::new(), spans: Vec::new(), params: HashMap::new() }
+impl<'execution> ExecutionContext<'execution> {
+    pub fn new(db: &'execution HashMap<String, Table>) -> Self {
+        Self { db, stack: Vec::new(), spans: Vec::new(), params: HashMap::new() }
     }
 
-    pub fn with_params(params: Params) -> Self {
-        Self { stack: Vec::new(), spans: Vec::new(), params }
+    pub fn with_params(db: &'execution HashMap<String, Table>, params: Params) -> Self {
+        Self { db, stack: Vec::new(), spans: Vec::new(), params }
     }
 
     fn close_span(&mut self, op: SpanOperation) {
