@@ -8,6 +8,6 @@ export default defineConfig({
     target: "esnext",
   },
   optimizeDeps: {
-    exclude: ["wasm-lib"],
+    exclude: ["wasm-runtime"],
   },
 });

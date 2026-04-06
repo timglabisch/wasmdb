@@ -3,7 +3,7 @@
 all: wasm frontend
 
 wasm:
-	wasm-pack build crates/wasm-lib --target web --out-dir ../../frontend/node_modules/wasm-lib
+	wasm-pack build crates/wasm-runtime --target web --out-dir ../../frontend/node_modules/wasm-runtime
 
 frontend: wasm
 	cd frontend && npm run build
@@ -13,7 +13,7 @@ dev: wasm
 
 clean:
 	cargo clean
-	rm -rf frontend/node_modules/wasm-lib
+	rm -rf frontend/node_modules/wasm-runtime
 	rm -rf frontend/dist
 
 install:

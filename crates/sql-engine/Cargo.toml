@@ -1,0 +1,8 @@
+[package]
+name = "sql-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sql-parser = { path = "../sql-parser" }
+ddl-parser = { path = "../ddl-parser" }

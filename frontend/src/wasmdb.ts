@@ -9,7 +9,7 @@ import init, {
   ts_to_rust_ptr,
   ts_to_rust_len,
   flush_ts_buffer,
-} from "wasm-lib";
+} from "wasm-runtime";
 
 const wasm = await init();
 
