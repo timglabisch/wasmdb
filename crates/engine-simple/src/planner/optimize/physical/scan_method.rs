@@ -51,31 +51,31 @@ fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
     }
 }
 
-struct IndexableLeaf<'a> {
-    leaf_idx: usize,
+struct IndexablePredicate<'a> {
+    pred_idx: usize,
     col: usize,
     pred: &'a PlanFilterPredicate,
 }
 
-/// Extract indexable leaf predicates, deduplicated by column.
-fn indexable_leaves<'a>(leaves: &[&'a PlanFilterPredicate]) -> Vec<IndexableLeaf<'a>> {
+/// Extract indexable predicates, deduplicated by column.
+fn indexable_predicates<'a>(preds: &[&'a PlanFilterPredicate]) -> Vec<IndexablePredicate<'a>> {
     let mut seen_cols = Vec::new();
     let mut out = Vec::new();
-    for (li, &leaf) in leaves.iter().enumerate() {
-        if let Some(col) = leaf_column(leaf) {
+    for (i, &pred) in preds.iter().enumerate() {
+        if let Some(col) = leaf_column(pred) {
             if !seen_cols.contains(&col) {
                 seen_cols.push(col);
-                out.push(IndexableLeaf { leaf_idx: li, col, pred: leaf });
+                out.push(IndexablePredicate { pred_idx: i, col, pred });
             }
         }
     }
     out
 }
 
-fn build_residual(leaves: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilterPredicate {
-    let remaining: Vec<PlanFilterPredicate> = leaves.iter().enumerate()
-        .filter(|(li, _)| !used.contains(li))
-        .map(|(_, leaf)| (*leaf).clone())
+fn build_residual(preds: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilterPredicate {
+    let remaining: Vec<PlanFilterPredicate> = preds.iter().enumerate()
+        .filter(|(i, _)| !used.contains(i))
+        .map(|(_, p)| (*p).clone())
         .collect();
 
     match remaining.len() {
@@ -97,19 +97,19 @@ struct IndexScore {
 
 struct IndexCandidate {
     score: IndexScore,
-    used_leaves: Vec<usize>,
+    used_preds: Vec<usize>,
     index_columns: Vec<usize>,
     is_hash: bool,
 }
 
 fn score_index(
     idx: &IndexSchema,
-    indexable: &[IndexableLeaf],
+    indexable: &[IndexablePredicate],
 ) -> Option<IndexCandidate> {
     let mut prefix_eq_count: usize = 0;
     let mut has_range = false;
     let mut has_in = false;
-    let mut used_leaves: Vec<usize> = Vec::new();
+    let mut used_preds: Vec<usize> = Vec::new();
 
     for &col in &idx.columns {
         let Some(leaf) = indexable.iter().find(|l| l.col == col) else {
@@ -118,23 +118,23 @@ fn score_index(
         match classify(leaf.pred) {
             PredClass::Eq => {
                 prefix_eq_count += 1;
-                used_leaves.push(leaf.leaf_idx);
+                used_preds.push(leaf.pred_idx);
             }
             PredClass::Range => {
                 has_range = true;
-                used_leaves.push(leaf.leaf_idx);
+                used_preds.push(leaf.pred_idx);
                 break;
             }
             PredClass::In => {
                 has_in = true;
-                used_leaves.push(leaf.leaf_idx);
+                used_preds.push(leaf.pred_idx);
                 break;
             }
             PredClass::Other => break,
         }
     }
 
-    if used_leaves.is_empty() {
+    if used_preds.is_empty() {
         return None;
     }
 
@@ -153,8 +153,8 @@ fn score_index(
     };
 
     Some(IndexCandidate {
-        score: IndexScore { prefix_len: used_leaves.len(), tie_break },
-        used_leaves,
+        score: IndexScore { prefix_len: used_preds.len(), tie_break },
+        used_preds,
         index_columns: idx.columns.clone(),
         is_hash,
     })
@@ -172,8 +172,8 @@ pub fn choose(
         return (PlanScanMethod::Full, pre_filter.clone());
     }
 
-    let leaves = flatten_ands(pre_filter);
-    let indexable = indexable_leaves(&leaves);
+    let preds = flatten_ands(pre_filter);
+    let indexable = indexable_predicates(&preds);
     if indexable.is_empty() {
         return (PlanScanMethod::Full, pre_filter.clone());
     }
@@ -185,10 +185,10 @@ pub fn choose(
         return (PlanScanMethod::Full, pre_filter.clone());
     };
 
-    let index_predicates: Vec<PlanFilterPredicate> = best.used_leaves.iter()
-        .map(|&li| (*leaves[li]).clone())
+    let index_predicates: Vec<PlanFilterPredicate> = best.used_preds.iter()
+        .map(|&i| (*preds[i]).clone())
         .collect();
-    let residual = build_residual(&leaves, &best.used_leaves);
+    let residual = build_residual(&preds, &best.used_preds);
 
     let method = PlanScanMethod::Index {
         index_columns: best.index_columns,
