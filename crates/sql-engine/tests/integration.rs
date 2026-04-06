@@ -856,3 +856,73 @@ fn prepared_with_index() {
     );
     assert_eq!(result[0], vec![s("Bob")]);
 }
+
+#[test]
+fn prepared_or_to_in() {
+    let db = make_db();
+    let params = HashMap::from([
+        ("a".into(), execute::ParamValue::Int(1)),
+        ("b".into(), execute::ParamValue::Int(3)),
+    ]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id = :a OR users.id = :b",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn prepared_null_parameter() {
+    let db = make_db();
+    let params = HashMap::from([("val".into(), execute::ParamValue::Null)]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id = :val",
+        params,
+    );
+    assert!(result[0].is_empty());
+}
+
+#[test]
+fn prepared_empty_int_list() {
+    let db = make_db();
+    let params = HashMap::from([("ids".into(), execute::ParamValue::IntList(vec![]))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id IN (:ids)",
+        params,
+    );
+    assert!(result[0].is_empty());
+}
+
+#[test]
+fn prepared_placeholder_on_left() {
+    let db = make_db();
+    let params = HashMap::from([("min_age".into(), execute::ParamValue::Int(28))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE :min_age < users.age",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn prepared_join_on_placeholder() {
+    let db = make_db();
+    let params = HashMap::from([("uid".into(), execute::ParamValue::Int(1))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users JOIN orders ON users.id = :uid",
+        params,
+    );
+    // users.id = 1 matches Alice; cross-joined with all 4 orders → 4 rows of "Alice"
+    assert_eq!(result[0], vec![s("Alice"), s("Alice"), s("Alice"), s("Alice")]);
+}
+
+#[test]
+fn prepared_limit_with_placeholder() {
+    let db = make_db();
+    let params = HashMap::from([("n".into(), execute::ParamValue::Int(1))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users LIMIT :n",
+        params,
+    );
+    assert_eq!(result[0].len(), 1);
+}

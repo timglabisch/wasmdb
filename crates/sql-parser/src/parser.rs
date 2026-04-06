@@ -725,4 +725,14 @@ mod tests {
         let ast = parse("SELECT u.x FROM u LIMIT 10").unwrap();
         assert!(matches!(ast.limit, Some(AstLimit::Value(10))));
     }
+
+    #[test]
+    fn test_parse_placeholder_on_left_side() {
+        let ast = parse("SELECT u.x FROM u WHERE :val < u.age").unwrap();
+        assert!(matches!(
+            &ast.filter[0],
+            AstExpr::Binary { op: Operator::Lt, left, .. }
+            if matches!(left.as_ref(), AstExpr::Literal(Value::Placeholder(name)) if name == "val")
+        ));
+    }
 }

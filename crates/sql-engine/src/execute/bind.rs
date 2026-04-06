@@ -320,4 +320,13 @@ mod tests {
             _ => panic!("expected And"),
         }
     }
+
+    #[test]
+    fn test_bind_limit_text_param_error() {
+        let mut plan = empty_plan(PlanFilterPredicate::None);
+        plan.limit = Some(PlanLimit::Placeholder("n".into()));
+        let params = HashMap::from([("n".into(), ParamValue::Text("abc".into()))]);
+        let err = resolve_params(&plan, &params).unwrap_err();
+        assert!(matches!(err, ExecuteError::BindError(ref msg) if msg.contains("LIMIT")));
+    }
 }

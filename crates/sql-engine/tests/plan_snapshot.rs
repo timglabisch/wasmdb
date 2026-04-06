@@ -758,3 +758,46 @@ Select
   Output [users.name, orders.amount, products.name]
 ");
 }
+
+// ── Prepared statement placeholders ────────────────────────────────────
+
+#[test]
+fn placeholder_in_filter_and_limit() {
+    let db = make_db();
+    assert_plan(&db.plan(
+        "SELECT users.name FROM users WHERE users.id = :id AND users.age > :min_age LIMIT :n",
+    ), "
+Select
+  Scan table=users scan=Hash([0] prefix=1 lookup=FullKeyEq)
+    pre_filter: users.age > :min_age
+    index_preds: [users.id = :id]
+  Limit :n
+  Output [users.name]
+");
+}
+
+#[test]
+fn placeholder_with_index() {
+    let db = make_indexed_db();
+    assert_plan(&db.plan(
+        "SELECT users.name FROM users WHERE users.id = :id",
+    ), "
+Select
+  Scan table=users scan=BTree([0] prefix=1 lookup=FullKeyEq)
+    index_preds: [users.id = :id]
+  Output [users.name]
+");
+}
+
+#[test]
+fn placeholder_or_to_in_optimization() {
+    let db = make_db();
+    assert_plan(&db.plan(
+        "SELECT users.name FROM users WHERE users.id = :a OR users.id = :b",
+    ), "
+Select
+  Scan table=users scan=Hash([0] prefix=1 lookup=InMultiLookup)
+    index_preds: [users.id IN (:a, :b)]
+  Output [users.name]
+");
+}
