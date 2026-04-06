@@ -285,7 +285,7 @@ mod tests {
     fn test_scan_composite_index_with_remaining_filter() {
         let mut ctx = ExecutionContext::new();
         let table = make_composite_indexed_table();
-        // pre_filter = residual (score > 350 not covered by index)
+        // pre_filter = post_filter (score > 350 not covered by index)
         let source = make_source("events",
             PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(350) },
             PlanScanMethod::Index {

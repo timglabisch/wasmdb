@@ -3,7 +3,7 @@
 //! Examines the source's `pre_filter` predicates against available indexes,
 //! scores each index by prefix length and type, and returns the best choice.
 
-use schema_engine::schema::{IndexSchema, IndexType};
+use schema_engine::schema::{self, IndexSchema, IndexType, TableSchema};
 
 use crate::planner::plan::*;
 
@@ -72,7 +72,7 @@ fn indexable_predicates<'a>(preds: &[&'a PlanFilterPredicate]) -> Vec<IndexableP
     out
 }
 
-fn build_residual(preds: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilterPredicate {
+fn build_post_filter(preds: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilterPredicate {
     let remaining: Vec<PlanFilterPredicate> = preds.iter().enumerate()
         .filter(|(i, _)| !used.contains(i))
         .map(|(_, p)| (*p).clone())
@@ -163,11 +163,12 @@ fn score_index(
 // ── Public API ───────────────────────────────────────────────────────────
 
 /// Choose the best scan method for a source. Returns `(scan_method, new_pre_filter)`.
-/// When an index is chosen, `new_pre_filter` contains only the residual predicates.
+/// When an index is chosen, `new_pre_filter` contains only the post_filter predicates.
 pub fn choose(
     pre_filter: &PlanFilterPredicate,
-    indexes: &[IndexSchema],
+    ts: &TableSchema,
 ) -> (PlanScanMethod, PlanFilterPredicate) {
+    let indexes = schema::effective_indexes(ts);
     if matches!(pre_filter, PlanFilterPredicate::None) || indexes.is_empty() {
         return (PlanScanMethod::Full, pre_filter.clone());
     }
@@ -176,6 +177,11 @@ pub fn choose(
     let indexable = indexable_predicates(&preds);
     if indexable.is_empty() {
         return (PlanScanMethod::Full, pre_filter.clone());
+    }
+
+    // Fast path: PK equality covers all indexable predicates — skip scoring.
+    if let Some(result) = try_pk_lookup(&preds, &indexable, &indexes, &ts.primary_key) {
+        return result;
     }
 
     let Some(best) = indexes.iter()
@@ -188,7 +194,7 @@ pub fn choose(
     let index_predicates: Vec<PlanFilterPredicate> = best.used_preds.iter()
         .map(|&i| (*preds[i]).clone())
         .collect();
-    let residual = build_residual(&preds, &best.used_preds);
+    let post_filter = build_post_filter(&preds, &best.used_preds);
 
     let method = PlanScanMethod::Index {
         index_columns: best.index_columns,
@@ -196,5 +202,54 @@ pub fn choose(
         is_hash: best.is_hash,
         index_predicates,
     };
-    (method, residual)
+    (method, post_filter)
+}
+
+/// If all indexable predicates are Eq on PK columns, skip scoring.
+/// This is the best possible scan — no other index can beat a full PK hit.
+/// Only applies when there are no extra indexable predicates that a composite
+/// index could additionally cover.
+fn try_pk_lookup(
+    preds: &[&PlanFilterPredicate],
+    indexable: &[IndexablePredicate],
+    indexes: &[IndexSchema],
+    primary_key: &[usize],
+) -> Option<(PlanScanMethod, PlanFilterPredicate)> {
+    if primary_key.is_empty() {
+        return None;
+    }
+
+    // Every PK column must have an Eq predicate.
+    let mut pk_pred_indices = Vec::new();
+    for &pk_col in primary_key {
+        let entry = indexable.iter().find(|e| e.col == pk_col)?;
+        if !matches!(classify(entry.pred), PredClass::Eq) {
+            return None;
+        }
+        pk_pred_indices.push(entry.pred_idx);
+    }
+
+    // Only use fast-path when PK covers ALL indexable predicates.
+    // If there are extra indexable columns, a composite index might be better.
+    if pk_pred_indices.len() != indexable.len() {
+        return None;
+    }
+
+    // Find the index that covers exactly the PK (prefer Hash).
+    let idx = indexes.iter()
+        .filter(|idx| idx.columns == primary_key)
+        .max_by_key(|idx| if idx.index_type == IndexType::Hash { 1u8 } else { 0 })?;
+
+    let index_predicates: Vec<PlanFilterPredicate> = pk_pred_indices.iter()
+        .map(|&i| (*preds[i]).clone())
+        .collect();
+    let post_filter = build_post_filter(preds, &pk_pred_indices);
+
+    let method = PlanScanMethod::Index {
+        index_columns: idx.columns.clone(),
+        prefix_len: primary_key.len(),
+        is_hash: idx.index_type == IndexType::Hash,
+        index_predicates,
+    };
+    Some((method, post_filter))
 }

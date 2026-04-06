@@ -66,7 +66,7 @@ pub enum PlanScanMethod {
     Full,
     /// Use an index. The executor executes the lookup, then applies
     /// `source.pre_filter` as post-filter (which access_path has narrowed
-    /// to only the residual predicates not covered by the index).
+    /// to only the post_filter predicates not covered by the index).
     Index {
         /// Index column positions (matches a TableIndex.columns()).
         index_columns: Vec<usize>,

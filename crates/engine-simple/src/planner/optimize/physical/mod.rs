@@ -14,7 +14,7 @@ use schema_engine::schema::{self, TableSchema};
 use crate::planner::plan::*;
 
 /// Populate `scan_method` and join `strategy` for each source in the plan.
-/// When an index scan is chosen, `pre_filter` is narrowed to only the residual
+/// When an index scan is chosen, `pre_filter` is narrowed to only the post_filter
 /// predicates not covered by the index — the executor always applies `pre_filter`.
 pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchema>) {
     for source in &mut plan.sources {
@@ -27,10 +27,9 @@ pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchem
         source.pre_filter = full_filter;
 
         if let Some(ts) = table_schemas.get(&source.table) {
-            let indexes = schema::effective_indexes(ts);
-            let (method, residual) = scan_method::choose(&source.pre_filter, &indexes);
+            let (method, post_filter) = scan_method::choose(&source.pre_filter, ts);
             source.scan_method = method;
-            source.pre_filter = residual;
+            ∫source.pre_filter = post_filter;
         }
     }
     for i in 1..plan.sources.len() {
@@ -45,7 +44,7 @@ pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchem
 }
 
 /// Reconstruct the full predicate from a previous split.
-/// Combines index_predicates (from scan_method) back with pre_filter (residual).
+/// Combines index_predicates (from scan_method) back with pre_filter (post_filter).
 fn reconstruct_full_filter(
     scan_method: PlanScanMethod,
     pre_filter: PlanFilterPredicate,
