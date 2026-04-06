@@ -28,7 +28,7 @@ fn classify(pred: &PlanFilterPredicate) -> PredClass {
     }
 }
 
-fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
+fn pred_column(pred: &PlanFilterPredicate) -> Option<usize> {
     match pred {
         PlanFilterPredicate::Equals { col, .. }
         | PlanFilterPredicate::GreaterThan { col, .. }
@@ -62,7 +62,7 @@ fn indexable_predicates<'a>(preds: &[&'a PlanFilterPredicate]) -> Vec<IndexableP
     let mut seen_cols = Vec::new();
     let mut out = Vec::new();
     for (i, &pred) in preds.iter().enumerate() {
-        if let Some(col) = leaf_column(pred) {
+        if let Some(col) = pred_column(pred) {
             if !seen_cols.contains(&col) {
                 seen_cols.push(col);
                 out.push(IndexablePredicate { pred_idx: i, col, pred });
@@ -112,22 +112,22 @@ fn score_index(
     let mut used_preds: Vec<usize> = Vec::new();
 
     for &col in &idx.columns {
-        let Some(leaf) = indexable.iter().find(|l| l.col == col) else {
+        let Some(entry) = indexable.iter().find(|e| e.col == col) else {
             break;
         };
-        match classify(leaf.pred) {
+        match classify(entry.pred) {
             PredClass::Eq => {
                 prefix_eq_count += 1;
-                used_preds.push(leaf.pred_idx);
+                used_preds.push(entry.pred_idx);
             }
             PredClass::Range => {
                 has_range = true;
-                used_preds.push(leaf.pred_idx);
+                used_preds.push(entry.pred_idx);
                 break;
             }
             PredClass::In => {
                 has_in = true;
-                used_preds.push(leaf.pred_idx);
+                used_preds.push(entry.pred_idx);
                 break;
             }
             PredClass::Other => break,
