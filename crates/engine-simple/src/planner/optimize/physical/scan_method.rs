@@ -104,6 +104,7 @@ struct IndexScore {
 
 struct IndexCandidate {
     score: IndexScore,
+    lookup: PlanIndexLookup,
     used_preds: Vec<usize>,
     index_columns: Vec<usize>,
     is_hash: bool,
@@ -121,6 +122,18 @@ struct PrefixMatch {
 impl PrefixMatch {
     fn is_full_key_eq(&self) -> bool {
         !self.has_range && !self.has_in && self.eq_count == self.num_index_columns
+    }
+
+    fn lookup(&self) -> PlanIndexLookup {
+        if self.has_in {
+            PlanIndexLookup::InMultiLookup
+        } else if self.has_range {
+            PlanIndexLookup::PrefixRange
+        } else if self.is_full_key_eq() {
+            PlanIndexLookup::FullKeyEq
+        } else {
+            PlanIndexLookup::PrefixEq
+        }
     }
 }
 
@@ -172,8 +185,10 @@ fn match_prefix(
 
 fn score_btree(idx: &IndexSchema, m: PrefixMatch) -> Option<IndexCandidate> {
     let cost = if m.is_full_key_eq() { LookupCost::LogNFullKey } else { LookupCost::LogN };
+    let lookup = m.lookup();
     Some(IndexCandidate {
         score: IndexScore { matched_predicates: m.used_preds.len(), cost },
+        lookup,
         used_preds: m.used_preds,
         index_columns: idx.columns.clone(),
         is_hash: false,
@@ -186,9 +201,10 @@ fn score_hash(idx: &IndexSchema, m: PrefixMatch) -> Option<IndexCandidate> {
     if !m.is_full_key_eq() && !full_key_in {
         return None;
     }
-    let cost = LookupCost::Constant;
+    let lookup = m.lookup();
     Some(IndexCandidate {
-        score: IndexScore { matched_predicates: m.used_preds.len(), cost },
+        score: IndexScore { matched_predicates: m.used_preds.len(), cost: LookupCost::Constant },
+        lookup,
         used_preds: m.used_preds,
         index_columns: idx.columns.clone(),
         is_hash: true,
@@ -247,6 +263,7 @@ pub fn choose(
         prefix_len: best.score.matched_predicates,
         is_hash: best.is_hash,
         index_predicates,
+        lookup: best.lookup,
     };
     (method, post_filter)
 }
@@ -296,6 +313,7 @@ fn try_pk_lookup(
         prefix_len: primary_key.len(),
         is_hash: idx.index_type == IndexType::Hash,
         index_predicates,
+        lookup: PlanIndexLookup::FullKeyEq,
     };
     Some((method, post_filter))
 }

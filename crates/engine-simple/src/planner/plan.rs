@@ -108,8 +108,8 @@ pub enum PlanScanMethod {
     /// Full table scan, apply pre_filter as post-filter.
     Full,
     /// Use an index. The executor executes the lookup, then applies
-    /// `source.pre_filter` as post-filter (which access_path has narrowed
-    /// to only the post_filter predicates not covered by the index).
+    /// `source.pre_filter` as post-filter (which the planner has narrowed
+    /// to only the predicates not covered by the index).
     Index {
         /// Index column positions (matches a TableIndex.columns()).
         index_columns: Vec<usize>,
@@ -120,7 +120,22 @@ pub enum PlanScanMethod {
         /// Which leaf predicates the index handles (in index-column order).
         /// Executor uses these to build the lookup key.
         index_predicates: Vec<PlanFilterPredicate>,
+        /// Which lookup method the executor should use.
+        lookup: PlanIndexLookup,
     },
+}
+
+/// How to query the index — decided by the planner based on predicate shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanIndexLookup {
+    /// All index columns matched with Eq → `lookup_eq` (exact match).
+    FullKeyEq,
+    /// Only leading columns matched with Eq → `lookup_prefix_eq` (prefix scan).
+    PrefixEq,
+    /// Leading Eq columns + one Range predicate → `lookup_prefix_range`.
+    PrefixRange,
+    /// Leading Eq columns + one IN predicate → multiple `lookup_eq` calls.
+    InMultiLookup,
 }
 
 /// How to execute a join — decided by the planner.

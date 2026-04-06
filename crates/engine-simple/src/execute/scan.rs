@@ -1,4 +1,4 @@
-use crate::planner::plan::{PlanFilterPredicate, PlanScanMethod, PlanSourceEntry};
+use crate::planner::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSourceEntry};
 use crate::storage::{CellValue, RangeOp, Table};
 use super::value_to_cell;
 use super::{ExecutionContext, ScanMethod, SpanOperation};
@@ -17,8 +17,8 @@ pub fn scan<'a>(ctx: &mut ExecutionContext, table: &'a Table, source: &PlanSourc
                     (scan_filtered(ctx, table, &source.pre_filter), ScanMethod::Full)
                 }
             }
-            PlanScanMethod::Index { index_columns, prefix_len, is_hash, index_predicates } => {
-                let mut ids = execute_index_lookup(table, index_columns, index_predicates);
+            PlanScanMethod::Index { index_columns, prefix_len, is_hash, index_predicates, lookup } => {
+                let mut ids = execute_index_lookup(table, index_columns, index_predicates, *lookup);
                 ids.retain(|&r| !table.is_deleted(r));
                 if !matches!(source.pre_filter, PlanFilterPredicate::None) {
                     ids = source.pre_filter.filter_batch(ctx, table, &ids);
@@ -52,6 +52,7 @@ fn execute_index_lookup(
     table: &Table,
     planned_columns: &[usize],
     index_predicates: &[PlanFilterPredicate],
+    lookup: PlanIndexLookup,
 ) -> Vec<usize> {
     let idx = table.indexes().iter()
         .find(|idx| idx.columns() == planned_columns)
@@ -87,28 +88,32 @@ fn execute_index_lookup(
         }
     }
 
-    let is_full_key_eq = range_on_last.is_none() && in_on_last.is_none()
-        && prefix_eq_values.len() == idx.columns().len();
-
-    if let Some(ref in_values) = in_on_last {
-        let mut combined: Vec<usize> = Vec::new();
-        for v in in_values {
-            let mut key = prefix_eq_values.clone();
-            key.push(v.clone());
-            if let Some(hits) = idx.lookup_eq(&key).map(|s| s.to_vec()) {
-                combined.extend(hits);
+    match lookup {
+        PlanIndexLookup::InMultiLookup => {
+            let in_values = in_on_last.expect("InMultiLookup requires IN predicate");
+            let mut combined: Vec<usize> = Vec::new();
+            for v in &in_values {
+                let mut key = prefix_eq_values.clone();
+                key.push(v.clone());
+                if let Some(hits) = idx.lookup_eq(&key).map(|s| s.to_vec()) {
+                    combined.extend(hits);
+                }
             }
+            combined.sort_unstable();
+            combined.dedup();
+            combined
         }
-        combined.sort_unstable();
-        combined.dedup();
-        combined
-    } else if let Some((op, ref value)) = range_on_last {
-        idx.lookup_prefix_range(&prefix_eq_values, op, value)
-            .unwrap_or_default()
-    } else if is_full_key_eq {
-        idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec()).unwrap_or_default()
-    } else {
-        idx.lookup_prefix_eq(&prefix_eq_values).unwrap_or_default()
+        PlanIndexLookup::PrefixRange => {
+            let (op, value) = range_on_last.expect("PrefixRange requires range predicate");
+            idx.lookup_prefix_range(&prefix_eq_values, op, &value)
+                .unwrap_or_default()
+        }
+        PlanIndexLookup::FullKeyEq => {
+            idx.lookup_eq(&prefix_eq_values).map(|s| s.to_vec()).unwrap_or_default()
+        }
+        PlanIndexLookup::PrefixEq => {
+            idx.lookup_prefix_eq(&prefix_eq_values).unwrap_or_default()
+        }
     }
 }
 
@@ -239,6 +244,7 @@ mod tests {
                 PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) },
                 PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Int(20) },
             ],
+            lookup: PlanIndexLookup::FullKeyEq,
         });
         let rs = scan(&mut ctx, &table, &source);
         assert_eq!(rs.num_rows, 1);
@@ -257,6 +263,7 @@ mod tests {
             index_predicates: vec![
                 PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(1) },
             ],
+            lookup: PlanIndexLookup::PrefixEq,
         });
         let rs = scan(&mut ctx, &table, &source);
         assert_eq!(rs.num_rows, 2);
@@ -275,6 +282,7 @@ mod tests {
                 PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) },
                 PlanFilterPredicate::GreaterThan { col: c(0, 1), value: Value::Int(10) },
             ],
+            lookup: PlanIndexLookup::PrefixRange,
         });
         let rs = scan(&mut ctx, &table, &source);
         assert_eq!(rs.num_rows, 1);
@@ -296,6 +304,7 @@ mod tests {
                     PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) },
                     PlanFilterPredicate::GreaterThanOrEqual { col: c(0, 1), value: Value::Int(10) },
                 ],
+                lookup: PlanIndexLookup::PrefixRange,
             },
         );
         let rs = scan(&mut ctx, &table, &source);
