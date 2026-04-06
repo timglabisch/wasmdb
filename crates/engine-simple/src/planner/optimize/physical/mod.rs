@@ -29,7 +29,7 @@ pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchem
         if let Some(ts) = table_schemas.get(&source.table) {
             let (method, post_filter) = scan_method::choose(&source.pre_filter, ts);
             source.scan_method = method;
-            ∫source.pre_filter = post_filter;
+            source.pre_filter = post_filter;
         }
     }
     for i in 1..plan.sources.len() {
