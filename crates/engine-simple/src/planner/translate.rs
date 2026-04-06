@@ -59,7 +59,7 @@ pub fn build_raw_plan(
         .map(|rc| plan_result_column(rc, &sources))
         .collect::<Result<Vec<_>, _>>()?;
 
-    let aggregates = result_columns
+    let aggregates: Vec<PlanAggregate> = result_columns
         .iter()
         .filter_map(|rc| match rc {
             PlanResultColumn::Aggregate { func, col, .. } => {

@@ -69,8 +69,7 @@ fn execute_inner(
     // Phase 4: Aggregate.
     if !plan.group_by.is_empty() || !plan.aggregates.is_empty() {
         let aggregated = aggregate::aggregate_rowset(ctx, &rs, &plan.group_by, &plan.aggregates);
-        let has_aggregates = !plan.aggregates.is_empty();
-        let mut result = project::project(ctx, &aggregated, &plan.result_columns, &plan.group_by, has_aggregates);
+        let mut result = project::project(ctx, &aggregated, &plan.result_columns, &plan.group_by);
         if !plan.order_by.is_empty() {
             sort::sort_materialized(ctx, &mut result, &plan.order_by, &plan.result_columns);
         }

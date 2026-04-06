@@ -24,12 +24,13 @@ pub fn project_rowset(
     })
 }
 
+/// Project materialized columns after aggregation.
+/// Layout of `cols`: `[group_by_0, group_by_1, ..., agg_0, agg_1, ...]`.
 pub fn project(
     ctx: &mut ExecutionContext,
     cols: &Columns,
     result_columns: &[PlanResultColumn],
     group_by: &[ColumnRef],
-    has_aggregates: bool,
 ) -> Columns {
     ctx.span_with(|_ctx| {
         let mut result: Columns = Vec::with_capacity(result_columns.len());
@@ -37,13 +38,9 @@ pub fn project(
         for rc in result_columns {
             match rc {
                 PlanResultColumn::Column { col, .. } => {
-                    if has_aggregates {
-                        let pos = group_by.iter().position(|&gb| gb == *col)
-                            .expect("column in aggregate query must be in group_by");
-                        result.push(cols[pos].clone());
-                    } else {
-                        result.push(cols[col.col].clone());
-                    }
+                    let pos = group_by.iter().position(|&gb| gb == *col)
+                        .expect("column in aggregate query must be in group_by");
+                    result.push(cols[pos].clone());
                 }
                 PlanResultColumn::Aggregate { .. } => {
                     let pos = group_by.len() + agg_counter;
@@ -66,24 +63,24 @@ mod tests {
     fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 
     #[test]
-    fn test_project_simple() {
+    fn test_project_group_by_only() {
         let mut ctx = ExecutionContext::new();
+        // After aggregate_rowset with group_by=[col 1], no aggregates:
+        // cols layout: [group_by_0_values]
         let cols: Columns = vec![
-            vec![CellValue::I64(1), CellValue::I64(2)],
-            vec![CellValue::Str("a".into()), CellValue::Str("b".into())],
-            vec![CellValue::I64(10), CellValue::I64(20)],
+            vec![CellValue::Str("Alice".into()), CellValue::Str("Bob".into())],
         ];
         let result = project(&mut ctx, &cols, &[
-            PlanResultColumn::Column { col: c(0, 2), alias: None },
-            PlanResultColumn::Column { col: c(0, 0), alias: None },
-        ], &[], false);
-        assert_eq!(result[0], vec![CellValue::I64(10), CellValue::I64(20)]);
-        assert_eq!(result[1], vec![CellValue::I64(1), CellValue::I64(2)]);
+            PlanResultColumn::Column { col: c(0, 1), alias: None },
+        ], &[c(0, 1)]);
+        assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Bob".into())]);
     }
 
     #[test]
     fn test_project_after_aggregate() {
         let mut ctx = ExecutionContext::new();
+        // After aggregate_rowset with group_by=[col 1], aggregates=[MIN(col 2)]:
+        // cols layout: [group_by_0_values, agg_0_values]
         let cols: Columns = vec![
             vec![CellValue::Str("Alice".into()), CellValue::Str("Bob".into())],
             vec![CellValue::I64(25), CellValue::I64(30)],
@@ -91,7 +88,7 @@ mod tests {
         let result = project(&mut ctx, &cols, &[
             PlanResultColumn::Column { col: c(0, 1), alias: None },
             PlanResultColumn::Aggregate { func: AggFunc::Min, col: c(0, 2), alias: Some("min_age".into()) },
-        ], &[c(0, 1)], true);
+        ], &[c(0, 1)]);
         assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Bob".into())]);
         assert_eq!(result[1], vec![CellValue::I64(25), CellValue::I64(30)]);
     }
