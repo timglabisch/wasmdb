@@ -31,6 +31,7 @@ pub type Params = HashMap<String, ParamValue>;
 
 pub use materialize::execute_plan;
 pub use pipeline::execute;
+pub use bind::resolve_params;
 pub use rowset::{RowSet, NULL_ROW};
 
 pub type Column = Vec<CellValue>;

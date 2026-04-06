@@ -1,9 +1,6 @@
 //! Core execution pipeline: scan -> join -> filter -> aggregate -> sort -> limit -> project.
 
-use std::collections::HashMap;
-
 use crate::planner::plan::*;
-use crate::storage::Table;
 
 use super::{aggregate, join, project, scan, sort};
 use super::{Columns, ExecuteError, ExecutionContext, SpanOperation};
@@ -11,26 +8,24 @@ use super::{Columns, ExecuteError, ExecutionContext, SpanOperation};
 pub fn execute(
     ctx: &mut ExecutionContext,
     plan: &PlanSelect,
-    db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    ctx.span(SpanOperation::Execute, |ctx| execute_inner(ctx, plan, db))
+    ctx.span(SpanOperation::Execute, |ctx| execute_inner(ctx, plan))
 }
 
 fn execute_inner(
     ctx: &mut ExecutionContext,
     plan: &PlanSelect,
-    db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
     // Phase 1: Scan first source -> RowSet.
     let first = &plan.sources[0];
-    let first_table = db
+    let first_table = ctx.db
         .get(&first.table)
         .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
     let mut rs = scan::scan(ctx, first_table, first);
 
     // Phase 2: Join remaining sources.
     for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
-        let table = db
+        let table = ctx.db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
         match source.join.as_ref() {
@@ -99,6 +94,7 @@ fn execute_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::storage::{CellValue, Table};
     use sql_parser::ast::*;
     use sql_parser::schema::{ColumnDef, Schema};
@@ -170,7 +166,7 @@ mod tests {
     #[test]
     fn test_execute_scan_filter_project() {
         let db = make_db();
-        let mut ctx = ExecutionContext::new();
+        let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "users".into(), schema: users_query_schema(),
@@ -184,7 +180,7 @@ mod tests {
                 PlanResultColumn::Column { col: c(0, 2), alias: None },
             ],
         };
-        let result = execute(&mut ctx, &plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
         assert_eq!(result[1], vec![CellValue::I64(30), CellValue::I64(35)]);
@@ -194,7 +190,7 @@ mod tests {
     #[test]
     fn test_execute_join() {
         let db = make_db();
-        let mut ctx = ExecutionContext::new();
+        let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![
                 PlanSourceEntry {
@@ -220,7 +216,7 @@ mod tests {
                 PlanResultColumn::Column { col: c(1, 2), alias: None },
             ],
         };
-        let result = execute(&mut ctx, &plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan).unwrap();
         assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Alice".into()), CellValue::Str("Bob".into())]);
         assert_eq!(result[1], vec![CellValue::I64(100), CellValue::I64(200), CellValue::I64(50)]);
     }
@@ -228,7 +224,7 @@ mod tests {
     #[test]
     fn test_execute_aggregate() {
         let db = make_db();
-        let mut ctx = ExecutionContext::new();
+        let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "users".into(), schema: users_query_schema(),
@@ -244,7 +240,7 @@ mod tests {
                 PlanResultColumn::Aggregate { func: AggFunc::Min, col: c(0, 2), alias: Some("min_age".into()) },
             ],
         };
-        let result = execute(&mut ctx, &plan, &db).unwrap();
+        let result = execute(&mut ctx, &plan).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 3);
         assert_eq!(result[0][0], CellValue::Str("Alice".into()));
@@ -254,7 +250,7 @@ mod tests {
     #[test]
     fn test_execute_table_not_found() {
         let db = HashMap::new();
-        let mut ctx = ExecutionContext::new();
+        let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
                 table: "nonexistent".into(), schema: Schema::new(vec![]),
@@ -265,7 +261,7 @@ mod tests {
             group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
             result_columns: vec![],
         };
-        let err = execute(&mut ctx, &plan, &db).unwrap_err();
+        let err = execute(&mut ctx, &plan).unwrap_err();
         assert!(matches!(err, ExecuteError::TableNotFound(_)));
     }
 }

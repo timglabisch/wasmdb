@@ -87,6 +87,7 @@ impl Accumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::execute::RowSet;
     use crate::planner::plan::ColumnRef;
     use crate::storage::Table;
@@ -108,7 +109,8 @@ mod tests {
 
     #[test]
     fn test_aggregate_count_sum_min_max() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let mut table = make_test_table();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(30)]).unwrap();
@@ -129,7 +131,8 @@ mod tests {
 
     #[test]
     fn test_aggregate_null_handling() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let mut table = make_test_table();
         table.insert(&[CellValue::Str("A".into()), CellValue::I64(10)]).unwrap();
         table.insert(&[CellValue::Str("A".into()), CellValue::Null]).unwrap();

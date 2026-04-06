@@ -98,6 +98,7 @@ pub fn index_nested_loop_join<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::execute::scan::scan_row_ids;
     use crate::planner::plan::ColumnRef;
     use crate::storage::CellValue;
@@ -141,7 +142,8 @@ mod tests {
 
     #[test]
     fn test_inner_join() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let ut = make_users_table();
         let ot = make_orders_table();
         let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));
@@ -156,7 +158,8 @@ mod tests {
 
     #[test]
     fn test_left_join_with_nulls() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let ut = make_users_table();
         let ot = make_orders_table();
         let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));
@@ -170,7 +173,8 @@ mod tests {
 
     #[test]
     fn test_join_condition_column_equals() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let ut = make_users_table();
         let ot = make_orders_table();
         let left = RowSet::from_scan(&ut, scan_row_ids(&mut ctx, &ut));

@@ -247,6 +247,7 @@ fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::planner::plan::ColumnRef;
     use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
 
@@ -290,7 +291,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_equals_i64() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[1, 2, 3, 2, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) };
@@ -299,7 +301,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_greater_than() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[1, 5, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(2) };
@@ -308,7 +311,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_string_equals() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Bob".into()) };
@@ -317,7 +321,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_nullable_skips_null() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(20) };
@@ -326,7 +331,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_is_null() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNull { col: c(0, 2) };
@@ -335,7 +341,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_is_not_null_on_non_nullable() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::IsNotNull { col: c(0, 0) };
@@ -344,7 +351,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_column_equals() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let schema = TableSchema {
             name: "t".into(),
             columns: vec![
@@ -365,7 +373,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_and() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::And(
@@ -377,7 +386,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_subset_row_ids() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[10, 20, 30, 40, 50]);
         let row_ids = vec![1, 3];
         let pred = PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Int(25) };
@@ -386,7 +396,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_null_value_always_false() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
@@ -395,7 +406,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_in_i64() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[1, 2, 3, 4, 5]);
         let row_ids: Vec<usize> = (0..5).collect();
         let pred = PlanFilterPredicate::In {
@@ -407,7 +419,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_in_string() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
@@ -419,7 +432,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_in_null_skipped() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {
@@ -431,7 +445,8 @@ mod tests {
 
     #[test]
     fn test_filter_batch_in_empty() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_i64_table("t", "x", &[1, 2, 3]);
         let row_ids: Vec<usize> = (0..3).collect();
         let pred = PlanFilterPredicate::In {

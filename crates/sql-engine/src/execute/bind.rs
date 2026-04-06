@@ -5,6 +5,22 @@ use sql_parser::ast::Value;
 use crate::planner::plan::*;
 use super::{ExecuteError, Params, ParamValue};
 
+/// Resolve all placeholders in an ExecutionPlan. Returns the plan unchanged if params is empty.
+pub fn resolve_plan_params(
+    plan: &ExecutionPlan,
+    params: &Params,
+) -> Result<ExecutionPlan, ExecuteError> {
+    if params.is_empty() {
+        return Ok(plan.clone());
+    }
+    let mut resolved = plan.clone();
+    resolved.main = resolve_params(&plan.main, params)?;
+    for step in &mut resolved.materializations {
+        step.plan = resolve_params(&step.plan, params)?;
+    }
+    Ok(resolved)
+}
+
 /// Resolve all Value::Placeholder in a PlanSelect using the given params.
 pub fn resolve_params(
     plan: &PlanSelect,

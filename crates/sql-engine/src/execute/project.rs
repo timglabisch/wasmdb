@@ -57,6 +57,7 @@ pub fn project(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::storage::CellValue;
     use sql_parser::ast::AggFunc;
 
@@ -64,7 +65,8 @@ mod tests {
 
     #[test]
     fn test_project_group_by_only() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         // After aggregate_rowset with group_by=[col 1], no aggregates:
         // cols layout: [group_by_0_values]
         let cols: Columns = vec![
@@ -78,7 +80,8 @@ mod tests {
 
     #[test]
     fn test_project_after_aggregate() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         // After aggregate_rowset with group_by=[col 1], aggregates=[MIN(col 2)]:
         // cols layout: [group_by_0_values, agg_0_values]
         let cols: Columns = vec![

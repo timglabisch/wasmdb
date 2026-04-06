@@ -120,6 +120,7 @@ fn execute_index_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use crate::planner::plan::{ColumnRef, PlanScanMethod};
     use crate::storage::CellValue;
     use sql_parser::ast::Value;
@@ -158,7 +159,8 @@ mod tests {
 
     #[test]
     fn test_scan_row_ids_skips_deleted() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let mut table = make_users_table();
         table.delete(1).unwrap();
         assert_eq!(scan_row_ids(&mut ctx, &table), vec![0, 2]);
@@ -166,21 +168,24 @@ mod tests {
 
     #[test]
     fn test_scan_filtered_equals() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Int(2) }), vec![1]);
     }
 
     #[test]
     fn test_scan_filtered_greater_than() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) }), vec![0, 2]);
     }
 
     #[test]
     fn test_scan_filtered_skips_deleted() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let mut table = make_users_table();
         table.delete(0).unwrap();
         assert_eq!(scan_filtered(&mut ctx, &table, &PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) }), vec![2]);
@@ -188,7 +193,8 @@ mod tests {
 
     #[test]
     fn test_scan_filtered_and() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let pred = PlanFilterPredicate::And(
             Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(24) }),
@@ -199,7 +205,8 @@ mod tests {
 
     #[test]
     fn test_scan_returns_rowset() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_users_table();
         let pre_filter = PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) };
         let source = make_source("users", pre_filter, PlanScanMethod::Full);
@@ -233,7 +240,8 @@ mod tests {
 
     #[test]
     fn test_scan_composite_index_full_eq() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_composite_indexed_table();
         // pre_filter = None (index covers all predicates)
         let source = make_source("events", PlanFilterPredicate::None, PlanScanMethod::Index {
@@ -253,7 +261,8 @@ mod tests {
 
     #[test]
     fn test_scan_composite_index_prefix_eq() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_composite_indexed_table();
         // pre_filter = None (index covers the single predicate)
         let source = make_source("events", PlanFilterPredicate::None, PlanScanMethod::Index {
@@ -271,7 +280,8 @@ mod tests {
 
     #[test]
     fn test_scan_composite_index_prefix_range() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_composite_indexed_table();
         // pre_filter = None (index covers both predicates)
         let source = make_source("events", PlanFilterPredicate::None, PlanScanMethod::Index {
@@ -291,7 +301,8 @@ mod tests {
 
     #[test]
     fn test_scan_composite_index_with_remaining_filter() {
-        let mut ctx = ExecutionContext::new();
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
         let table = make_composite_indexed_table();
         // pre_filter = post_filter (score > 350 not covered by index)
         let source = make_source("events",

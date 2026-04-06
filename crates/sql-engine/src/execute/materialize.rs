@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::planner::optimize;
 use crate::planner::plan::*;
-use crate::storage::Table;
 use sql_parser::ast::{Operator, Value};
 use ddl_parser::schema::TableSchema;
 
@@ -17,28 +16,15 @@ use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, SpanOperatio
 pub fn execute_plan(
     ctx: &mut ExecutionContext,
     plan: &ExecutionPlan,
-    db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
-    // Resolve named parameters (prepared statement placeholders)
-    let owned_plan;
-    let plan = if !ctx.params.is_empty() {
-        let mut resolved = plan.clone();
-        resolved.main = bind::resolve_params(&plan.main, &ctx.params)?;
-        for step in &mut resolved.materializations {
-            step.plan = bind::resolve_params(&step.plan, &ctx.params)?;
-        }
-        owned_plan = resolved;
-        &owned_plan
-    } else {
-        plan
-    };
+    let plan = &bind::resolve_plan_params(plan, &ctx.params)?;
 
     if plan.materializations.is_empty() {
-        return execute(ctx, &plan.main, db);
+        return execute(ctx, &plan.main);
     }
 
     // Extract table schemas from db for re-running access_path after materialization.
-    let table_schemas: HashMap<String, TableSchema> = db.iter()
+    let table_schemas: HashMap<String, TableSchema> = ctx.db.iter()
         .map(|(name, table)| (name.clone(), table.schema.clone()))
         .collect();
 
@@ -47,7 +33,7 @@ pub fn execute_plan(
     for (i, step) in plan.materializations.iter().enumerate() {
         let values = ctx.span(SpanOperation::Materialize { step: i }, |ctx| {
             let resolved = resolve_materialized(&step.plan, &materialized, &table_schemas);
-            let result = execute(ctx, &resolved, db)?;
+            let result = execute(ctx, &resolved)?;
 
             if result.len() != 1 {
                 return Err(ExecuteError::MaterializeError(
@@ -66,7 +52,7 @@ pub fn execute_plan(
     }
 
     let resolved = resolve_materialized(&plan.main, &materialized, &table_schemas);
-    execute(ctx, &resolved, db)
+    execute(ctx, &resolved)
 }
 
 fn resolve_materialized(

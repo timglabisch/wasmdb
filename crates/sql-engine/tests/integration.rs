@@ -60,15 +60,15 @@ impl TestDb {
     fn run(&self, sql: &str) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
         let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
-        let mut ctx = execute::ExecutionContext::new();
-        execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
+        let mut ctx = execute::ExecutionContext::new(&self.tables);
+        execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
 
     fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
         let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
-        let mut ctx = execute::ExecutionContext::with_params(params);
-        execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
+        let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
+        execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
 }
 
@@ -820,16 +820,18 @@ fn prepared_reuse_plan_different_params() {
 
     // First execution
     let mut ctx1 = execute::ExecutionContext::with_params(
+        &db.tables,
         HashMap::from([("id".into(), execute::ParamValue::Int(1))]),
     );
-    let r1 = execute::execute_plan(&mut ctx1, &plan, &db.tables).unwrap();
+    let r1 = execute::execute_plan(&mut ctx1, &plan).unwrap();
     assert_eq!(r1[0], vec![s("Alice")]);
 
     // Second execution with different params — same plan
     let mut ctx2 = execute::ExecutionContext::with_params(
+        &db.tables,
         HashMap::from([("id".into(), execute::ParamValue::Int(3))]),
     );
-    let r2 = execute::execute_plan(&mut ctx2, &plan, &db.tables).unwrap();
+    let r2 = execute::execute_plan(&mut ctx2, &plan).unwrap();
     assert_eq!(r2[0], vec![s("Carol")]);
 }
 
