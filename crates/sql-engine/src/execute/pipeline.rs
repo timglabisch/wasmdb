@@ -73,7 +73,7 @@ fn execute_inner(
         if !plan.order_by.is_empty() {
             sort::sort_materialized(ctx, &mut result, &plan.order_by, &plan.result_columns);
         }
-        if let Some(limit) = plan.limit {
+        if let Some(PlanLimit::Value(limit)) = plan.limit {
             for col in &mut result { col.truncate(limit); }
         }
         return Ok(result);
@@ -85,7 +85,7 @@ fn execute_inner(
     }
 
     // Phase 5b: Limit.
-    if let Some(limit) = plan.limit {
+    if let Some(PlanLimit::Value(limit)) = plan.limit {
         if rs.num_rows > limit {
             for ids in &mut rs.row_ids { ids.truncate(limit); }
             rs.num_rows = limit;

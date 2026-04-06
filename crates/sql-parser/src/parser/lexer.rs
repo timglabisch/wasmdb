@@ -110,6 +110,19 @@ impl<'a> Lexer<'a> {
                 self.eat_char();
                 Ok(self.token(TokenKind::Star, start))
             }
+            ':' => {
+                self.eat_char();
+                let name_start = self.offset;
+                self.eat_while(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                if self.offset == name_start {
+                    return Err(ParseError::new(
+                        "expected identifier after ':'",
+                        Span { offset: start, len: 1 },
+                    ));
+                }
+                let name = self.input[name_start..self.offset].to_string();
+                Ok(self.token(TokenKind::Placeholder(name), start))
+            }
             other => Err(ParseError::new(
                 format!("unexpected character '{}'", other),
                 Span {
@@ -319,5 +332,17 @@ mod tests {
     fn test_lex_unexpected_char() {
         let err = lex_all("SELECT @").unwrap_err();
         assert!(err.message.contains("unexpected character"));
+    }
+
+    #[test]
+    fn test_lex_placeholder() {
+        let tokens = lex_all(":foo_bar").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Placeholder("foo_bar".into()));
+    }
+
+    #[test]
+    fn test_lex_colon_without_name_error() {
+        let err = lex_all(": ").unwrap_err();
+        assert!(err.message.contains("expected identifier after ':'"));
     }
 }

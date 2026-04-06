@@ -105,6 +105,8 @@ pub enum TokenKind {
     Integer(i64),
     Float(f64),
     Str(String),
+    // Placeholder
+    Placeholder(String),
     // Identifier
     Ident(String),
     // Operators
@@ -156,6 +158,7 @@ impl TokenKind {
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",
             Self::Str(_) => "string",
+            Self::Placeholder(_) => "placeholder",
             Self::Ident(_) => "identifier",
             Self::Eq => "'='",
             Self::Neq => "'!='",

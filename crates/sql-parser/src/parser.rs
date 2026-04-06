@@ -95,10 +95,26 @@ impl<'a> Parser<'a> {
 
         let limit = if self.at(&TokenKind::Limit)? {
             self.eat()?;
-            let tok = self.expect(TokenKind::Integer(0))?;
-            match tok.kind {
-                TokenKind::Integer(n) => Some(n as u64),
-                _ => unreachable!(),
+            let tok = self.peek()?.clone();
+            match &tok.kind {
+                TokenKind::Integer(_) => {
+                    let tok = self.eat()?;
+                    match tok.kind {
+                        TokenKind::Integer(n) => Some(AstLimit::Value(n as u64)),
+                        _ => unreachable!(),
+                    }
+                }
+                TokenKind::Placeholder(_) => {
+                    let tok = self.eat()?;
+                    match tok.kind {
+                        TokenKind::Placeholder(name) => Some(AstLimit::Placeholder(name)),
+                        _ => unreachable!(),
+                    }
+                }
+                _ => return Err(ParseError::new(
+                    format!("expected integer or placeholder after LIMIT, got {}", tok.kind.name()),
+                    tok.span,
+                )),
             }
         } else {
             None
@@ -300,7 +316,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Str(_)
             | TokenKind::True
             | TokenKind::False
-            | TokenKind::Null => {
+            | TokenKind::Null
+            | TokenKind::Placeholder(_) => {
                 let tok = self.eat()?;
                 Ok(token_to_literal(tok))
             }
@@ -359,6 +376,7 @@ fn token_to_literal(tok: Token) -> AstExpr {
         TokenKind::True => AstExpr::Literal(Value::Bool(true)),
         TokenKind::False => AstExpr::Literal(Value::Bool(false)),
         TokenKind::Null => AstExpr::Literal(Value::Null),
+        TokenKind::Placeholder(name) => AstExpr::Literal(Value::Placeholder(name)),
         _ => unreachable!(),
     }
 }
@@ -655,5 +673,56 @@ mod tests {
             "SELECT u.x FROM u WHERE u.id IN (1, 2) AND u.age > 18"
         ).unwrap();
         assert!(matches!(&ast.filter[0], AstExpr::Binary { op: Operator::And, .. }));
+    }
+
+    // ── Placeholder tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_placeholder_in_where() {
+        let ast = parse("SELECT u.x FROM u WHERE u.id = :user_id").unwrap();
+        assert!(matches!(
+            &ast.filter[0],
+            AstExpr::Binary {
+                op: Operator::Eq,
+                right,
+                ..
+            } if matches!(right.as_ref(), AstExpr::Literal(Value::Placeholder(name)) if name == "user_id")
+        ));
+    }
+
+    #[test]
+    fn test_parse_placeholder_in_list() {
+        let ast = parse("SELECT u.x FROM u WHERE u.id IN (:ids)").unwrap();
+        match &ast.filter[0] {
+            AstExpr::InList { values, .. } => {
+                assert_eq!(values.len(), 1);
+                assert!(matches!(&values[0], AstExpr::Literal(Value::Placeholder(name)) if name == "ids"));
+            }
+            _ => panic!("expected InList"),
+        }
+    }
+
+    #[test]
+    fn test_parse_placeholder_in_limit() {
+        let ast = parse("SELECT u.x FROM u LIMIT :n").unwrap();
+        assert!(matches!(ast.limit, Some(AstLimit::Placeholder(ref name)) if name == "n"));
+    }
+
+    #[test]
+    fn test_parse_multiple_placeholders() {
+        let ast = parse("SELECT u.x FROM u WHERE u.id = :id AND u.name = :name").unwrap();
+        assert!(matches!(&ast.filter[0], AstExpr::Binary { op: Operator::And, .. }));
+    }
+
+    #[test]
+    fn test_parse_same_placeholder_twice() {
+        let ast = parse("SELECT u.x FROM u WHERE u.a = :val OR u.b = :val").unwrap();
+        assert!(matches!(&ast.filter[0], AstExpr::Binary { op: Operator::Or, .. }));
+    }
+
+    #[test]
+    fn test_parse_limit_integer_still_works() {
+        let ast = parse("SELECT u.x FROM u LIMIT 10").unwrap();
+        assert!(matches!(ast.limit, Some(AstLimit::Value(10))));
     }
 }

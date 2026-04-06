@@ -9,15 +9,30 @@ use crate::storage::Table;
 use sql_parser::ast::{Operator, Value};
 use ddl_parser::schema::TableSchema;
 
+use super::bind;
 use super::pipeline::execute;
 use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, SpanOperation};
 
-/// Execute an ExecutionPlan: run materializations first, resolve placeholders, then run main query.
+/// Execute an ExecutionPlan: resolve params, run materializations, resolve placeholders, then run main query.
 pub fn execute_plan(
     ctx: &mut ExecutionContext,
     plan: &ExecutionPlan,
     db: &HashMap<String, Table>,
 ) -> Result<Columns, ExecuteError> {
+    // Resolve named parameters (prepared statement placeholders)
+    let owned_plan;
+    let plan = if !ctx.params.is_empty() {
+        let mut resolved = plan.clone();
+        resolved.main = bind::resolve_params(&plan.main, &ctx.params)?;
+        for step in &mut resolved.materializations {
+            step.plan = bind::resolve_params(&step.plan, &ctx.params)?;
+        }
+        owned_plan = resolved;
+        &owned_plan
+    } else {
+        plan
+    };
+
     if plan.materializations.is_empty() {
         return execute(ctx, &plan.main, db);
     }

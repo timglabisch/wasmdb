@@ -29,6 +29,7 @@ fn normalize_value<'a>(v: &'a Value) -> NormalizedValue<'a> {
         Value::Null => NormalizedValue::Null,
         Value::Bool(b) => NormalizedValue::I64(if *b { 1 } else { 0 }),
         Value::Float(f) => NormalizedValue::I64(*f as i64),
+        Value::Placeholder(name) => panic!("unresolved placeholder :{name} — must bind before execution"),
     }
 }
 

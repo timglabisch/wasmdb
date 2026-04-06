@@ -63,6 +63,13 @@ impl TestDb {
         let mut ctx = execute::ExecutionContext::new();
         execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
     }
+
+    fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
+        let ast = parser::parse(sql).expect("parse failed");
+        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let mut ctx = execute::ExecutionContext::with_params(params);
+        execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
+    }
 }
 
 fn i(v: i64) -> CellValue {
@@ -742,4 +749,108 @@ fn in_with_index() {
     let db = make_indexed_db();
     let result = db.run("SELECT users.name FROM users WHERE users.id IN (1, 3)");
     assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+// ── Prepared statements (named placeholders) ──────────────────────────────
+
+#[test]
+fn prepared_scalar_int() {
+    let db = make_db();
+    let params = HashMap::from([("id".into(), execute::ParamValue::Int(2))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id = :id",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Bob")]);
+}
+
+#[test]
+fn prepared_scalar_text() {
+    let db = make_db();
+    let params = HashMap::from([("name".into(), execute::ParamValue::Text("Alice".into()))]);
+    let result = db.run_with_params(
+        "SELECT users.id FROM users WHERE users.name = :name",
+        params,
+    );
+    assert_eq!(result[0], vec![i(1)]);
+}
+
+#[test]
+fn prepared_in_int_list() {
+    let db = make_db();
+    let params = HashMap::from([("ids".into(), execute::ParamValue::IntList(vec![1, 3]))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id IN (:ids)",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn prepared_in_text_list() {
+    let db = make_db();
+    let params = HashMap::from([("names".into(), execute::ParamValue::TextList(vec!["Alice".into(), "Carol".into()]))]);
+    let result = db.run_with_params(
+        "SELECT users.id FROM users WHERE users.name IN (:names)",
+        params,
+    );
+    assert_eq!(result[0], vec![i(1), i(3)]);
+}
+
+#[test]
+fn prepared_multiple_params() {
+    let db = make_db();
+    let params = HashMap::from([
+        ("min_age".into(), execute::ParamValue::Int(25)),
+        ("name".into(), execute::ParamValue::Text("Carol".into())),
+    ]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.age > :min_age AND users.name = :name",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Carol")]);
+}
+
+#[test]
+fn prepared_reuse_plan_different_params() {
+    let db = make_db();
+    let sql = "SELECT users.name FROM users WHERE users.id = :id";
+    let ast = parser::parse(sql).unwrap();
+    let plan = planner::plan(&ast, &db.table_schemas).unwrap();
+
+    // First execution
+    let mut ctx1 = execute::ExecutionContext::with_params(
+        HashMap::from([("id".into(), execute::ParamValue::Int(1))]),
+    );
+    let r1 = execute::execute_plan(&mut ctx1, &plan, &db.tables).unwrap();
+    assert_eq!(r1[0], vec![s("Alice")]);
+
+    // Second execution with different params — same plan
+    let mut ctx2 = execute::ExecutionContext::with_params(
+        HashMap::from([("id".into(), execute::ParamValue::Int(3))]),
+    );
+    let r2 = execute::execute_plan(&mut ctx2, &plan, &db.tables).unwrap();
+    assert_eq!(r2[0], vec![s("Carol")]);
+}
+
+#[test]
+fn prepared_limit_placeholder() {
+    let db = make_db();
+    let params = HashMap::from([("n".into(), execute::ParamValue::Int(2))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users LIMIT :n",
+        params,
+    );
+    assert_eq!(result[0].len(), 2);
+}
+
+#[test]
+fn prepared_with_index() {
+    let db = make_indexed_db();
+    let params = HashMap::from([("id".into(), execute::ParamValue::Int(2))]);
+    let result = db.run_with_params(
+        "SELECT users.name FROM users WHERE users.id = :id",
+        params,
+    );
+    assert_eq!(result[0], vec![s("Bob")]);
 }

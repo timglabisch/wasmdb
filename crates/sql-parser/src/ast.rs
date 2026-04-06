@@ -4,7 +4,7 @@ pub struct AstSelect {
     pub filter: Vec<AstExpr>,
     pub group_by: Vec<AstExpr>,
     pub order_by: Vec<AstOrderSpec>,
-    pub limit: Option<u64>,
+    pub limit: Option<AstLimit>,
     pub result_columns: Vec<AstResultColumn>,
 }
 
@@ -88,6 +88,13 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Null,
+    Placeholder(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AstLimit {
+    Value(u64),
+    Placeholder(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

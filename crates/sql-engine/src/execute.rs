@@ -1,4 +1,5 @@
 pub mod aggregate;
+pub mod bind;
 pub mod filter_batch;
 pub mod filter_row;
 pub mod join;
@@ -9,10 +10,24 @@ pub mod rowset;
 pub mod scan;
 pub mod sort;
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::storage::CellValue;
 use sql_parser::ast::Value;
+
+// ── Prepared statement parameters ────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub enum ParamValue {
+    Int(i64),
+    Text(String),
+    Null,
+    IntList(Vec<i64>),
+    TextList(Vec<String>),
+}
+
+pub type Params = HashMap<String, ParamValue>;
 
 pub use materialize::execute_plan;
 pub use pipeline::execute;
@@ -62,11 +77,16 @@ struct OpenSpan {
 pub struct ExecutionContext {
     stack: Vec<OpenSpan>,
     pub spans: Vec<Span>,
+    pub params: Params,
 }
 
 impl ExecutionContext {
     pub fn new() -> Self {
-        Self { stack: Vec::new(), spans: Vec::new() }
+        Self { stack: Vec::new(), spans: Vec::new(), params: HashMap::new() }
+    }
+
+    pub fn with_params(params: Params) -> Self {
+        Self { stack: Vec::new(), spans: Vec::new(), params }
     }
 
     fn close_span(&mut self, op: SpanOperation) {
@@ -149,6 +169,7 @@ impl Span {
 pub enum ExecuteError {
     TableNotFound(String),
     MaterializeError(String),
+    BindError(String),
 }
 
 impl std::fmt::Display for ExecuteError {
@@ -156,6 +177,7 @@ impl std::fmt::Display for ExecuteError {
         match self {
             ExecuteError::TableNotFound(t) => write!(f, "table not found: {t}"),
             ExecuteError::MaterializeError(msg) => write!(f, "subquery materialization error: {msg}"),
+            ExecuteError::BindError(msg) => write!(f, "bind error: {msg}"),
         }
     }
 }
@@ -171,6 +193,7 @@ pub fn value_to_cell(v: &Value) -> CellValue {
         Value::Null => CellValue::Null,
         Value::Bool(b) => CellValue::I64(if *b { 1 } else { 0 }),
         Value::Float(f) => CellValue::I64(*f as i64),
+        Value::Placeholder(name) => panic!("unresolved placeholder :{name} — must bind before execution"),
     }
 }
 

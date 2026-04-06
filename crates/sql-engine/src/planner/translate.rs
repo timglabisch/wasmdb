@@ -81,7 +81,11 @@ pub fn build_raw_plan(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let limit = select.limit.map(|n| n as usize);
+    let limit = match &select.limit {
+        None => None,
+        Some(ast::AstLimit::Value(n)) => Some(PlanLimit::Value(*n as usize)),
+        Some(ast::AstLimit::Placeholder(name)) => Some(PlanLimit::Placeholder(name.clone())),
+    };
 
     Ok(PlanSelect {
         sources,

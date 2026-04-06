@@ -92,8 +92,14 @@ pub struct PlanSelect {
     pub group_by: Vec<ColumnRef>,
     pub aggregates: Vec<PlanAggregate>,
     pub order_by: Vec<PlanOrderSpec>,
-    pub limit: Option<usize>,
+    pub limit: Option<PlanLimit>,
     pub result_columns: Vec<PlanResultColumn>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanLimit {
+    Value(usize),
+    Placeholder(String),
 }
 
 #[derive(Debug, Clone)]
@@ -313,8 +319,10 @@ impl PlanSelect {
         }
 
         // Limit
-        if let Some(limit) = self.limit {
-            out.push_str(&format!("{indent}Limit {limit}\n"));
+        match &self.limit {
+            Some(PlanLimit::Value(n)) => out.push_str(&format!("{indent}Limit {n}\n")),
+            Some(PlanLimit::Placeholder(name)) => out.push_str(&format!("{indent}Limit :{name}\n")),
+            None => {}
         }
 
         // Result columns
@@ -428,6 +436,7 @@ fn val(v: &Value) -> String {
         Value::Text(s) => format!("'{s}'"),
         Value::Bool(b) => b.to_string(),
         Value::Null => "NULL".to_string(),
+        Value::Placeholder(name) => format!(":{name}"),
     }
 }
 
