@@ -7,18 +7,7 @@ use schema_engine::schema::{IndexSchema, IndexType};
 
 use crate::planner::plan::*;
 
-// ── Predicate classification ─────────────────────────────────────────────
-
-fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
-    match pred {
-        PlanFilterPredicate::And(l, r) => {
-            let mut leaves = flatten_ands(l);
-            leaves.extend(flatten_ands(r));
-            leaves
-        }
-        other => vec![other],
-    }
-}
+// ── Predicate helpers ────────────────────────────────────────────────────
 
 enum PredClass {
     Eq,
@@ -27,7 +16,7 @@ enum PredClass {
     Other,
 }
 
-fn classify_pred(pred: &PlanFilterPredicate) -> PredClass {
+fn classify(pred: &PlanFilterPredicate) -> PredClass {
     match pred {
         PlanFilterPredicate::Equals { .. } => PredClass::Eq,
         PlanFilterPredicate::GreaterThan { .. }
@@ -51,123 +40,160 @@ fn leaf_column(pred: &PlanFilterPredicate) -> Option<usize> {
     }
 }
 
-// ── Scan method selection ────────────────────────────────────────────────
+fn flatten_ands(pred: &PlanFilterPredicate) -> Vec<&PlanFilterPredicate> {
+    match pred {
+        PlanFilterPredicate::And(l, r) => {
+            let mut out = flatten_ands(l);
+            out.extend(flatten_ands(r));
+            out
+        }
+        other => vec![other],
+    }
+}
 
-/// Returns (scan_method, new_pre_filter). When Index is chosen, the returned
-/// pre_filter contains only the residual predicates not covered by the index.
+struct IndexableLeaf<'a> {
+    leaf_idx: usize,
+    col: usize,
+    pred: &'a PlanFilterPredicate,
+}
+
+/// Extract indexable leaf predicates, deduplicated by column.
+fn indexable_leaves<'a>(leaves: &[&'a PlanFilterPredicate]) -> Vec<IndexableLeaf<'a>> {
+    let mut seen_cols = Vec::new();
+    let mut out = Vec::new();
+    for (li, &leaf) in leaves.iter().enumerate() {
+        if let Some(col) = leaf_column(leaf) {
+            if !seen_cols.contains(&col) {
+                seen_cols.push(col);
+                out.push(IndexableLeaf { leaf_idx: li, col, pred: leaf });
+            }
+        }
+    }
+    out
+}
+
+fn build_residual(leaves: &[&PlanFilterPredicate], used: &[usize]) -> PlanFilterPredicate {
+    let remaining: Vec<PlanFilterPredicate> = leaves.iter().enumerate()
+        .filter(|(li, _)| !used.contains(li))
+        .map(|(_, leaf)| (*leaf).clone())
+        .collect();
+
+    match remaining.len() {
+        0 => PlanFilterPredicate::None,
+        _ => remaining.into_iter()
+            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
+            .unwrap(),
+    }
+}
+
+// ── Index candidate scoring ──────────────────────────────────────────────
+
+/// Primary: more matched columns is better. Secondary: Hash full-key eq wins ties.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct IndexScore {
+    prefix_len: usize,
+    tie_break: u8, // 2=Hash full-key, 1=BTree full-key, 0=partial
+}
+
+struct IndexCandidate {
+    score: IndexScore,
+    used_leaves: Vec<usize>,
+    index_columns: Vec<usize>,
+    is_hash: bool,
+}
+
+fn score_index(
+    idx: &IndexSchema,
+    indexable: &[IndexableLeaf],
+) -> Option<IndexCandidate> {
+    let mut prefix_eq_count: usize = 0;
+    let mut has_range = false;
+    let mut has_in = false;
+    let mut used_leaves: Vec<usize> = Vec::new();
+
+    for &col in &idx.columns {
+        let Some(leaf) = indexable.iter().find(|l| l.col == col) else {
+            break;
+        };
+        match classify(leaf.pred) {
+            PredClass::Eq => {
+                prefix_eq_count += 1;
+                used_leaves.push(leaf.leaf_idx);
+            }
+            PredClass::Range => {
+                has_range = true;
+                used_leaves.push(leaf.leaf_idx);
+                break;
+            }
+            PredClass::In => {
+                has_in = true;
+                used_leaves.push(leaf.leaf_idx);
+                break;
+            }
+            PredClass::Other => break,
+        }
+    }
+
+    if used_leaves.is_empty() {
+        return None;
+    }
+
+    let is_full_key_eq = !has_range && !has_in && prefix_eq_count == idx.columns.len();
+    let is_hash = idx.index_type == IndexType::Hash;
+
+    // Hash indexes can only do full-key eq or full-key IN.
+    if is_hash && !is_full_key_eq && !(has_in && prefix_eq_count + 1 == idx.columns.len()) {
+        return None;
+    }
+
+    let tie_break = match (is_full_key_eq, is_hash) {
+        (true, true) => 2,  // Hash full-key eq — best
+        (true, false) => 1, // BTree full-key eq
+        _ => 0,
+    };
+
+    Some(IndexCandidate {
+        score: IndexScore { prefix_len: used_leaves.len(), tie_break },
+        used_leaves,
+        index_columns: idx.columns.clone(),
+        is_hash,
+    })
+}
+
+// ── Public API ───────────────────────────────────────────────────────────
+
+/// Choose the best scan method for a source. Returns `(scan_method, new_pre_filter)`.
+/// When an index is chosen, `new_pre_filter` contains only the residual predicates.
 pub fn choose(
     pre_filter: &PlanFilterPredicate,
     indexes: &[IndexSchema],
 ) -> (PlanScanMethod, PlanFilterPredicate) {
-    if matches!(pre_filter, PlanFilterPredicate::None) {
-        return (PlanScanMethod::Full, PlanFilterPredicate::None);
+    if matches!(pre_filter, PlanFilterPredicate::None) || indexes.is_empty() {
+        return (PlanScanMethod::Full, pre_filter.clone());
     }
 
     let leaves = flatten_ands(pre_filter);
-
-    let mut seen_cols = Vec::new();
-    let mut indexable: Vec<(usize, usize, &PlanFilterPredicate)> = Vec::new();
-    for (li, leaf) in leaves.iter().enumerate() {
-        if let Some(col) = leaf_column(leaf) {
-            if !seen_cols.contains(&col) {
-                seen_cols.push(col);
-                indexable.push((li, col, leaf));
-            }
-        }
-    }
-
+    let indexable = indexable_leaves(&leaves);
     if indexable.is_empty() {
         return (PlanScanMethod::Full, pre_filter.clone());
     }
 
-    let mut best_score: (usize, u8) = (0, 0);
-    let mut best_used: Vec<usize> = Vec::new();
-    let mut best_index_columns: Vec<usize> = Vec::new();
-    let mut best_prefix_len: usize = 0;
-    let mut best_is_hash: bool = false;
-    let mut best_can_use: bool = false;
-
-    for idx in indexes {
-        let idx_cols = &idx.columns;
-        let mut prefix_eq_count: usize = 0;
-        let mut has_range_on_last = false;
-        let mut has_in_on_last = false;
-        let mut used_leaves: Vec<usize> = Vec::new();
-
-        for &col in idx_cols {
-            if let Some(&(li, _, pred)) = indexable.iter().find(|(_, c, _)| *c == col) {
-                match classify_pred(pred) {
-                    PredClass::Eq => {
-                        prefix_eq_count += 1;
-                        used_leaves.push(li);
-                    }
-                    PredClass::Range => {
-                        has_range_on_last = true;
-                        used_leaves.push(li);
-                        break;
-                    }
-                    PredClass::In => {
-                        has_in_on_last = true;
-                        used_leaves.push(li);
-                        break;
-                    }
-                    PredClass::Other => break,
-                }
-            } else {
-                break;
-            }
-        }
-
-        let prefix_len = used_leaves.len();
-        if prefix_len == 0 { continue; }
-
-        let is_full_key_eq = !has_range_on_last && !has_in_on_last && prefix_eq_count == idx_cols.len();
-        let is_hash = idx.index_type == IndexType::Hash;
-        let tie_break = if is_full_key_eq && is_hash { 2 } else if is_full_key_eq { 1 } else { 0 };
-        let score = (prefix_len, tie_break);
-        if score <= best_score { continue; }
-
-        // Hash indexes can only do full-key eq lookups, not prefix or range.
-        let can_use = if is_hash {
-            is_full_key_eq || (has_in_on_last && prefix_eq_count + 1 == idx_cols.len())
-        } else {
-            true
-        };
-
-        if !can_use { continue; }
-
-        best_score = score;
-        best_used = used_leaves;
-        best_index_columns = idx_cols.clone();
-        best_prefix_len = prefix_len;
-        best_is_hash = is_hash;
-        best_can_use = true;
-    }
-
-    if !best_can_use {
+    let Some(best) = indexes.iter()
+        .filter_map(|idx| score_index(idx, &indexable))
+        .max_by_key(|c| c.score)
+    else {
         return (PlanScanMethod::Full, pre_filter.clone());
-    }
-
-    let index_predicates: Vec<PlanFilterPredicate> = best_used.iter()
-        .map(|&li| (*leaves[li]).clone())
-        .collect();
-
-    let remaining: Vec<&PlanFilterPredicate> = leaves.iter().enumerate()
-        .filter(|(li, _)| !best_used.contains(li))
-        .map(|(_, leaf)| *leaf)
-        .collect();
-
-    let residual = match remaining.len() {
-        0 => PlanFilterPredicate::None,
-        _ => remaining.into_iter().cloned()
-            .reduce(|a, b| PlanFilterPredicate::And(Box::new(a), Box::new(b)))
-            .unwrap(),
     };
 
+    let index_predicates: Vec<PlanFilterPredicate> = best.used_leaves.iter()
+        .map(|&li| (*leaves[li]).clone())
+        .collect();
+    let residual = build_residual(&leaves, &best.used_leaves);
+
     let method = PlanScanMethod::Index {
-        index_columns: best_index_columns,
-        prefix_len: best_prefix_len,
-        is_hash: best_is_hash,
+        index_columns: best.index_columns,
+        prefix_len: best.score.prefix_len,
+        is_hash: best.is_hash,
         index_predicates,
     };
     (method, residual)

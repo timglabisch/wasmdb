@@ -3,8 +3,8 @@
 //! Applied after AST translation, before execution.
 //! Each pass is in its own submodule. New passes are added here.
 
-pub(crate) mod access_path;
 mod or_to_in;
+pub(crate) mod physical;
 mod pushdown;
 
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ use super::plan::*;
 pub fn run(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchema>) {
     or_to_in::rewrite(plan);
     pushdown::rewrite(plan);
-    access_path::rewrite(plan, table_schemas);
+    physical::rewrite(plan, table_schemas);
 }
 
 // ── Predicate utilities (shared across passes) ───────────────────────────
