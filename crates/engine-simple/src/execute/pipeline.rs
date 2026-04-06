@@ -26,22 +26,33 @@ fn execute_inner(
     let first_table = db
         .get(&first.table)
         .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
-    let mut rs = scan::scan(ctx, first_table, &first.pre_filter);
+    let mut rs = scan::scan(ctx, first_table, first);
 
     // Phase 2: Join remaining sources.
     for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
         let table = db
             .get(&source.table)
             .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
-        let right = scan::scan(ctx, table, &source.pre_filter);
         match source.join.as_ref() {
-            Some(j) => {
-                rs = join::nested_loop_join(
-                    ctx, &rs, right.tables[0], &right.row_ids[0],
-                    source_idx, &j.on, j.join_type,
-                );
-            }
+            Some(j) => match &j.strategy {
+                PlanJoinStrategy::NestedLoop => {
+                    let right = scan::scan(ctx, table, source);
+                    rs = join::nested_loop_join(
+                        ctx, &rs, right.tables[0], &right.row_ids[0],
+                        source_idx, &j.on, j.join_type,
+                    );
+                }
+                PlanJoinStrategy::IndexLookup { left_col, right_col, index_columns, is_hash } => {
+                    rs = join::index_nested_loop_join(
+                        ctx, &rs, table, source_idx,
+                        j.join_type, *left_col, *right_col,
+                        index_columns, *is_hash,
+                        &source.pre_filter,
+                    );
+                }
+            },
             None => {
+                let right = scan::scan(ctx, table, source);
                 rs = join::nested_loop_join(
                     ctx, &rs, right.tables[0], &right.row_ids[0],
                     source_idx, &PlanFilterPredicate::None, query_engine::ast::JoinType::Inner,
@@ -165,6 +176,7 @@ mod tests {
             sources: vec![PlanSourceEntry {
                 table: "users".into(), schema: users_query_schema(),
                 join: None, pre_filter: PlanFilterPredicate::None,
+                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
             group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
@@ -189,14 +201,17 @@ mod tests {
                 PlanSourceEntry {
                     table: "users".into(), schema: users_query_schema(),
                     join: None, pre_filter: PlanFilterPredicate::None,
+                    scan_method: PlanScanMethod::Full,
                 },
                 PlanSourceEntry {
                     table: "orders".into(), schema: orders_query_schema(),
                     join: Some(PlanJoin {
                         join_type: JoinType::Inner,
                         on: PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
+                        strategy: PlanJoinStrategy::NestedLoop,
                     }),
                     pre_filter: PlanFilterPredicate::None,
+                    scan_method: PlanScanMethod::Full,
                 },
             ],
             filter: PlanFilterPredicate::None,
@@ -219,6 +234,7 @@ mod tests {
             sources: vec![PlanSourceEntry {
                 table: "users".into(), schema: users_query_schema(),
                 join: None, pre_filter: PlanFilterPredicate::None,
+                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::None,
             group_by: vec![c(0, 1)],
@@ -244,6 +260,7 @@ mod tests {
             sources: vec![PlanSourceEntry {
                 table: "nonexistent".into(), schema: Schema::new(vec![]),
                 join: None, pre_filter: PlanFilterPredicate::None,
+                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::None,
             group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,

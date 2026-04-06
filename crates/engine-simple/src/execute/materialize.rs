@@ -3,9 +3,11 @@
 
 use std::collections::HashMap;
 
+use crate::planner::optimize::access_path;
 use crate::planner::plan::*;
 use crate::storage::Table;
 use query_engine::ast::{Operator, Value};
+use schema_engine::schema::TableSchema;
 
 use super::pipeline::execute;
 use super::{cell_to_value, Columns, ExecuteError, ExecutionContext, SpanOperation};
@@ -20,11 +22,16 @@ pub fn execute_plan(
         return execute(ctx, &plan.main, db);
     }
 
+    // Extract table schemas from db for re-running access_path after materialization.
+    let table_schemas: HashMap<String, TableSchema> = db.iter()
+        .map(|(name, table)| (name.clone(), table.schema.clone()))
+        .collect();
+
     let mut materialized: Vec<Vec<Value>> = Vec::new();
 
     for (i, step) in plan.materializations.iter().enumerate() {
         let values = ctx.span(SpanOperation::Materialize { step: i }, |ctx| {
-            let resolved = resolve_materialized(&step.plan, &materialized);
+            let resolved = resolve_materialized(&step.plan, &materialized, &table_schemas);
             let result = execute(ctx, &resolved, db)?;
 
             if result.len() != 1 {
@@ -43,11 +50,15 @@ pub fn execute_plan(
         materialized.push(values);
     }
 
-    let resolved = resolve_materialized(&plan.main, &materialized);
+    let resolved = resolve_materialized(&plan.main, &materialized, &table_schemas);
     execute(ctx, &resolved, db)
 }
 
-fn resolve_materialized(plan: &PlanSelect, materialized: &[Vec<Value>]) -> PlanSelect {
+fn resolve_materialized(
+    plan: &PlanSelect,
+    materialized: &[Vec<Value>],
+    table_schemas: &HashMap<String, TableSchema>,
+) -> PlanSelect {
     let mut resolved = plan.clone();
     resolved.filter = resolve_materialized_filter(&resolved.filter, materialized);
     for source in &mut resolved.sources {
@@ -56,6 +67,8 @@ fn resolve_materialized(plan: &PlanSelect, materialized: &[Vec<Value>]) -> PlanS
             join.on = resolve_materialized_filter(&join.on, materialized);
         }
     }
+    // Re-run access_path to pick indexes for resolved predicates.
+    access_path::rewrite(&mut resolved, table_schemas);
     resolved
 }
 

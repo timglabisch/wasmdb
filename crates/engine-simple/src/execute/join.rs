@@ -1,4 +1,4 @@
-use crate::planner::plan::PlanFilterPredicate;
+use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::Table;
 use query_engine::ast::JoinType;
 
@@ -26,6 +26,63 @@ pub fn nested_loop_join<'a>(
                     for ti in 0..num_existing { new_row_ids[ti].push(left.row_ids[ti][l]); }
                     new_row_ids[num_existing].push(r);
                 }
+            }
+            if !matched && join_type == JoinType::Left {
+                for ti in 0..num_existing { new_row_ids[ti].push(left.row_ids[ti][l]); }
+                new_row_ids[num_existing].push(super::NULL_ROW);
+            }
+        }
+
+        let num_rows = new_row_ids.first().map_or(0, |v| v.len());
+        let mut tables = left.tables.clone();
+        tables.push(right_table);
+        let rs = RowSet { tables, row_ids: new_row_ids, num_rows };
+        (SpanOperation::Join { rows_out: num_rows }, rs)
+    })
+}
+
+pub fn index_nested_loop_join<'a>(
+    ctx: &mut ExecutionContext,
+    left: &RowSet<'a>,
+    right_table: &'a Table,
+    _right_source: usize,
+    join_type: JoinType,
+    left_col: ColumnRef,
+    _right_col: usize,
+    index_columns: &[usize],
+    _is_hash: bool,
+    right_pre_filter: &PlanFilterPredicate,
+) -> RowSet<'a> {
+    ctx.span_with(|ctx| {
+        let idx = right_table.indexes().iter()
+            .find(|idx| idx.columns() == index_columns)
+            .expect("planned index must exist at runtime");
+
+        let num_existing = left.tables.len();
+        let mut new_row_ids: Vec<Vec<usize>> = (0..num_existing + 1).map(|_| Vec::new()).collect();
+
+        for l in 0..left.num_rows {
+            let lookup_value = left.get(l, left_col);
+            let key = vec![lookup_value];
+            let right_rows = idx.lookup_eq(&key)
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
+
+            let mut matched = false;
+            for r in right_rows {
+                if right_table.is_deleted(r) { continue; }
+                // Apply right pre_filter if any
+                if !matches!(right_pre_filter, PlanFilterPredicate::None) {
+                    if !filter_row::filter_row(
+                        ctx, right_pre_filter,
+                        &|col_ref| right_table.get(r, col_ref.col),
+                    ) {
+                        continue;
+                    }
+                }
+                matched = true;
+                for ti in 0..num_existing { new_row_ids[ti].push(left.row_ids[ti][l]); }
+                new_row_ids[num_existing].push(r);
             }
             if !matched && join_type == JoinType::Left {
                 for ti in 0..num_existing { new_row_ids[ti].push(left.row_ids[ti][l]); }

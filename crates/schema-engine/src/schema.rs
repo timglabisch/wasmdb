@@ -57,6 +57,25 @@ impl std::fmt::Display for SchemaError {
 
 impl std::error::Error for SchemaError {}
 
+/// Return the full list of indexes including the auto-created PK Hash index.
+/// Both the planner (for index selection) and storage (for Table::new) use this
+/// to ensure they agree on the available indexes.
+pub fn effective_indexes(ts: &TableSchema) -> Vec<IndexSchema> {
+    let mut indexes = ts.indexes.clone();
+    if !ts.primary_key.is_empty() {
+        let pk = &ts.primary_key;
+        let already_covered = indexes.iter().any(|idx| idx.columns == *pk);
+        if !already_covered {
+            indexes.push(IndexSchema {
+                name: None,
+                columns: pk.clone(),
+                index_type: IndexType::Hash,
+            });
+        }
+    }
+    indexes
+}
+
 pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError> {
     // Check for duplicate column names.
     let mut seen = std::collections::HashSet::new();

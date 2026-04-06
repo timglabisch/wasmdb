@@ -22,7 +22,7 @@ pub fn build_raw_plan(
     let mut sources = Vec::new();
 
     for entry in &select.sources {
-        let table_schema = ctx.schemas
+        let table_schema = ctx.query_schemas
             .get(&entry.table)
             .ok_or_else(|| PlanError::UnknownTable(entry.table.clone()))?
             .clone();
@@ -32,6 +32,7 @@ pub fn build_raw_plan(
             schema: table_schema,
             join: None,
             pre_filter: PlanFilterPredicate::None,
+            scan_method: PlanScanMethod::Full,
         });
 
         if let Some(jc) = &entry.join {
@@ -39,6 +40,7 @@ pub fn build_raw_plan(
             sources.last_mut().unwrap().join = Some(PlanJoin {
                 join_type: jc.join_type,
                 on,
+                strategy: PlanJoinStrategy::NestedLoop,
             });
         }
     }

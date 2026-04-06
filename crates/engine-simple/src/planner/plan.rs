@@ -59,18 +59,58 @@ pub struct PlanOrderSpec {
     pub direction: OrderDirection,
 }
 
+/// How to scan a single table — decided by the planner.
+#[derive(Debug, Clone)]
+pub enum PlanScanMethod {
+    /// Full table scan, apply pre_filter as post-filter.
+    Full,
+    /// Use an index. The executor executes the lookup, then applies
+    /// `source.pre_filter` as post-filter (which access_path has narrowed
+    /// to only the residual predicates not covered by the index).
+    Index {
+        /// Index column positions (matches a TableIndex.columns()).
+        index_columns: Vec<usize>,
+        /// How many leading columns the index uses.
+        prefix_len: usize,
+        /// Hash or BTree.
+        is_hash: bool,
+        /// Which leaf predicates the index handles (in index-column order).
+        /// Executor uses these to build the lookup key.
+        index_predicates: Vec<PlanFilterPredicate>,
+    },
+}
+
+/// How to execute a join — decided by the planner.
+#[derive(Debug, Clone)]
+pub enum PlanJoinStrategy {
+    /// Full scan of right table, then nested-loop with predicate evaluation.
+    NestedLoop,
+    /// Per left row: index lookup on right table.
+    IndexLookup {
+        /// Column in the LEFT table that provides the lookup value.
+        left_col: ColumnRef,
+        /// Column in the RIGHT table that has the index.
+        right_col: usize,
+        /// Index metadata.
+        index_columns: Vec<usize>,
+        is_hash: bool,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanSourceEntry {
     pub table: String,
     pub schema: Schema,
     pub join: Option<PlanJoin>,
     pub pre_filter: PlanFilterPredicate,
+    pub scan_method: PlanScanMethod,
 }
 
 #[derive(Debug, Clone)]
 pub struct PlanJoin {
     pub join_type: JoinType,
     pub on: PlanFilterPredicate,
+    pub strategy: PlanJoinStrategy,
 }
 
 #[derive(Debug, Clone)]

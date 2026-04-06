@@ -1,12 +1,13 @@
 pub mod plan;
 mod materialize;
-mod optimize;
+pub(crate) mod optimize;
 mod translate;
 
 use std::collections::HashMap;
 
 use query_engine::ast;
-use query_engine::schema::Schema;
+use query_engine::schema::{ColumnDef, Schema};
+use schema_engine::schema::TableSchema;
 use plan::*;
 
 pub use optimize::predicate_column_refs;
@@ -14,8 +15,18 @@ pub use optimize::predicate_column_refs;
 // ── Context ───────────────────────────────────────────────────────────────
 
 struct PlanContext<'a> {
-    schemas: &'a HashMap<String, Schema>,
+    table_schemas: &'a HashMap<String, TableSchema>,
+    query_schemas: HashMap<String, Schema>,
     materializations: Vec<MaterializeStep>,
+}
+
+fn derive_query_schema(table_name: &str, ts: &TableSchema) -> Schema {
+    Schema::new(
+        ts.columns.iter().map(|c| ColumnDef {
+            table: Some(table_name.into()),
+            name: c.name.clone(),
+        }).collect()
+    )
 }
 
 impl<'a> PlanContext<'a> {
@@ -56,10 +67,14 @@ impl std::error::Error for PlanError {}
 /// Translate an AstSelect into an ExecutionPlan with materialization steps for subqueries.
 pub fn plan(
     ast: &ast::AstSelect,
-    table_schemas: &HashMap<String, Schema>,
+    table_schemas: &HashMap<String, TableSchema>,
 ) -> Result<ExecutionPlan, PlanError> {
+    let query_schemas: HashMap<String, Schema> = table_schemas.iter()
+        .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
+        .collect();
     let mut ctx = PlanContext {
-        schemas: table_schemas,
+        table_schemas,
+        query_schemas,
         materializations: Vec::new(),
     };
     let main = plan_select_ctx(ast, &mut ctx)?;
@@ -73,7 +88,7 @@ pub fn plan(
 /// Errors if the AST contains subqueries — use `plan()` instead.
 pub fn plan_select(
     select: &ast::AstSelect,
-    table_schemas: &HashMap<String, Schema>,
+    table_schemas: &HashMap<String, TableSchema>,
 ) -> Result<PlanSelect, PlanError> {
     let ep = plan(select, table_schemas)?;
     if !ep.materializations.is_empty() {
@@ -92,7 +107,7 @@ fn plan_select_ctx(
     ctx: &mut PlanContext,
 ) -> Result<PlanSelect, PlanError> {
     let mut plan = translate::build_raw_plan(select, ctx)?;
-    optimize::run(&mut plan);
+    optimize::run(&mut plan, ctx.table_schemas);
     Ok(plan)
 }
 
@@ -102,28 +117,38 @@ fn plan_select_ctx(
 mod tests {
     use super::*;
     use query_engine::ast::*;
-    use query_engine::schema::ColumnDef;
+    use schema_engine::schema::{ColumnSchema, DataType};
 
-    fn users_schema() -> Schema {
-        Schema::new(vec![
-            ColumnDef { table: Some("users".into()), name: "id".into() },
-            ColumnDef { table: Some("users".into()), name: "name".into() },
-            ColumnDef { table: Some("users".into()), name: "age".into() },
-        ])
+    fn users_table_schema() -> TableSchema {
+        TableSchema {
+            name: "users".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+                ColumnSchema { name: "age".into(), data_type: DataType::I64, nullable: true },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        }
     }
 
-    fn orders_schema() -> Schema {
-        Schema::new(vec![
-            ColumnDef { table: Some("orders".into()), name: "id".into() },
-            ColumnDef { table: Some("orders".into()), name: "user_id".into() },
-            ColumnDef { table: Some("orders".into()), name: "amount".into() },
-        ])
+    fn orders_table_schema() -> TableSchema {
+        TableSchema {
+            name: "orders".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "amount".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        }
     }
 
-    fn table_schemas() -> HashMap<String, Schema> {
+    fn table_schemas() -> HashMap<String, TableSchema> {
         let mut m = HashMap::new();
-        m.insert("users".into(), users_schema());
-        m.insert("orders".into(), orders_schema());
+        m.insert("users".into(), users_table_schema());
+        m.insert("orders".into(), orders_table_schema());
         m
     }
 
@@ -206,10 +231,15 @@ mod tests {
         let mut schemas = table_schemas();
         schemas.insert(
             "products".into(),
-            Schema::new(vec![
-                ColumnDef { table: Some("products".into()), name: "id".into() },
-                ColumnDef { table: Some("products".into()), name: "name".into() },
-            ]),
+            TableSchema {
+                name: "products".into(),
+                columns: vec![
+                    ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                    ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+                ],
+                primary_key: vec![0],
+                indexes: vec![],
+            },
         );
 
         let select = AstSelect {

@@ -4,13 +4,12 @@ use engine_simple::execute::{self, Columns};
 use engine_simple::planner;
 use engine_simple::storage::{CellValue, Table};
 use query_engine::parser;
-use query_engine::schema::{ColumnDef, Schema};
 use schema_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn schema_for(name: &str, cols: &[(&str, DataType, bool)]) -> (TableSchema, Schema) {
-    let table_schema = TableSchema {
+fn make_table_schema(name: &str, cols: &[(&str, DataType, bool)]) -> TableSchema {
+    TableSchema {
         name: name.into(),
         columns: cols
             .iter()
@@ -22,35 +21,26 @@ fn schema_for(name: &str, cols: &[(&str, DataType, bool)]) -> (TableSchema, Sche
             .collect(),
         primary_key: vec![0],
         indexes: vec![],
-    };
-    let query_schema = Schema::new(
-        cols.iter()
-            .map(|(n, _, _)| ColumnDef {
-                table: Some(name.into()),
-                name: (*n).into(),
-            })
-            .collect(),
-    );
-    (table_schema, query_schema)
+    }
 }
 
 struct TestDb {
     tables: HashMap<String, Table>,
-    schemas: HashMap<String, Schema>,
+    table_schemas: HashMap<String, TableSchema>,
 }
 
 impl TestDb {
     fn new() -> Self {
         Self {
             tables: HashMap::new(),
-            schemas: HashMap::new(),
+            table_schemas: HashMap::new(),
         }
     }
 
     fn add_table(&mut self, name: &str, cols: &[(&str, DataType, bool)]) -> &mut Table {
-        let (ts, qs) = schema_for(name, cols);
+        let ts = make_table_schema(name, cols);
+        self.table_schemas.insert(name.into(), ts.clone());
         self.tables.insert(name.into(), Table::new(ts));
-        self.schemas.insert(name.into(), qs);
         self.tables.get_mut(name).unwrap()
     }
 
@@ -60,16 +50,16 @@ impl TestDb {
         cols: &[(&str, DataType, bool)],
         indexes: Vec<IndexSchema>,
     ) -> &mut Table {
-        let (mut ts, qs) = schema_for(name, cols);
+        let mut ts = make_table_schema(name, cols);
         ts.indexes = indexes;
+        self.table_schemas.insert(name.into(), ts.clone());
         self.tables.insert(name.into(), Table::new(ts));
-        self.schemas.insert(name.into(), qs);
         self.tables.get_mut(name).unwrap()
     }
 
     fn run(&self, sql: &str) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.schemas).expect("plan failed");
+        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::new();
         execute::execute_plan(&mut ctx, &plan, &self.tables).expect("execute failed")
     }

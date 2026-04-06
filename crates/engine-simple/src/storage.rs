@@ -289,19 +289,10 @@ impl Table {
             .iter()
             .map(|col| TypedColumn::new(col.data_type, col.nullable))
             .collect();
-        let mut indexes: Vec<TableIndex> = schema
-            .indexes
+        let indexes: Vec<TableIndex> = schema_engine::schema::effective_indexes(&schema)
             .iter()
             .map(|idx| TableIndex::new(idx.columns.clone(), idx.index_type))
             .collect();
-        // Auto-create a Hash index on the primary key (O(1) lookups).
-        if !schema.primary_key.is_empty() {
-            let pk = &schema.primary_key;
-            let already_covered = indexes.iter().any(|idx| idx.columns() == pk.as_slice());
-            if !already_covered {
-                indexes.push(TableIndex::new(pk.clone(), IndexType::Hash));
-            }
-        }
         Table {
             schema,
             columns,
