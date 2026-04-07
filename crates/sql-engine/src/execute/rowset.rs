@@ -55,12 +55,12 @@ impl<'a> RowSet<'a> {
 
     pub fn filter(&self, ctx: &mut ExecutionContext, pred: &PlanFilterPredicate) -> RowSet<'a> {
         let rows_in = self.num_rows;
-        ctx.span_with(|ctx| {
+        ctx.span_with(|_ctx| {
             let mut new_row_ids: Vec<Vec<usize>> =
                 (0..self.tables.len()).map(|_| Vec::new()).collect();
             let mut count = 0;
             for row in 0..self.num_rows {
-                if super::filter_row::filter_rowset_row(ctx, pred, self, row) {
+                if super::filter_row::eval_predicate(pred, &|col| self.get(row, col)) {
                     for (ti, ids) in self.row_ids.iter().enumerate() {
                         new_row_ids[ti].push(ids[row]);
                     }

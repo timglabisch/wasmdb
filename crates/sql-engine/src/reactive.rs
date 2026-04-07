@@ -147,19 +147,13 @@ impl SubscriptionRegistry {
                     if cond.table != table {
                         return false;
                     }
-                    eval_condition(&cond.verify_filter, row)
+                    eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
+                        row.get(col.col).cloned().unwrap_or(CellValue::Null)
+                    })
                 })
             })
             .collect()
     }
-}
-
-/// Evaluate a PlanFilterPredicate against a single row.
-/// ColumnRef.source is always 0 (single-table condition).
-fn eval_condition(pred: &PlanFilterPredicate, row: &[CellValue]) -> bool {
-    eval_predicate(pred, &|col: ColumnRef| {
-        row.get(col.col).cloned().unwrap_or(CellValue::Null)
-    })
 }
 
 #[cfg(test)]

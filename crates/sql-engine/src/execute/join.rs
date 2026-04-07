@@ -2,7 +2,7 @@ use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::Table;
 use sql_parser::ast::JoinType;
 
-use super::filter_row;
+use super::filter_row::eval_predicate;
 use super::{ExecutionContext, RowSet, SpanOperation};
 
 pub fn nested_loop_join<'a>(
@@ -14,14 +14,20 @@ pub fn nested_loop_join<'a>(
     on: &PlanFilterPredicate,
     join_type: JoinType,
 ) -> RowSet<'a> {
-    ctx.span_with(|ctx| {
+    ctx.span_with(|_ctx| {
         let num_existing = left.tables.len();
         let mut new_row_ids: Vec<Vec<usize>> = (0..num_existing + 1).map(|_| Vec::new()).collect();
 
         for l in 0..left.num_rows {
             let mut matched = false;
             for &r in right_row_ids {
-                if filter_row::filter_join_row(ctx, on, left, right_table, right_source, l, r) {
+                if eval_predicate(on, &|col| {
+                    if col.source < right_source {
+                        left.get(l, col)
+                    } else {
+                        right_table.get(r, col.col)
+                    }
+                }) {
                     matched = true;
                     for ti in 0..num_existing { new_row_ids[ti].push(left.row_ids[ti][l]); }
                     new_row_ids[num_existing].push(r);
@@ -50,7 +56,7 @@ pub fn index_nested_loop_join<'a>(
     index_columns: &[usize],
     right_pre_filter: &PlanFilterPredicate,
 ) -> RowSet<'a> {
-    ctx.span_with(|ctx| {
+    ctx.span_with(|_ctx| {
         let idx = right_table.indexes().iter()
             .find(|idx| idx.columns() == index_columns)
             .expect("planned index must exist at runtime");
@@ -70,8 +76,8 @@ pub fn index_nested_loop_join<'a>(
                 if right_table.is_deleted(r) { continue; }
                 // Apply right pre_filter if any
                 if !matches!(right_pre_filter, PlanFilterPredicate::None) {
-                    if !filter_row::filter_row(
-                        ctx, right_pre_filter,
+                    if !eval_predicate(
+                        right_pre_filter,
                         &|col_ref| right_table.get(r, col_ref.col),
                     ) {
                         continue;

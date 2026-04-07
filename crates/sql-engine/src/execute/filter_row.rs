@@ -7,10 +7,9 @@
 //! that operates directly on typed column arrays, see [`super::filter_batch`].
 
 use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
-use crate::storage::{CellValue, Table};
+use crate::storage::CellValue;
 
 use super::value_to_cell;
-use super::ExecutionContext;
 
 #[derive(Debug, Clone, Copy)]
 pub enum CmpOp {
@@ -72,34 +71,3 @@ pub fn eval_predicate<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate,
     }
 }
 
-/// Evaluate a predicate for a single row.
-///
-/// `get` resolves a [`ColumnRef`] to the cell value for the current row.
-/// Returns `true` if the row matches.
-pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(_ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, get: &F) -> bool {
-    eval_predicate(pred, get)
-}
-
-/// Evaluate predicate on a single RowSet row.
-pub fn filter_rowset_row(ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, rs: &super::RowSet, row: usize) -> bool {
-    filter_row(ctx, pred, &|col| rs.get(row, col))
-}
-
-/// Evaluate join predicate: left columns from RowSet, right columns from Table.
-pub fn filter_join_row(
-    ctx: &mut ExecutionContext,
-    pred: &PlanFilterPredicate,
-    left: &super::RowSet,
-    right_table: &Table,
-    right_source: usize,
-    l: usize,
-    r: usize,
-) -> bool {
-    filter_row(ctx, pred, &|col| {
-        if col.source < right_source {
-            left.get(l, col)
-        } else {
-            right_table.get(r, col.col)
-        }
-    })
-}
