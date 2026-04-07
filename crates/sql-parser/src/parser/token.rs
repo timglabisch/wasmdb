@@ -101,6 +101,8 @@ pub enum TokenKind {
     In,
     // LIMIT
     Limit,
+    // Reactive
+    InvalidateOn,
     // Literals
     Integer(i64),
     Float(f64),
@@ -155,6 +157,7 @@ impl TokenKind {
             Self::Desc => "DESC",
             Self::In => "IN",
             Self::Limit => "LIMIT",
+            Self::InvalidateOn => "INVALIDATE_ON",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",
             Self::Str(_) => "string",

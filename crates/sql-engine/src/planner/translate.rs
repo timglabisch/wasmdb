@@ -113,7 +113,7 @@ fn plan_filter(
     Ok(PlanFilterPredicate::combine_and(predicates))
 }
 
-fn plan_expr_to_predicate(
+pub fn plan_expr_to_predicate(
     expr: &ast::AstExpr,
     sources: &[PlanSourceEntry],
     ctx: &mut PlanContext,
@@ -270,6 +270,12 @@ fn plan_result_column(
             Ok(PlanResultColumn::Aggregate {
                 func: *func,
                 col,
+                alias: rc.alias.clone(),
+            })
+        }
+        ast::AstExpr::InvalidateOn(_) => {
+            Ok(PlanResultColumn::InvalidateOn {
+                condition_idx: 0,
                 alias: rc.alias.clone(),
             })
         }

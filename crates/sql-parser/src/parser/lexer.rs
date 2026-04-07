@@ -173,6 +173,7 @@ impl<'a> Lexer<'a> {
             "DESC" => TokenKind::Desc,
             "IN" => TokenKind::In,
             "LIMIT" => TokenKind::Limit,
+            "INVALIDATE_ON" => TokenKind::InvalidateOn,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(self.token(kind, start))
@@ -338,6 +339,15 @@ mod tests {
     fn test_lex_placeholder() {
         let tokens = lex_all(":foo_bar").unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Placeholder("foo_bar".into()));
+    }
+
+    #[test]
+    fn test_lex_invalidate_on() {
+        let tokens = lex_all("INVALIDATE_ON").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::InvalidateOn);
+
+        let tokens = lex_all("invalidate_on").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::InvalidateOn);
     }
 
     #[test]

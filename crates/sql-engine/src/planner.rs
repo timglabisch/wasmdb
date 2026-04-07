@@ -1,4 +1,6 @@
 pub mod plan;
+pub mod reactive;
+mod invalidation;
 mod materialize;
 pub(crate) mod optimize;
 mod translate;
@@ -13,10 +15,10 @@ use plan::*;
 
 // ── Context ───────────────────────────────────────────────────────────────
 
-struct PlanContext<'a> {
-    table_schemas: &'a HashMap<String, TableSchema>,
-    query_schemas: HashMap<String, Schema>,
-    materializations: Vec<MaterializeStep>,
+pub struct PlanContext<'a> {
+    pub table_schemas: &'a HashMap<String, TableSchema>,
+    pub query_schemas: HashMap<String, Schema>,
+    pub materializations: Vec<MaterializeStep>,
 }
 
 fn derive_query_schema(table_name: &str, ts: &TableSchema) -> Schema {
@@ -77,9 +79,11 @@ pub fn plan(
         materializations: Vec::new(),
     };
     let main = plan_select_ctx(ast, &mut ctx)?;
+    let reactive = invalidation::extract_reactive_metadata(ast, &main)?;
     Ok(ExecutionPlan {
         materializations: ctx.materializations,
         main,
+        reactive,
     })
 }
 

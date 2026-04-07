@@ -1,4 +1,5 @@
 use crate::planner::plan::{ColumnRef, PlanResultColumn};
+use crate::storage::CellValue;
 
 use super::{Columns, ExecutionContext, SpanOperation};
 
@@ -16,6 +17,9 @@ pub fn project_rowset(
                 }
                 PlanResultColumn::Aggregate { .. } => {
                     unreachable!("aggregate result column without aggregates in plan");
+                }
+                PlanResultColumn::InvalidateOn { .. } => {
+                    result.push(vec![CellValue::I64(0); rs.num_rows]);
                 }
             }
         }
@@ -46,6 +50,10 @@ pub fn project(
                     let pos = group_by.len() + agg_counter;
                     result.push(cols[pos].clone());
                     agg_counter += 1;
+                }
+                PlanResultColumn::InvalidateOn { .. } => {
+                    let num_rows = cols.first().map_or(0, |c| c.len());
+                    result.push(vec![CellValue::I64(0); num_rows]);
                 }
             }
         }

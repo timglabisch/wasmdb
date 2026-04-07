@@ -322,6 +322,14 @@ impl<'a> Parser<'a> {
                 Ok(token_to_literal(tok))
             }
 
+            TokenKind::InvalidateOn => {
+                self.eat()?;
+                self.expect(TokenKind::LParen)?;
+                let expr = self.parse_expr(0)?;
+                self.expect(TokenKind::RParen)?;
+                Ok(AstExpr::InvalidateOn(Box::new(expr)))
+            }
+
             TokenKind::Count | TokenKind::Sum | TokenKind::Min | TokenKind::Max => {
                 let func_tok = self.eat()?;
                 let func = match func_tok.kind {
@@ -724,6 +732,37 @@ mod tests {
     fn test_parse_limit_integer_still_works() {
         let ast = parse("SELECT u.x FROM u LIMIT 10").unwrap();
         assert!(matches!(ast.limit, Some(AstLimit::Value(10))));
+    }
+
+    // ── INVALIDATE_ON tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_invalidate_on_simple() {
+        let ast = parse("SELECT INVALIDATE_ON(users.id = :uid) AS inv, users.name FROM users").unwrap();
+        assert_eq!(ast.result_columns.len(), 2);
+        assert!(matches!(&ast.result_columns[0].expr, AstExpr::InvalidateOn(_)));
+        assert_eq!(ast.result_columns[0].alias, Some("inv".to_string()));
+        if let AstExpr::InvalidateOn(inner) = &ast.result_columns[0].expr {
+            assert!(matches!(inner.as_ref(), AstExpr::Binary { op: Operator::Eq, .. }));
+        }
+    }
+
+    #[test]
+    fn test_parse_invalidate_on_compound() {
+        let ast = parse(
+            "SELECT INVALIDATE_ON(users.id = :uid AND users.age > 18) FROM users"
+        ).unwrap();
+        if let AstExpr::InvalidateOn(inner) = &ast.result_columns[0].expr {
+            assert!(matches!(inner.as_ref(), AstExpr::Binary { op: Operator::And, .. }));
+        } else {
+            panic!("expected InvalidateOn");
+        }
+    }
+
+    #[test]
+    fn test_parse_invalidate_on_case_insensitive() {
+        let ast = parse("SELECT invalidate_on(users.id = :uid) FROM users").unwrap();
+        assert!(matches!(&ast.result_columns[0].expr, AstExpr::InvalidateOn(_)));
     }
 
     #[test]

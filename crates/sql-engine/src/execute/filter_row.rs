@@ -37,11 +37,11 @@ pub fn cmp_cell(left: &CellValue, right: &CellValue, op: CmpOp) -> bool {
     }
 }
 
-/// Evaluate a predicate for a single row.
+/// Pure predicate evaluation — no ExecutionContext needed.
 ///
 /// `get` resolves a [`ColumnRef`] to the cell value for the current row.
 /// Returns `true` if the row matches.
-pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(_ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, get: &F) -> bool {
+pub fn eval_predicate<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate, get: &F) -> bool {
     match pred {
         PlanFilterPredicate::None => true,
         PlanFilterPredicate::Equals { col, value } => cmp_cell(&get(*col), &value_to_cell(value), CmpOp::Eq),
@@ -67,9 +67,17 @@ pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(_ctx: &mut ExecutionContext, pr
         | PlanFilterPredicate::CompareMaterialized { .. } => {
             unreachable!("must be resolved before execution")
         }
-        PlanFilterPredicate::And(a, b) => filter_row(_ctx, a, get) && filter_row(_ctx, b, get),
-        PlanFilterPredicate::Or(a, b) => filter_row(_ctx, a, get) || filter_row(_ctx, b, get),
+        PlanFilterPredicate::And(a, b) => eval_predicate(a, get) && eval_predicate(b, get),
+        PlanFilterPredicate::Or(a, b) => eval_predicate(a, get) || eval_predicate(b, get),
     }
+}
+
+/// Evaluate a predicate for a single row.
+///
+/// `get` resolves a [`ColumnRef`] to the cell value for the current row.
+/// Returns `true` if the row matches.
+pub fn filter_row<F: Fn(ColumnRef) -> CellValue>(_ctx: &mut ExecutionContext, pred: &PlanFilterPredicate, get: &F) -> bool {
+    eval_predicate(pred, get)
 }
 
 /// Evaluate predicate on a single RowSet row.

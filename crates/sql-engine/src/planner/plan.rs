@@ -183,6 +183,8 @@ pub struct PlanAggregate {
     pub col: ColumnRef,
 }
 
+pub use super::reactive::*;
+
 /// Top-level execution plan: materialization steps + main query.
 #[derive(Debug, Clone)]
 pub struct ExecutionPlan {
@@ -190,6 +192,8 @@ pub struct ExecutionPlan {
     pub materializations: Vec<MaterializeStep>,
     /// Main query — may contain InMaterialized/CompareMaterialized predicates.
     pub main: PlanSelect,
+    /// Present when the query contains INVALIDATE_ON expressions.
+    pub reactive: Option<ReactiveMetadata>,
 }
 
 // ── Pretty printer ───────────────────────────────────────────────────────
@@ -207,6 +211,25 @@ impl ExecutionPlan {
         }
         out.push_str("Select\n");
         self.main.pretty_print_to(&mut out, 1);
+        if let Some(ref reactive) = self.reactive {
+            let strat = match reactive.strategy {
+                InvalidationStrategy::ReExecute => "ReExecute",
+                InvalidationStrategy::Invalidate => "Invalidate",
+            };
+            out.push_str(&format!("Reactive strategy={strat}\n"));
+            for (i, cond) in reactive.conditions.iter().enumerate() {
+                out.push_str(&format!("  invalidation[{i}] table={}\n", cond.table));
+                for key in &cond.index_keys {
+                    out.push_str(&format!("    key: {}.col{} = {}\n", key.table, key.col, val(&key.value)));
+                }
+                if !matches!(cond.verify_filter, PlanFilterPredicate::None) {
+                    out.push_str("    verify: ");
+                    // Use source list from main plan for column name resolution
+                    cond.verify_filter.pretty_print_to(&mut out, &self.main.sources);
+                    out.push('\n');
+                }
+            }
+        }
         out
     }
 }
@@ -337,6 +360,10 @@ impl PlanSelect {
                 PlanResultColumn::Aggregate { func, col, alias } => {
                     let f = agg_name(*func);
                     out.push_str(&format!("{f}({})", col_name(col, &self.sources)));
+                    if let Some(a) = alias { out.push_str(&format!(" AS {a}")); }
+                }
+                PlanResultColumn::InvalidateOn { condition_idx, alias } => {
+                    out.push_str(&format!("INVALIDATE_ON[{condition_idx}]"));
                     if let Some(a) = alias { out.push_str(&format!(" AS {a}")); }
                 }
             }
@@ -472,6 +499,10 @@ pub enum PlanResultColumn {
     Aggregate {
         func: AggFunc,
         col: ColumnRef,
+        alias: Option<String>,
+    },
+    InvalidateOn {
+        condition_idx: usize,
         alias: Option<String>,
     },
 }

@@ -18,6 +18,14 @@ pub fn resolve_plan_params(
     for step in &mut resolved.materializations {
         step.plan = resolve_params(&step.plan, params)?;
     }
+    if let Some(ref mut reactive) = resolved.reactive {
+        for cond in &mut reactive.conditions {
+            for key in &mut cond.index_keys {
+                key.value = resolve_value(&key.value, params)?;
+            }
+            cond.verify_filter = resolve_filter(&cond.verify_filter, params)?;
+        }
+    }
     Ok(resolved)
 }
 
