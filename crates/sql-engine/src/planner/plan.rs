@@ -220,7 +220,7 @@ impl ExecutionPlan {
             for (i, cond) in reactive.conditions.iter().enumerate() {
                 out.push_str(&format!("  invalidation[{i}] table={}\n", cond.table));
                 for key in &cond.index_keys {
-                    out.push_str(&format!("    key: {}.col{} = {}\n", key.table, key.col, val(&key.value)));
+                    out.push_str(&format!("    key: {}.col{} = {}\n", cond.table, key.col, val(&key.value)));
                 }
                 if !matches!(cond.verify_filter, PlanFilterPredicate::None) {
                     out.push_str("    verify: ");

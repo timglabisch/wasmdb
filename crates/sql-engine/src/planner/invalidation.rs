@@ -57,7 +57,7 @@ fn decompose_condition(
     };
 
     let predicate = translate::plan_expr_to_predicate(expr, sources, &mut ctx)?;
-    let (index_keys, verify_filter) = split_index_keys(&predicate, sources);
+    let (index_keys, verify_filter) = split_index_keys(&predicate);
 
     if index_keys.is_empty() {
         return Err(PlanError::UnsupportedExpr(
@@ -78,11 +78,10 @@ fn decompose_condition(
     let table = sources[source_idx].table.clone();
 
     Ok(InvalidationCondition {
-        table: table.clone(),
+        table,
         index_keys: index_keys
             .into_iter()
             .map(|k| InvalidationKey {
-                table: table.clone(),
                 col: k.col_ref.col,
                 value: k.value,
             })
@@ -101,7 +100,6 @@ struct ExtractedKey {
 /// Split an AND chain into index keys (equality predicates) and remaining verify filter.
 fn split_index_keys(
     pred: &PlanFilterPredicate,
-    _sources: &[PlanSourceEntry],
 ) -> (Vec<ExtractedKey>, PlanFilterPredicate) {
     let mut keys = Vec::new();
     let mut rest = Vec::new();

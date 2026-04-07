@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::execute::filter_row::eval_predicate;
-use crate::execute::{value_to_cell, Columns, Params};
+use crate::execute::value_to_cell;
 use crate::planner::plan::*;
 use crate::storage::CellValue;
 
@@ -25,17 +25,7 @@ struct ReverseKey {
 
 /// A registered subscription.
 struct Subscription {
-    #[allow(dead_code)]
-    id: SubId,
     conditions: Vec<InvalidationCondition>,
-    #[allow(dead_code)]
-    strategy: InvalidationStrategy,
-    #[allow(dead_code)]
-    plan: ExecutionPlan,
-    #[allow(dead_code)]
-    params: Params,
-    #[allow(dead_code)]
-    cached_result: Option<Columns>,
     /// For deregistration: which keys belong to this subscription.
     reverse_keys: Vec<ReverseKey>,
 }
@@ -60,8 +50,6 @@ impl SubscriptionRegistry {
     pub fn subscribe(
         &mut self,
         plan: &ExecutionPlan,
-        params: &Params,
-        initial_result: Columns,
     ) -> SubId {
         let id = SubId(self.next_id);
         self.next_id += 1;
@@ -75,7 +63,7 @@ impl SubscriptionRegistry {
             for key in &cond.index_keys {
                 let cell = value_to_cell(&key.value);
                 let rk = ReverseKey {
-                    table: key.table.clone(),
+                    table: cond.table.clone(),
                     col: key.col,
                     value: cell,
                 };
@@ -90,12 +78,7 @@ impl SubscriptionRegistry {
         self.subscriptions.insert(
             id,
             Subscription {
-                id,
                 conditions: reactive.conditions.clone(),
-                strategy: reactive.strategy,
-                plan: plan.clone(),
-                params: params.clone(),
-                cached_result: Some(initial_result),
                 reverse_keys,
             },
         );
@@ -206,11 +189,7 @@ mod tests {
     fn simple_condition(table: &str, col: usize, value: Value) -> InvalidationCondition {
         InvalidationCondition {
             table: table.into(),
-            index_keys: vec![InvalidationKey {
-                table: table.into(),
-                col,
-                value,
-            }],
+            index_keys: vec![InvalidationKey { col, value }],
             verify_filter: PlanFilterPredicate::None,
             source_idx: 0,
         }
@@ -223,7 +202,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        let sub_id = reg.subscribe(&plan, &HashMap::new(), vec![]);
+        let sub_id = reg.subscribe(&plan);
 
         let affected = reg.on_insert("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
         assert_eq!(affected, vec![sub_id]);
@@ -236,7 +215,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        reg.subscribe(&plan, &HashMap::new(), vec![]);
+        reg.subscribe(&plan);
 
         let affected = reg.on_insert("users", &[CellValue::I64(99), CellValue::Str("Bob".into())]);
         assert!(affected.is_empty());
@@ -249,7 +228,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        let sub_id = reg.subscribe(&plan, &HashMap::new(), vec![]);
+        let sub_id = reg.subscribe(&plan);
         reg.unsubscribe(sub_id);
 
         let affected = reg.on_insert("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
@@ -263,7 +242,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        let sub_id = reg.subscribe(&plan, &HashMap::new(), vec![]);
+        let sub_id = reg.subscribe(&plan);
 
         let affected = reg.on_delete("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
         assert_eq!(affected, vec![sub_id]);
@@ -276,7 +255,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        let sub_id = reg.subscribe(&plan, &HashMap::new(), vec![]);
+        let sub_id = reg.subscribe(&plan);
 
         let affected = reg.on_update(
             "users",
@@ -293,7 +272,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        reg.subscribe(&plan, &HashMap::new(), vec![]);
+        reg.subscribe(&plan);
 
         let affected = reg.on_update(
             "users",
@@ -310,7 +289,6 @@ mod tests {
             vec![InvalidationCondition {
                 table: "orders".into(),
                 index_keys: vec![InvalidationKey {
-                    table: "orders".into(),
                     col: 1, // user_id
                     value: Value::Int(42),
                 }],
@@ -322,7 +300,7 @@ mod tests {
             }],
             InvalidationStrategy::ReExecute,
         );
-        let sub_id = reg.subscribe(&plan, &HashMap::new(), vec![]);
+        let sub_id = reg.subscribe(&plan);
 
         // amount=50 → verify fails
         let affected = reg.on_insert("orders", &[CellValue::I64(1), CellValue::I64(42), CellValue::I64(50)]);
@@ -344,8 +322,8 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(2))],
             InvalidationStrategy::ReExecute,
         );
-        let sub1 = reg.subscribe(&plan1, &HashMap::new(), vec![]);
-        let sub2 = reg.subscribe(&plan2, &HashMap::new(), vec![]);
+        let sub1 = reg.subscribe(&plan1);
+        let sub2 = reg.subscribe(&plan2);
 
         let affected = reg.on_insert("users", &[CellValue::I64(1), CellValue::Str("A".into())]);
         assert_eq!(affected, vec![sub1]);
@@ -364,7 +342,7 @@ mod tests {
             vec![simple_condition("users", 0, Value::Int(42))],
             InvalidationStrategy::ReExecute,
         );
-        reg.subscribe(&plan, &HashMap::new(), vec![]);
+        reg.subscribe(&plan);
 
         let affected = reg.on_insert("orders", &[CellValue::I64(42), CellValue::I64(1)]);
         assert!(affected.is_empty());

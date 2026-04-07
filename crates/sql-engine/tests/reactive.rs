@@ -96,18 +96,9 @@ fn reactive_pk_watch() {
     assert_eq!(reactive.conditions[0].table, "users");
 
     // Execute and subscribe
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params.clone());
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute failed");
-
     let mut registry = SubscriptionRegistry::new();
-    // Resolve params before subscribing
-    let resolved = execute::resolve_params(
-        &plan.main,
-        &params,
-    ).unwrap();
-    let _ = resolved; // We need the full plan resolved
     let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan, &params, result);
+    let sub_id = registry.subscribe(&resolved_plan);
 
     // INSERT matching row → affected
     let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("NewAlice".into()), CellValue::I64(31)]);
@@ -127,12 +118,9 @@ fn reactive_with_verify_filter() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
 
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params.clone());
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute failed");
-
     let mut registry = SubscriptionRegistry::new();
     let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan, &params, result);
+    let sub_id = registry.subscribe(&resolved_plan);
 
     // amount=50 → verify filter fails
     let affected = registry.on_insert("orders", &[CellValue::I64(10), CellValue::I64(1), CellValue::I64(50)]);
@@ -156,12 +144,9 @@ fn reactive_unsubscribe() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
 
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params.clone());
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute failed");
-
     let mut registry = SubscriptionRegistry::new();
     let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan, &params, result);
+    let sub_id = registry.subscribe(&resolved_plan);
     registry.unsubscribe(sub_id);
 
     let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -177,12 +162,9 @@ fn reactive_delete_triggers() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
 
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params.clone());
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute failed");
-
     let mut registry = SubscriptionRegistry::new();
     let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan, &params, result);
+    let sub_id = registry.subscribe(&resolved_plan);
 
     let affected = registry.on_delete("users", &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
     assert_eq!(affected, vec![sub_id]);
@@ -198,12 +180,9 @@ fn reactive_update_leaving_filter() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
 
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params.clone());
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute failed");
-
     let mut registry = SubscriptionRegistry::new();
     let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan, &params, result);
+    let sub_id = registry.subscribe(&resolved_plan);
 
     // UPDATE: name changes from 'Alice' to 'Bobby'
     // Old row matches (name='Alice'), new row doesn't → still affected

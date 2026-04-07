@@ -4,7 +4,6 @@ use super::plan::PlanFilterPredicate;
 /// An equality predicate that becomes a reverse-index key.
 #[derive(Debug, Clone)]
 pub struct InvalidationKey {
-    pub table: String,
     pub col: usize,
     pub value: Value,
 }
