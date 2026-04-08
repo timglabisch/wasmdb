@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use ddl_parser::schema::TableSchema;
-use sql_engine::execute::{self, Columns, ExecuteError, ExecutionContext, Params};
-use sql_engine::planner;
+use sql_engine::execute::{Columns, ExecuteError, Params};
 use sql_engine::storage::{CellValue, Table};
+use sql_parser::ast::Statement;
 
 use crate::error::DbError;
 
@@ -52,23 +52,21 @@ impl Database {
         t.insert(row).map_err(|e| DbError::Execute(ExecuteError::TableNotFound(format!("{e}"))))
     }
 
-    pub fn execute(&self, sql: &str) -> Result<Columns, DbError> {
+    pub fn execute(&mut self, sql: &str) -> Result<Columns, DbError> {
         self.execute_with_params(sql, HashMap::new())
     }
 
-    pub fn execute_with_params(&self, sql: &str, params: Params) -> Result<Columns, DbError> {
-        let ast = sql_parser::parser::parse(sql)
+    pub fn execute_with_params(&mut self, sql: &str, params: Params) -> Result<Columns, DbError> {
+        let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
-        let table_schemas = self.table_schemas();
-        let plan = planner::plan(&ast, &table_schemas)?;
-        let mut ctx = ExecutionContext::with_params(&self.tables, params);
-        let result = execute::execute_plan(&mut ctx, &plan)?;
-        Ok(result)
-    }
-
-    fn table_schemas(&self) -> HashMap<String, TableSchema> {
-        self.tables.iter()
-            .map(|(name, table)| (name.clone(), table.schema.clone()))
-            .collect()
+        match stmt {
+            Statement::Select(select) => {
+                crate::select::execute_select(&self.tables, &select, params)
+            }
+            Statement::Insert(insert) => {
+                crate::insert::execute_insert(&mut self.tables, &insert)?;
+                Ok(vec![])
+            }
+        }
     }
 }

@@ -101,6 +101,10 @@ pub enum TokenKind {
     In,
     // LIMIT
     Limit,
+    // DML
+    Insert,
+    Into,
+    Values,
     // Reactive
     InvalidateOn,
     // Literals
@@ -157,6 +161,9 @@ impl TokenKind {
             Self::Desc => "DESC",
             Self::In => "IN",
             Self::Limit => "LIMIT",
+            Self::Insert => "INSERT",
+            Self::Into => "INTO",
+            Self::Values => "VALUES",
             Self::InvalidateOn => "INVALIDATE_ON",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",

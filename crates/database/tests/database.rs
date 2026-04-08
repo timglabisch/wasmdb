@@ -18,7 +18,7 @@ fn make_db() -> Database {
 
 #[test]
 fn test_select_all() {
-    let db = make_db();
+    let mut db = make_db();
     let result = db.execute("SELECT users.name, users.age FROM users").unwrap();
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].len(), 3);
@@ -26,7 +26,7 @@ fn test_select_all() {
 
 #[test]
 fn test_select_with_filter() {
-    let db = make_db();
+    let mut db = make_db();
     let result = db.execute("SELECT users.name FROM users WHERE users.age > 28").unwrap();
     assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
 }
@@ -36,7 +36,7 @@ fn test_select_with_params() {
     use std::collections::HashMap;
     use sql_engine::execute::ParamValue;
 
-    let db = make_db();
+    let mut db = make_db();
     let params = HashMap::from([("uid".into(), ParamValue::Int(2))]);
     let result = db.execute_with_params(
         "SELECT users.name FROM users WHERE users.id = :uid",
@@ -113,7 +113,46 @@ fn test_join() {
 
 #[test]
 fn test_aggregate() {
-    let db = make_db();
+    let mut db = make_db();
     let result = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(result[0], vec![CellValue::I64(3)]);
+}
+
+#[test]
+fn test_insert_via_sql() {
+    let mut db = make_db();
+    db.execute("INSERT INTO users VALUES (4, 'Dave', 40)").unwrap();
+    let result = db.execute("SELECT users.name FROM users WHERE users.id = 4").unwrap();
+    assert_eq!(result[0], vec![CellValue::Str("Dave".into())]);
+}
+
+#[test]
+fn test_insert_with_columns() {
+    let mut db = make_db();
+    db.execute("INSERT INTO users (id, name, age) VALUES (4, 'Dave', 40)").unwrap();
+    let result = db.execute("SELECT users.name FROM users WHERE users.id = 4").unwrap();
+    assert_eq!(result[0], vec![CellValue::Str("Dave".into())]);
+}
+
+#[test]
+fn test_insert_multi_row() {
+    let mut db = make_db();
+    db.execute("INSERT INTO users VALUES (4, 'Dave', 40), (5, 'Eve', 28)").unwrap();
+    let result = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
+    assert_eq!(result[0], vec![CellValue::I64(5)]);
+}
+
+#[test]
+fn test_insert_with_null() {
+    let mut db = make_db();
+    db.execute("INSERT INTO users VALUES (4, 'Dave', NULL)").unwrap();
+    let result = db.execute("SELECT users.age FROM users WHERE users.id = 4").unwrap();
+    assert_eq!(result[0], vec![CellValue::Null]);
+}
+
+#[test]
+fn test_insert_unknown_table_sql() {
+    let mut db = make_db();
+    let err = db.execute("INSERT INTO nonexistent VALUES (1)");
+    assert!(err.is_err());
 }

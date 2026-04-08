@@ -1,402 +1,35 @@
+mod core;
+mod insert;
 mod lexer;
+pub(crate) mod select;
 pub mod token;
 
 use crate::ast::*;
-use lexer::Lexer;
 pub use token::{ParseError, Span, Token, TokenKind};
 
-// ── Parser ───────────────���──────────────────────────────────────────────────
+// ── Public API ──────────────────────────────────────────────────────────
 
-pub struct Parser<'a> {
-    lexer: Lexer<'a>,
-    current: Token,
-    has_current: bool,
+pub fn parse(input: &str) -> Result<AstSelect, ParseError> {
+    let mut p = core::ParserCore::new(input);
+    select::parse_select(&mut p)
 }
 
-impl<'a> Parser<'a> {
-    fn new(input: &'a str) -> Self {
-        Self {
-            lexer: Lexer::new(input),
-            current: Token {
-                kind: TokenKind::Eof,
-                span: Span { offset: 0, len: 0 },
-            },
-            has_current: false,
-        }
-    }
-
-    fn peek(&mut self) -> Result<&Token, ParseError> {
-        if !self.has_current {
-            self.current = self.lexer.next_token()?;
-            self.has_current = true;
-        }
-        Ok(&self.current)
-    }
-
-    fn eat(&mut self) -> Result<Token, ParseError> {
-        self.peek()?;
-        self.has_current = false;
-        Ok(self.current.clone())
-    }
-
-    fn at(&mut self, expected: &TokenKind) -> Result<bool, ParseError> {
-        Ok(self.peek()?.kind.matches(expected))
-    }
-
-    fn expect(&mut self, expected: TokenKind) -> Result<Token, ParseError> {
-        let tok = self.eat()?;
-        if tok.kind.matches(&expected) {
-            Ok(tok)
-        } else {
+pub fn parse_statement(input: &str) -> Result<Statement, ParseError> {
+    let mut p = core::ParserCore::new(input);
+    match p.peek()?.kind {
+        TokenKind::Select => Ok(Statement::Select(select::parse_select(&mut p)?)),
+        TokenKind::Insert => Ok(Statement::Insert(insert::parse_insert(&mut p)?)),
+        _ => {
+            let tok = p.peek()?.clone();
             Err(ParseError::new(
-                format!("expected {}, got {}", expected.name(), tok.kind.name()),
+                format!("expected SELECT or INSERT, got {}", tok.kind.name()),
                 tok.span,
             ))
         }
     }
-
-    fn expect_ident(&mut self) -> Result<(String, Span), ParseError> {
-        let tok = self.eat()?;
-        match tok.kind {
-            TokenKind::Ident(name) => Ok((name, tok.span)),
-            _ => Err(ParseError::new(
-                format!("expected identifier, got {}", tok.kind.name()),
-                tok.span,
-            )),
-        }
-    }
-
-    // ── Statement parsing ────────────────���──────────────────────────────
-
-    /// Parse a SELECT statement without consuming EOF (used for subqueries).
-    fn parse_select_inner(&mut self) -> Result<AstSelect, ParseError> {
-        self.expect(TokenKind::Select)?;
-        let result_columns = self.parse_result_columns()?;
-        self.expect(TokenKind::From)?;
-        let sources = self.parse_sources()?;
-
-        let filter = if self.at(&TokenKind::Where)? {
-            self.parse_where()?
-        } else {
-            vec![]
-        };
-
-        let group_by = if self.at(&TokenKind::Group)? {
-            self.parse_group_by()?
-        } else {
-            vec![]
-        };
-
-        let order_by = if self.at(&TokenKind::Order)? {
-            self.parse_order_by()?
-        } else {
-            vec![]
-        };
-
-        let limit = if self.at(&TokenKind::Limit)? {
-            self.eat()?;
-            let tok = self.peek()?.clone();
-            match &tok.kind {
-                TokenKind::Integer(_) => {
-                    let tok = self.eat()?;
-                    match tok.kind {
-                        TokenKind::Integer(n) => Some(AstLimit::Value(n as u64)),
-                        _ => unreachable!(),
-                    }
-                }
-                TokenKind::Placeholder(_) => {
-                    let tok = self.eat()?;
-                    match tok.kind {
-                        TokenKind::Placeholder(name) => Some(AstLimit::Placeholder(name)),
-                        _ => unreachable!(),
-                    }
-                }
-                _ => return Err(ParseError::new(
-                    format!("expected integer or placeholder after LIMIT, got {}", tok.kind.name()),
-                    tok.span,
-                )),
-            }
-        } else {
-            None
-        };
-
-        Ok(AstSelect {
-            sources,
-            filter,
-            group_by,
-            order_by,
-            limit,
-            result_columns,
-        })
-    }
-
-    fn parse_select(&mut self) -> Result<AstSelect, ParseError> {
-        let select = self.parse_select_inner()?;
-        self.expect(TokenKind::Eof)?;
-        Ok(select)
-    }
-
-    fn parse_result_columns(&mut self) -> Result<Vec<AstResultColumn>, ParseError> {
-        let mut columns = vec![self.parse_result_column()?];
-        while self.at(&TokenKind::Comma)? {
-            self.eat()?;
-            columns.push(self.parse_result_column()?);
-        }
-        Ok(columns)
-    }
-
-    fn parse_result_column(&mut self) -> Result<AstResultColumn, ParseError> {
-        let expr = self.parse_expr(0)?;
-        let alias = if self.at(&TokenKind::As)? {
-            self.eat()?;
-            let (name, _) = self.expect_ident()?;
-            Some(name)
-        } else {
-            None
-        };
-        Ok(AstResultColumn { expr, alias })
-    }
-
-    fn parse_sources(&mut self) -> Result<Vec<AstSourceEntry>, ParseError> {
-        let (table, _) = self.expect_ident()?;
-        let mut sources = vec![AstSourceEntry { table, join: None }];
-
-        loop {
-            if self.at(&TokenKind::Inner)?
-                || self.at(&TokenKind::Left)?
-                || self.at(&TokenKind::Join)?
-            {
-                sources.push(self.parse_join()?);
-            } else {
-                break;
-            }
-        }
-
-        Ok(sources)
-    }
-
-    fn parse_join(&mut self) -> Result<AstSourceEntry, ParseError> {
-        let join_type = if self.at(&TokenKind::Inner)? {
-            self.eat()?;
-            JoinType::Inner
-        } else if self.at(&TokenKind::Left)? {
-            self.eat()?;
-            JoinType::Left
-        } else {
-            JoinType::Inner
-        };
-
-        self.expect(TokenKind::Join)?;
-        let (table, _) = self.expect_ident()?;
-        self.expect(TokenKind::On)?;
-        let on_expr = self.parse_expr(0)?;
-
-        Ok(AstSourceEntry {
-            table,
-            join: Some(AstJoinClause {
-                join_type,
-                on: vec![on_expr],
-            }),
-        })
-    }
-
-    fn parse_where(&mut self) -> Result<Vec<AstExpr>, ParseError> {
-        self.expect(TokenKind::Where)?;
-        let expr = self.parse_expr(0)?;
-        Ok(vec![expr])
-    }
-
-    fn parse_group_by(&mut self) -> Result<Vec<AstExpr>, ParseError> {
-        self.expect(TokenKind::Group)?;
-        self.expect(TokenKind::By)?;
-        let mut exprs = vec![self.parse_expr(0)?];
-        while self.at(&TokenKind::Comma)? {
-            self.eat()?;
-            exprs.push(self.parse_expr(0)?);
-        }
-        Ok(exprs)
-    }
-
-    fn parse_order_by(&mut self) -> Result<Vec<AstOrderSpec>, ParseError> {
-        self.expect(TokenKind::Order)?;
-        self.expect(TokenKind::By)?;
-        let mut specs = vec![self.parse_order_spec()?];
-        while self.at(&TokenKind::Comma)? {
-            self.eat()?;
-            specs.push(self.parse_order_spec()?);
-        }
-        Ok(specs)
-    }
-
-    fn parse_order_spec(&mut self) -> Result<AstOrderSpec, ParseError> {
-        let expr = self.parse_expr(0)?;
-        let direction = if self.at(&TokenKind::Desc)? {
-            self.eat()?;
-            OrderDirection::Desc
-        } else if self.at(&TokenKind::Asc)? {
-            self.eat()?;
-            OrderDirection::Asc
-        } else {
-            OrderDirection::Asc
-        };
-        Ok(AstOrderSpec { expr, direction })
-    }
-
-    // ── Expression parsing (Pratt) ──────────────────────────────────────
-
-    fn parse_expr(&mut self, min_prec: u8) -> Result<AstExpr, ParseError> {
-        let mut left = self.parse_atom()?;
-
-        loop {
-            // IN has higher precedence than any binary operator.
-            if self.at(&TokenKind::In)? {
-                self.eat()?;
-                self.expect(TokenKind::LParen)?;
-                if self.at(&TokenKind::Select)? {
-                    let subquery = self.parse_select_inner()?;
-                    self.expect(TokenKind::RParen)?;
-                    left = AstExpr::InSubquery {
-                        expr: Box::new(left),
-                        subquery: Box::new(subquery),
-                    };
-                } else {
-                    let mut values = vec![self.parse_expr(0)?];
-                    while self.at(&TokenKind::Comma)? {
-                        self.eat()?;
-                        values.push(self.parse_expr(0)?);
-                    }
-                    self.expect(TokenKind::RParen)?;
-                    left = AstExpr::InList {
-                        expr: Box::new(left),
-                        values,
-                    };
-                }
-                continue;
-            }
-
-            let Some((op, prec)) = self.peek_operator()? else {
-                break;
-            };
-            if prec < min_prec {
-                break;
-            }
-            self.eat()?; // consume operator token
-            let right = self.parse_expr(prec + 1)?;
-            left = AstExpr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(left)
-    }
-
-    fn peek_operator(&mut self) -> Result<Option<(Operator, u8)>, ParseError> {
-        let kind = &self.peek()?.kind;
-        let result = match kind {
-            TokenKind::Or => Some((Operator::Or, 1)),
-            TokenKind::And => Some((Operator::And, 2)),
-            TokenKind::Eq => Some((Operator::Eq, 3)),
-            TokenKind::Neq => Some((Operator::Neq, 3)),
-            TokenKind::Lt => Some((Operator::Lt, 3)),
-            TokenKind::Gt => Some((Operator::Gt, 3)),
-            TokenKind::Lte => Some((Operator::Lte, 3)),
-            TokenKind::Gte => Some((Operator::Gte, 3)),
-            _ => None,
-        };
-        Ok(result)
-    }
-
-    fn parse_atom(&mut self) -> Result<AstExpr, ParseError> {
-        let tok = self.peek()?.clone();
-        match &tok.kind {
-            TokenKind::Integer(_)
-            | TokenKind::Float(_)
-            | TokenKind::Str(_)
-            | TokenKind::True
-            | TokenKind::False
-            | TokenKind::Null
-            | TokenKind::Placeholder(_) => {
-                let tok = self.eat()?;
-                Ok(token_to_literal(tok))
-            }
-
-            TokenKind::InvalidateOn => {
-                self.eat()?;
-                self.expect(TokenKind::LParen)?;
-                let expr = self.parse_expr(0)?;
-                self.expect(TokenKind::RParen)?;
-                Ok(AstExpr::InvalidateOn(Box::new(expr)))
-            }
-
-            TokenKind::Count | TokenKind::Sum | TokenKind::Min | TokenKind::Max => {
-                let func_tok = self.eat()?;
-                let func = match func_tok.kind {
-                    TokenKind::Count => AggFunc::Count,
-                    TokenKind::Sum => AggFunc::Sum,
-                    TokenKind::Min => AggFunc::Min,
-                    TokenKind::Max => AggFunc::Max,
-                    _ => unreachable!(),
-                };
-                self.expect(TokenKind::LParen)?;
-                let arg = self.parse_expr(0)?;
-                self.expect(TokenKind::RParen)?;
-                Ok(AstExpr::Aggregate {
-                    func,
-                    arg: Box::new(arg),
-                })
-            }
-
-            TokenKind::Ident(_) => {
-                let (table, _) = self.expect_ident()?;
-                self.expect(TokenKind::Dot)?;
-                let (column, _) = self.expect_ident()?;
-                Ok(AstExpr::Column(AstColumnRef { table, column }))
-            }
-
-            TokenKind::LParen => {
-                self.eat()?;
-                if self.at(&TokenKind::Select)? {
-                    let subquery = self.parse_select_inner()?;
-                    self.expect(TokenKind::RParen)?;
-                    Ok(AstExpr::Subquery(Box::new(subquery)))
-                } else {
-                    let expr = self.parse_expr(0)?;
-                    self.expect(TokenKind::RParen)?;
-                    Ok(expr)
-                }
-            }
-
-            _ => Err(ParseError::new(
-                format!("expected expression, got {}", tok.kind.name()),
-                tok.span,
-            )),
-        }
-    }
 }
 
-fn token_to_literal(tok: Token) -> AstExpr {
-    match tok.kind {
-        TokenKind::Integer(n) => AstExpr::Literal(Value::Int(n)),
-        TokenKind::Float(f) => AstExpr::Literal(Value::Float(f)),
-        TokenKind::Str(s) => AstExpr::Literal(Value::Text(s)),
-        TokenKind::True => AstExpr::Literal(Value::Bool(true)),
-        TokenKind::False => AstExpr::Literal(Value::Bool(false)),
-        TokenKind::Null => AstExpr::Literal(Value::Null),
-        TokenKind::Placeholder(name) => AstExpr::Literal(Value::Placeholder(name)),
-        _ => unreachable!(),
-    }
-}
-
-// ── Public API ───���────────────────────────────────────────��─────────────────
-
-pub fn parse(input: &str) -> Result<AstSelect, ParseError> {
-    let mut parser = Parser::new(input);
-    parser.parse_select()
-}
-
-// ── Tests ──────���───────────────────────────────��────────────────────────────
+// ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -573,7 +206,6 @@ mod tests {
 
     #[test]
     fn test_parse_or_precedence() {
-        // AND binds tighter than OR: a OR b AND c → OR(a, AND(b, c))
         let ast =
             parse("SELECT u.x FROM u WHERE u.a = 1 OR u.b = 2 AND u.c = 3").unwrap();
         assert!(matches!(
@@ -635,7 +267,7 @@ mod tests {
         assert!(err.message.contains("expected expression"));
     }
 
-    // ── IN + Subquery tests ────���───────────────────────────────────────
+    // ── IN + Subquery tests ─────────────────────────────────────────────
 
     #[test]
     fn test_parse_in_list() {
@@ -763,6 +395,75 @@ mod tests {
     fn test_parse_invalidate_on_case_insensitive() {
         let ast = parse("SELECT invalidate_on(users.id = :uid) FROM users").unwrap();
         assert!(matches!(&ast.result_columns[0].expr, AstExpr::InvalidateOn(_)));
+    }
+
+    // ── INSERT tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_insert_simple() {
+        let stmt = parse_statement("INSERT INTO users VALUES (1, 'Alice', 30)").unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert_eq!(ins.table, "users");
+                assert!(ins.columns.is_empty());
+                assert_eq!(ins.values.len(), 1);
+                assert_eq!(ins.values[0].len(), 3);
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_with_columns() {
+        let stmt = parse_statement("INSERT INTO users (id, name) VALUES (1, 'Alice')").unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert_eq!(ins.columns, vec!["id", "name"]);
+                assert_eq!(ins.values.len(), 1);
+                assert_eq!(ins.values[0].len(), 2);
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_multi_row() {
+        let stmt = parse_statement("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')").unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert_eq!(ins.values.len(), 2);
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_with_null() {
+        let stmt = parse_statement("INSERT INTO users VALUES (1, NULL)").unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert!(matches!(&ins.values[0][1], AstExpr::Literal(Value::Null)));
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_insert_with_placeholder() {
+        let stmt = parse_statement("INSERT INTO users VALUES (:id, :name)").unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert!(matches!(&ins.values[0][0], AstExpr::Literal(Value::Placeholder(n)) if n == "id"));
+                assert!(matches!(&ins.values[0][1], AstExpr::Literal(Value::Placeholder(n)) if n == "name"));
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_statement_select() {
+        let stmt = parse_statement("SELECT users.name FROM users").unwrap();
+        assert!(matches!(stmt, Statement::Select(_)));
     }
 
     #[test]

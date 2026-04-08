@@ -173,6 +173,9 @@ impl<'a> Lexer<'a> {
             "DESC" => TokenKind::Desc,
             "IN" => TokenKind::In,
             "LIMIT" => TokenKind::Limit,
+            "INSERT" => TokenKind::Insert,
+            "INTO" => TokenKind::Into,
+            "VALUES" => TokenKind::Values,
             "INVALIDATE_ON" => TokenKind::InvalidateOn,
             _ => TokenKind::Ident(text.to_string()),
         };

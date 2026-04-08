@@ -1,4 +1,17 @@
 #[derive(Debug, Clone)]
+pub enum Statement {
+    Select(AstSelect),
+    Insert(AstInsert),
+}
+
+#[derive(Debug, Clone)]
+pub struct AstInsert {
+    pub table: String,
+    pub columns: Vec<String>,
+    pub values: Vec<Vec<AstExpr>>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AstSelect {
     pub sources: Vec<AstSourceEntry>,
     pub filter: Vec<AstExpr>,
