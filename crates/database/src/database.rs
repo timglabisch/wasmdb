@@ -26,12 +26,10 @@ impl Database {
     }
 
     pub fn execute_ddl(&mut self, ddl: &str) -> Result<(), DbError> {
-        for stmt in ddl.split(';') {
-            let stmt = stmt.trim();
-            if stmt.is_empty() { continue; }
-            let parsed = sql_parser::parser::parse_statement(stmt)
-                .map_err(|e| DbError::Parse(format!("{e:?}")))?;
-            match parsed {
+        let stmts = sql_parser::parser::parse_statements(ddl)
+            .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+        for stmt in stmts {
+            match stmt {
                 Statement::CreateTable(ct) => {
                     let schema = sql_engine::schema::resolve(&ct)
                         .map_err(|e| DbError::Parse(format!("{e:?}")))?;
@@ -39,6 +37,16 @@ impl Database {
                 }
                 _ => return Err(DbError::Parse("expected CREATE TABLE statement".into())),
             }
+        }
+        Ok(())
+    }
+
+    /// Execute multiple statements (CREATE, INSERT, SELECT), discarding results.
+    pub fn execute_all(&mut self, sql: &str) -> Result<(), DbError> {
+        let stmts = sql_parser::parser::parse_statements(sql)
+            .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+        for stmt in stmts {
+            self.execute_statement(stmt, HashMap::new())?;
         }
         Ok(())
     }
@@ -64,6 +72,10 @@ impl Database {
     pub fn execute_with_params(&mut self, sql: &str, params: Params) -> Result<Columns, DbError> {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+        self.execute_statement(stmt, params)
+    }
+
+    fn execute_statement(&mut self, stmt: Statement, params: Params) -> Result<Columns, DbError> {
         match stmt {
             Statement::Select(select) => {
                 crate::select::execute_select(&self.tables, &select, params)
