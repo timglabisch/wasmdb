@@ -91,7 +91,7 @@ mod tests {
     use crate::execute::RowSet;
     use crate::planner::plan::ColumnRef;
     use crate::storage::Table;
-    use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
+    use crate::schema::{ColumnSchema, DataType, TableSchema};
 
     fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 

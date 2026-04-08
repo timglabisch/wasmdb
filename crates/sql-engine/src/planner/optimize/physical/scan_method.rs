@@ -3,7 +3,7 @@
 //! Examines the source's `pre_filter` predicates against available indexes,
 //! scores each index by prefix length and type, and returns the best choice.
 
-use ddl_parser::schema::{self, IndexSchema, IndexType, TableSchema};
+use crate::schema::{self, IndexSchema, IndexType, TableSchema};
 
 use crate::planner::plan::*;
 
@@ -322,7 +322,7 @@ fn try_pk_lookup(
 mod tests {
     use super::*;
     use sql_parser::ast::Value;
-    use ddl_parser::schema::{ColumnSchema, DataType};
+    use crate::schema::{ColumnSchema, DataType};
 
     fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 

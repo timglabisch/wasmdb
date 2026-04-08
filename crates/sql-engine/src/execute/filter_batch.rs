@@ -249,7 +249,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use crate::planner::plan::ColumnRef;
-    use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
+    use crate::schema::{ColumnSchema, DataType, TableSchema};
 
     fn make_i64_table(name: &str, col_name: &str, values: &[i64]) -> Table {
         let schema = TableSchema {

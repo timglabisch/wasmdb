@@ -105,6 +105,9 @@ pub enum TokenKind {
     Insert,
     Into,
     Values,
+    // DDL
+    Create,
+    Semicolon,
     // Reactive
     InvalidateOn,
     // Literals
@@ -165,6 +168,8 @@ impl TokenKind {
             Self::Into => "INTO",
             Self::Values => "VALUES",
             Self::InvalidateOn => "INVALIDATE_ON",
+            Self::Create => "CREATE",
+            Self::Semicolon => "';'",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",
             Self::Str(_) => "string",

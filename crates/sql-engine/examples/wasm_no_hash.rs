@@ -1,6 +1,6 @@
 /// Minimal example that avoids HashMap entirely — just to measure the size delta.
 use sql_engine::storage::{CellValue, Table};
-use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
+use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 
 #[no_mangle]
 pub extern "C" fn run() -> i64 {

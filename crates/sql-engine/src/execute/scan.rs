@@ -125,7 +125,7 @@ mod tests {
     use crate::storage::CellValue;
     use sql_parser::ast::Value;
     use sql_parser::schema::Schema;
-    use ddl_parser::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
+    use crate::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 
     fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 

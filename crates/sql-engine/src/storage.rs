@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::bitmap::Bitmap;
-use ddl_parser::schema::{DataType, IndexType, TableSchema};
+use crate::schema::{DataType, IndexType, TableSchema};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CellValue {
@@ -289,7 +289,7 @@ impl Table {
             .iter()
             .map(|col| TypedColumn::new(col.data_type, col.nullable))
             .collect();
-        let indexes: Vec<TableIndex> = ddl_parser::schema::effective_indexes(&schema)
+        let indexes: Vec<TableIndex> = crate::schema::effective_indexes(&schema)
             .iter()
             .map(|idx| TableIndex::new(idx.columns.clone(), idx.index_type))
             .collect();
@@ -378,7 +378,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddl_parser::schema::ColumnSchema;
+    use crate::schema::ColumnSchema;
 
     fn users_schema() -> TableSchema {
         TableSchema {
@@ -540,15 +540,19 @@ mod tests {
 
     #[test]
     fn test_from_parsed_schema() {
-        let ast = ddl_parser::parser::parse(
+        let stmt = sql_parser::parser::parse_statement(
             "CREATE TABLE orders (
                 id I64 NOT NULL PRIMARY KEY,
                 user_id I64 NOT NULL,
                 amount I64,
                 INDEX idx_user (user_id)
-            );"
+            )"
         ).unwrap();
-        let schema = ddl_parser::schema::resolve(&ast).unwrap();
+        let ct = match stmt {
+            sql_parser::ast::Statement::CreateTable(ct) => ct,
+            _ => panic!("expected CreateTable"),
+        };
+        let schema = crate::schema::resolve(&ct).unwrap();
 
         let mut table = Table::new(schema);
         table.insert(&[
@@ -568,7 +572,7 @@ mod tests {
     }
 
     fn indexed_schema() -> TableSchema {
-        use ddl_parser::schema::IndexSchema;
+        use crate::schema::IndexSchema;
         TableSchema {
             name: "orders".into(),
             columns: vec![
@@ -669,7 +673,7 @@ mod tests {
     }
 
     fn composite_indexed_schema() -> TableSchema {
-        use ddl_parser::schema::IndexSchema;
+        use crate::schema::IndexSchema;
         TableSchema {
             name: "events".into(),
             columns: vec![
@@ -782,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_composite_index_hash_prefix_unsupported() {
-        use ddl_parser::schema::IndexSchema;
+        use crate::schema::IndexSchema;
         let schema = TableSchema {
             name: "t".into(),
             columns: vec![

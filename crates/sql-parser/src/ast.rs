@@ -2,6 +2,40 @@
 pub enum Statement {
     Select(AstSelect),
     Insert(AstInsert),
+    CreateTable(AstCreateTable),
+}
+
+#[derive(Debug, Clone)]
+pub struct AstCreateTable {
+    pub name: String,
+    pub columns: Vec<AstColumnDef>,
+    pub constraints: Vec<AstTableConstraint>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstColumnDef {
+    pub name: String,
+    pub data_type: AstDataType,
+    pub not_null: bool,
+    pub primary_key: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AstDataType {
+    I64,
+    String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AstIndexType {
+    BTree,
+    Hash,
+}
+
+#[derive(Debug, Clone)]
+pub enum AstTableConstraint {
+    PrimaryKey { columns: Vec<String> },
+    Index { name: Option<String>, columns: Vec<String>, index_type: AstIndexType },
 }
 
 #[derive(Debug, Clone)]

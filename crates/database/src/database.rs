@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use ddl_parser::schema::TableSchema;
 use sql_engine::execute::{Columns, ExecuteError, Params};
+use sql_engine::schema::TableSchema;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::ast::Statement;
 
@@ -29,11 +29,16 @@ impl Database {
         for stmt in ddl.split(';') {
             let stmt = stmt.trim();
             if stmt.is_empty() { continue; }
-            let ast = ddl_parser::parser::parse(&format!("{stmt};"))
+            let parsed = sql_parser::parser::parse_statement(stmt)
                 .map_err(|e| DbError::Parse(format!("{e:?}")))?;
-            let schema = ddl_parser::schema::resolve(&ast)
-                .map_err(|e| DbError::Parse(format!("{e:?}")))?;
-            self.create_table(schema)?;
+            match parsed {
+                Statement::CreateTable(ct) => {
+                    let schema = sql_engine::schema::resolve(&ct)
+                        .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+                    self.create_table(schema)?;
+                }
+                _ => return Err(DbError::Parse("expected CREATE TABLE statement".into())),
+            }
         }
         Ok(())
     }
@@ -65,6 +70,12 @@ impl Database {
             }
             Statement::Insert(insert) => {
                 crate::insert::execute_insert(&mut self.tables, &insert)?;
+                Ok(vec![])
+            }
+            Statement::CreateTable(ct) => {
+                let schema = sql_engine::schema::resolve(&ct)
+                    .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+                self.create_table(schema)?;
                 Ok(vec![])
             }
         }

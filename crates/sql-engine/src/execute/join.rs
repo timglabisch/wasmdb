@@ -108,7 +108,7 @@ mod tests {
     use crate::execute::scan::scan_row_ids;
     use crate::planner::plan::ColumnRef;
     use crate::storage::CellValue;
-    use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
+    use crate::schema::{ColumnSchema, DataType, TableSchema};
 
     fn make_users_table() -> crate::storage::Table {
         let schema = TableSchema {

@@ -5,7 +5,7 @@ use sql_engine::planner;
 use sql_engine::reactive::SubscriptionRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
-use ddl_parser::schema::{ColumnSchema, DataType, TableSchema};
+use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

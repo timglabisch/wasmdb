@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use sql_engine::planner;
 use sql_parser::parser;
-use ddl_parser::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
+use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 
 // ── Test harness ──────────────────────────────────────────────────────────
 

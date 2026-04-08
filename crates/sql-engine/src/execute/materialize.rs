@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::planner::optimize;
 use crate::planner::plan::*;
 use sql_parser::ast::{Operator, Value};
-use ddl_parser::schema::TableSchema;
+use crate::schema::TableSchema;
 
 use super::bind;
 use super::pipeline::execute;

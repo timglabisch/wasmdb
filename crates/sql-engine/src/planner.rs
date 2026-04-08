@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use sql_parser::ast;
 use sql_parser::schema::{ColumnDef, Schema};
-use ddl_parser::schema::TableSchema;
+use crate::schema::TableSchema;
 use plan::*;
 
 
@@ -120,7 +120,7 @@ fn plan_select_ctx(
 mod tests {
     use super::*;
     use sql_parser::ast::*;
-    use ddl_parser::schema::{ColumnSchema, DataType};
+    use crate::schema::{ColumnSchema, DataType};
 
     fn users_table_schema() -> TableSchema {
         TableSchema {

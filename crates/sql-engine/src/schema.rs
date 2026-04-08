@@ -1,4 +1,4 @@
-use crate::ast;
+use sql_parser::ast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
@@ -58,8 +58,6 @@ impl std::fmt::Display for SchemaError {
 impl std::error::Error for SchemaError {}
 
 /// Return the full list of indexes including the auto-created PK Hash index.
-/// Both the planner (for index selection) and storage (for Table::new) use this
-/// to ensure they agree on the available indexes.
 pub fn effective_indexes(ts: &TableSchema) -> Vec<IndexSchema> {
     let mut indexes = ts.indexes.clone();
     if !ts.primary_key.is_empty() {
@@ -77,7 +75,6 @@ pub fn effective_indexes(ts: &TableSchema) -> Vec<IndexSchema> {
 }
 
 pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError> {
-    // Check for duplicate column names.
     let mut seen = std::collections::HashSet::new();
     for col in &create.columns {
         if !seen.insert(&col.name) {
@@ -97,22 +94,16 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         })
         .collect();
 
-    // Collect primary key column positions.
     let mut pk_positions = Vec::new();
 
-    // From inline PRIMARY KEY on columns.
     for (i, col) in create.columns.iter().enumerate() {
         if col.primary_key {
             pk_positions.push(i);
         }
     }
 
-    // From table-level PRIMARY KEY constraint.
     for constraint in &create.constraints {
-        if let ast::AstTableConstraint::PrimaryKey {
-            columns: pk_cols,
-        } = constraint
-        {
+        if let ast::AstTableConstraint::PrimaryKey { columns: pk_cols } = constraint {
             for col_name in pk_cols {
                 let idx = resolve_column_idx(col_name, &columns)?;
                 if !pk_positions.contains(&idx) {
@@ -122,7 +113,6 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         }
     }
 
-    // Validate PK columns are NOT NULL.
     for &idx in &pk_positions {
         if columns[idx].nullable {
             return Err(SchemaError::PrimaryKeyNullable {
@@ -131,7 +121,6 @@ pub fn resolve(create: &ast::AstCreateTable) -> Result<TableSchema, SchemaError>
         }
     }
 
-    // Resolve indexes.
     let mut indexes = Vec::new();
     for constraint in &create.constraints {
         if let ast::AstTableConstraint::Index {
@@ -186,11 +175,13 @@ fn resolve_column_idx(name: &str, columns: &[ColumnSchema]) -> Result<usize, Sch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser;
 
     fn resolve_sql(sql: &str) -> Result<TableSchema, SchemaError> {
-        let ast = parser::parse(sql).expect("parse failed");
-        resolve(&ast)
+        let stmt = sql_parser::parser::parse_statement(sql).expect("parse failed");
+        match stmt {
+            ast::Statement::CreateTable(ct) => resolve(&ct),
+            _ => panic!("expected CreateTable"),
+        }
     }
 
     #[test]
@@ -244,10 +235,10 @@ mod tests {
         assert_eq!(schema.indexes.len(), 2);
         assert_eq!(schema.indexes[0].name.as_deref(), Some("idx_name"));
         assert_eq!(schema.indexes[0].columns, vec![1]);
-        assert_eq!(schema.indexes[0].index_type, IndexType::BTree); // default
+        assert_eq!(schema.indexes[0].index_type, IndexType::BTree);
         assert!(schema.indexes[1].name.is_none());
         assert_eq!(schema.indexes[1].columns, vec![1, 2]);
-        assert_eq!(schema.indexes[1].index_type, IndexType::BTree); // default
+        assert_eq!(schema.indexes[1].index_type, IndexType::BTree);
     }
 
     #[test]
@@ -297,7 +288,7 @@ mod tests {
         assert!(schema.columns[2].nullable);
         assert!(schema.columns[3].nullable);
 
-        assert_eq!(schema.indexes[0].columns, vec![3]); // email
-        assert_eq!(schema.indexes[1].columns, vec![1, 2]); // name, age
+        assert_eq!(schema.indexes[0].columns, vec![3]);
+        assert_eq!(schema.indexes[1].columns, vec![1, 2]);
     }
 }

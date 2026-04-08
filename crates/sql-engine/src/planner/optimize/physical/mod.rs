@@ -9,7 +9,7 @@ mod scan_method;
 
 use std::collections::HashMap;
 
-use ddl_parser::schema::TableSchema;
+use crate::schema::TableSchema;
 
 use crate::planner::plan::*;
 

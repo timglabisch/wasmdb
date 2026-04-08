@@ -110,6 +110,10 @@ impl<'a> Lexer<'a> {
                 self.eat_char();
                 Ok(self.token(TokenKind::Star, start))
             }
+            ';' => {
+                self.eat_char();
+                Ok(self.token(TokenKind::Semicolon, start))
+            }
             ':' => {
                 self.eat_char();
                 let name_start = self.offset;
@@ -177,6 +181,7 @@ impl<'a> Lexer<'a> {
             "INTO" => TokenKind::Into,
             "VALUES" => TokenKind::Values,
             "INVALIDATE_ON" => TokenKind::InvalidateOn,
+            "CREATE" => TokenKind::Create,
             _ => TokenKind::Ident(text.to_string()),
         };
         Ok(self.token(kind, start))

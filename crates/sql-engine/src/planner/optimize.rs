@@ -9,7 +9,7 @@ mod pushdown;
 
 use std::collections::HashMap;
 
-use ddl_parser::schema::TableSchema;
+use crate::schema::TableSchema;
 
 use super::plan::*;
 

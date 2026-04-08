@@ -4,7 +4,7 @@
 //! on the join column, an index-nested-loop join is chosen. Otherwise,
 //! a full-scan nested loop join is used.
 
-use ddl_parser::schema::{self, IndexType, TableSchema};
+use crate::schema::{self, IndexType, TableSchema};
 
 use crate::planner::plan::*;
 
@@ -43,7 +43,7 @@ pub fn choose(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddl_parser::schema::{ColumnSchema, DataType, IndexSchema};
+    use crate::schema::{ColumnSchema, DataType, IndexSchema};
 
     fn c(source: usize, col: usize) -> ColumnRef { ColumnRef { source, col } }
 

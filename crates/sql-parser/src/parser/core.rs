@@ -66,6 +66,26 @@ impl<'a> ParserCore<'a> {
         Ok(())
     }
 
+    /// Check if the current token is an identifier matching `kw` (case-insensitive).
+    pub fn at_keyword(&mut self, kw: &str) -> Result<bool, ParseError> {
+        match &self.peek()?.kind {
+            TokenKind::Ident(name) => Ok(name.eq_ignore_ascii_case(kw)),
+            _ => Ok(false),
+        }
+    }
+
+    /// Consume the current token if it is an identifier matching `kw` (case-insensitive).
+    pub fn expect_keyword(&mut self, kw: &str) -> Result<Token, ParseError> {
+        let tok = self.eat()?;
+        match &tok.kind {
+            TokenKind::Ident(name) if name.eq_ignore_ascii_case(kw) => Ok(tok),
+            _ => Err(ParseError::new(
+                format!("expected {kw}, got {}", tok.kind.name()),
+                tok.span,
+            )),
+        }
+    }
+
     // ── Expression parsing (Pratt) ──────────────────────────────────────
 
     pub fn parse_expr(&mut self, min_prec: u8) -> Result<AstExpr, ParseError> {

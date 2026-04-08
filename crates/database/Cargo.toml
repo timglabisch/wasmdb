@@ -6,4 +6,3 @@ edition = "2021"
 [dependencies]
 sql-parser = { path = "../sql-parser" }
 sql-engine = { path = "../sql-engine" }
-ddl-parser = { path = "../ddl-parser" }
