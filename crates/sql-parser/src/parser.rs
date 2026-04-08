@@ -17,10 +17,38 @@ pub fn parse(input: &str) -> Result<AstSelect, ParseError> {
 
 pub fn parse_statement(input: &str) -> Result<Statement, ParseError> {
     let mut p = core::ParserCore::new(input);
+    let stmt = parse_statement_inner(&mut p)?;
+    // optional trailing semicolon
+    if p.at(&TokenKind::Semicolon)? {
+        p.eat()?;
+    }
+    p.expect_eof()?;
+    Ok(stmt)
+}
+
+pub fn parse_statements(input: &str) -> Result<Vec<Statement>, ParseError> {
+    let mut p = core::ParserCore::new(input);
+    let mut stmts = Vec::new();
+    loop {
+        if p.at(&TokenKind::Eof)? {
+            break;
+        }
+        stmts.push(parse_statement_inner(&mut p)?);
+        if p.at(&TokenKind::Semicolon)? {
+            p.eat()?;
+        } else {
+            p.expect_eof()?;
+            break;
+        }
+    }
+    Ok(stmts)
+}
+
+fn parse_statement_inner(p: &mut core::ParserCore) -> Result<Statement, ParseError> {
     match p.peek()?.kind {
-        TokenKind::Select => Ok(Statement::Select(select::parse_select(&mut p)?)),
-        TokenKind::Insert => Ok(Statement::Insert(insert::parse_insert(&mut p)?)),
-        TokenKind::Create => Ok(Statement::CreateTable(create_table::parse_create_table(&mut p)?)),
+        TokenKind::Select => Ok(Statement::Select(select::parse_select_inner(p)?)),
+        TokenKind::Insert => Ok(Statement::Insert(insert::parse_insert(p)?)),
+        TokenKind::Create => Ok(Statement::CreateTable(create_table::parse_create_table(p)?)),
         _ => {
             let tok = p.peek()?.clone();
             Err(ParseError::new(
@@ -737,5 +765,61 @@ mod tests {
             }
             _ => panic!("expected CreateTable"),
         }
+    }
+
+    // ── parse_statements (multi-statement) tests ──────────────────────
+
+    #[test]
+    fn test_parse_statements_single() {
+        let stmts = parse_statements("SELECT u.x FROM u").unwrap();
+        assert_eq!(stmts.len(), 1);
+        assert!(matches!(&stmts[0], Statement::Select(_)));
+    }
+
+    #[test]
+    fn test_parse_statements_single_trailing_semicolon() {
+        let stmts = parse_statements("SELECT u.x FROM u;").unwrap();
+        assert_eq!(stmts.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_statements_multiple_creates() {
+        let stmts = parse_statements(
+            "CREATE TABLE users (id I64, name STRING); CREATE TABLE orders (id I64, user_id I64)"
+        ).unwrap();
+        assert_eq!(stmts.len(), 2);
+        assert!(matches!(&stmts[0], Statement::CreateTable(ct) if ct.name == "users"));
+        assert!(matches!(&stmts[1], Statement::CreateTable(ct) if ct.name == "orders"));
+    }
+
+    #[test]
+    fn test_parse_statements_mixed() {
+        let stmts = parse_statements(
+            "CREATE TABLE t (id I64); INSERT INTO t VALUES (1); SELECT t.id FROM t"
+        ).unwrap();
+        assert_eq!(stmts.len(), 3);
+        assert!(matches!(&stmts[0], Statement::CreateTable(_)));
+        assert!(matches!(&stmts[1], Statement::Insert(_)));
+        assert!(matches!(&stmts[2], Statement::Select(_)));
+    }
+
+    #[test]
+    fn test_parse_statements_trailing_semicolons() {
+        let stmts = parse_statements(
+            "CREATE TABLE t (id I64); INSERT INTO t VALUES (1);"
+        ).unwrap();
+        assert_eq!(stmts.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_statements_empty_input() {
+        let stmts = parse_statements("").unwrap();
+        assert!(stmts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_statements_whitespace_only() {
+        let stmts = parse_statements("   ").unwrap();
+        assert!(stmts.is_empty());
     }
 }

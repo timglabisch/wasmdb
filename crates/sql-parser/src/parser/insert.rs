@@ -30,7 +30,6 @@ pub(crate) fn parse_insert(p: &mut ParserCore) -> Result<AstInsert, ParseError> 
         values.push(parse_value_row(p)?);
     }
 
-    p.expect_eof()?;
     Ok(AstInsert { table, columns, values })
 }
 

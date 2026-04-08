@@ -27,13 +27,6 @@ pub(crate) fn parse_create_table(p: &mut ParserCore) -> Result<AstCreateTable, P
 
     p.expect(TokenKind::RParen)?;
 
-    // optional trailing semicolon
-    if p.at(&TokenKind::Semicolon)? {
-        p.eat()?;
-    }
-
-    p.expect_eof()?;
-
     Ok(AstCreateTable {
         name,
         columns,
