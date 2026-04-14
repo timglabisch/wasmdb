@@ -1,10 +1,26 @@
-import type { User } from './sync.ts';
+import { useQuery, useQueryConfirmed } from './sync.ts';
 
-interface Props {
-  users: User[];
+interface User {
+  id: number;
+  name: string;
+  age: number;
+  sync: 'pending' | 'confirmed';
 }
 
-export default function UsersTable({ users }: Props) {
+export default function UsersTable() {
+  const rows = useQuery(
+    "SELECT users.id, users.name, users.age FROM users",
+    ([id, name, age]) => ({ id: id as number, name: name as string, age: age as number }),
+  );
+  const confirmedIds = new Set(
+    useQueryConfirmed("SELECT users.id FROM users", ([id]) => id as number),
+  );
+
+  const users: User[] = rows.map(u => ({
+    ...u,
+    sync: confirmedIds.has(u.id) ? 'confirmed' as const : 'pending' as const,
+  }));
+
   return (
     <table>
       <thead>

@@ -10,7 +10,6 @@ use sync_client::client::SyncClient;
 use sync_client::stream::StreamAction;
 use example_sync_commands::UserCommand;
 use std::cell::RefCell;
-use std::collections::HashSet;
 
 thread_local! {
     static CLIENT: RefCell<Option<SyncClient<UserCommand>>> = RefCell::new(None);
@@ -80,40 +79,14 @@ async fn do_fetch(body: &[u8]) -> Result<Vec<u8>, JsValue> {
 
 // ── Internal: query helpers ──────────────────────────────────────
 
-fn query_user_rows(db: &mut Database) -> Result<Vec<(i64, String, i64)>, JsError> {
-    let result = db
-        .execute("SELECT users.id, users.name, users.age FROM users")
-        .map_err(|e| JsError::new(&e.to_string()))?;
-
-    if result.is_empty() || result[0].is_empty() {
-        return Ok(vec![]);
+fn columns_to_rows(columns: Vec<Vec<CellValue>>) -> Vec<Vec<CellValue>> {
+    if columns.is_empty() || columns[0].is_empty() {
+        return vec![];
     }
-
-    let mut rows = Vec::new();
-    for i in 0..result[0].len() {
-        let id = match &result[0][i] {
-            CellValue::I64(v) => *v,
-            _ => 0,
-        };
-        let name = match &result[1][i] {
-            CellValue::Str(s) => s.clone(),
-            _ => String::new(),
-        };
-        let age = match &result[2][i] {
-            CellValue::I64(v) => *v,
-            _ => 0,
-        };
-        rows.push((id, name, age));
-    }
-    Ok(rows)
-}
-
-#[derive(serde::Serialize)]
-struct UserRow {
-    id: i64,
-    name: String,
-    age: i64,
-    sync: &'static str,
+    let num_rows = columns[0].len();
+    (0..num_rows)
+        .map(|i| columns.iter().map(|col| col[i].clone()).collect())
+        .collect()
 }
 
 fn build_action_result(action: &StreamAction) -> Result<JsValue, JsValue> {
@@ -224,30 +197,29 @@ pub fn execute(cmd_json: &str) -> Result<JsValue, JsError> {
     Ok(result.into())
 }
 
-/// Query users with sync status. Returns a JS array of `{ id, name, age, sync }`.
-/// `sync` is "pending" or "confirmed" — computed by diffing optimistic vs confirmed DB.
+/// Execute a SQL query against the optimistic (local) database.
+/// Returns a row-major array of arrays, e.g. `[[1, "Alice", 30], [2, "Bob", 25]]`.
 #[wasm_bindgen]
-pub fn query_users() -> Result<JsValue, JsError> {
+pub fn query(sql: &str) -> Result<JsValue, JsError> {
     with_client(|client| {
-        let optimistic = query_user_rows(client.db_mut())?;
+        let columns = client
+            .db_mut()
+            .execute(sql)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let rows = columns_to_rows(columns);
+        serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
+    })
+}
 
-        let confirmed = query_user_rows(client.confirmed_db_mut())?;
-        let confirmed_ids: HashSet<i64> = confirmed.iter().map(|r| r.0).collect();
-
-        let users: Vec<UserRow> = optimistic
-            .into_iter()
-            .map(|(id, name, age)| UserRow {
-                id,
-                name,
-                age,
-                sync: if confirmed_ids.contains(&id) {
-                    "confirmed"
-                } else {
-                    "pending"
-                },
-            })
-            .collect();
-
-        serde_wasm_bindgen::to_value(&users).map_err(|e| JsError::new(&e.to_string()))
+/// Execute a SQL query against the confirmed (server-acknowledged) database.
+#[wasm_bindgen]
+pub fn query_confirmed(sql: &str) -> Result<JsValue, JsError> {
+    with_client(|client| {
+        let columns = client
+            .confirmed_db_mut()
+            .execute(sql)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let rows = columns_to_rows(columns);
+        serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
     })
 }

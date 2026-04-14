@@ -1,10 +1,10 @@
-import { useSync } from './sync.ts';
+import { useWasm } from './sync.ts';
 import AddUserForm from './AddUserForm.tsx';
 import UsersTable from './UsersTable.tsx';
 import './index.css';
 
 export default function App() {
-  const { ready, users } = useSync();
+  const ready = useWasm();
 
   if (!ready) return <div className="loading">loading wasm...</div>;
 
@@ -15,7 +15,7 @@ export default function App() {
         optimistic client (WASM) + authoritative server (Axum) — borsh protocol
       </p>
       <AddUserForm />
-      <UsersTable users={users} />
+      <UsersTable />
     </div>
   );
 }
