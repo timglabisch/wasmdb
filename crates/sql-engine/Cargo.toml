@@ -6,7 +6,9 @@ edition = "2021"
 [dependencies]
 sql-parser = { path = "../sql-parser" }
 borsh = { version = "1", features = ["derive"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = []
 borsh = ["dep:borsh"]
+serde = ["dep:serde"]

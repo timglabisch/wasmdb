@@ -10,3 +10,4 @@ sql-engine = { path = "../sql-engine" }
 [features]
 default = []
 borsh = ["sql-engine/borsh"]
+serde = ["sql-engine/serde"]

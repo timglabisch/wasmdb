@@ -2,6 +2,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use sql_engine::storage::CellValue;
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ZSetEntry {
     pub table: String,
     pub row: Vec<CellValue>,
@@ -9,6 +10,7 @@ pub struct ZSetEntry {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ZSet {
     pub entries: Vec<ZSetEntry>,
 }

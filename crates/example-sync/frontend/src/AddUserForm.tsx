@@ -1,30 +1,31 @@
 import { useState, type FormEvent } from 'react';
-import type { SyncResult, UserCommand } from './sync.ts';
+import { execute, nextId } from './sync.ts';
 
-interface Props {
-  nextId: () => number;
-  execute: (cmd: UserCommand) => Promise<SyncResult>;
-}
-
-export default function AddUserForm({ nextId, execute }: Props) {
+export default function AddUserForm() {
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const result = await execute({
+    const { confirmed } = execute({
       type: 'Insert',
       id: nextId(),
       name: name.trim(),
       age: parseInt(age) || 0,
     });
 
-    if (result.status === 'confirmed') {
-      setName('');
-      setAge('');
-    }
+    setName('');
+    setAge('');
+
+    confirmed
+      .then(r => {
+        if (r.status === 'rejected') {
+          console.error('Command rejected:', r.reason);
+        }
+      })
+      .catch(e => console.error('Command failed:', e));
   };
 
   return (

@@ -4,7 +4,7 @@ import UsersTable from './UsersTable.tsx';
 import './index.css';
 
 export default function App() {
-  const { ready, users, execute, nextId } = useSync();
+  const { ready, users } = useSync();
 
   if (!ready) return <div className="loading">loading wasm...</div>;
 
@@ -14,7 +14,7 @@ export default function App() {
       <p className="subtitle">
         optimistic client (WASM) + authoritative server (Axum) — borsh protocol
       </p>
-      <AddUserForm nextId={nextId} execute={execute} />
+      <AddUserForm />
       <UsersTable users={users} />
     </div>
   );

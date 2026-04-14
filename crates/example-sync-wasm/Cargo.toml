@@ -7,11 +7,18 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-sync = { path = "../sync" }
+sync = { path = "../sync", features = ["serde"] }
 sync-client = { path = "../sync-client" }
 example-sync-commands = { path = "../example-sync-commands" }
-database = { path = "../database", features = ["borsh"] }
-sql-engine = { path = "../sql-engine", features = ["borsh"] }
+database = { path = "../database", features = ["borsh", "serde"] }
+sql-engine = { path = "../sql-engine", features = ["borsh", "serde"] }
 borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Request", "RequestInit", "Response", "Headers", "Window",
+] }

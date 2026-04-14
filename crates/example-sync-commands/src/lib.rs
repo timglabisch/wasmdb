@@ -1,13 +1,26 @@
 use borsh::{BorshSerialize, BorshDeserialize};
+use serde::{Serialize, Deserialize};
+use ts_rs::TS;
 use database::Database;
 use sql_engine::storage::CellValue;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[serde(tag = "type")]
+#[ts(export)]
 pub enum UserCommand {
-    Insert { id: i64, name: String, age: i64 },
-    Delete { id: i64 },
+    Insert {
+        #[ts(type = "number")]
+        id: i64,
+        name: String,
+        #[ts(type = "number")]
+        age: i64,
+    },
+    Delete {
+        #[ts(type = "number")]
+        id: i64,
+    },
 }
 
 impl Command for UserCommand {

@@ -53,6 +53,16 @@ impl<C: Command> SyncClient<C> {
         &mut self.optimistic_db
     }
 
+    /// The confirmed database — only contains server-confirmed state.
+    pub fn confirmed_db(&self) -> &Database {
+        &self.confirmed_db
+    }
+
+    /// Mutable access to confirmed DB (for SELECT queries that need &mut).
+    pub fn confirmed_db_mut(&mut self) -> &mut Database {
+        &mut self.confirmed_db
+    }
+
     /// Create a new independent stream.
     pub fn create_stream(&mut self) -> StreamId {
         let id = StreamId(self.next_stream_id);
