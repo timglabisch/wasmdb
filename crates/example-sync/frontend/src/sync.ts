@@ -4,7 +4,8 @@ import initWasm, {
   execute as wasmExecute,
   query as wasmQuery,
   query_confirmed as wasmQueryConfirmed,
-  set_on_change,
+  subscribe as wasmSubscribe,
+  unsubscribe as wasmUnsubscribe,
   next_id,
 } from '../wasm-pkg/example_sync_wasm';
 import type { UserCommand } from './generated/UserCommand';
@@ -18,14 +19,10 @@ export interface Execution {
   confirmed: Promise<{ status: 'confirmed' | 'rejected'; reason?: string }>;
 }
 
-// ── Subscriber pattern ────────────────────────────────────────────
+// ── WASM readiness ────────────────────────────────────────────────
 
 let wasmReady = false;
-const listeners = new Set<() => void>();
-
-function notifyAll() {
-  listeners.forEach(fn => fn());
-}
+const readyListeners = new Set<() => void>();
 
 // ── Standalone functions (no React dependency) ───────────────────
 
@@ -45,13 +42,17 @@ export function useWasm(): boolean {
       setReady(true);
       return;
     }
+    const listener = () => setReady(true);
+    readyListeners.add(listener);
+
     initWasm().then(() => {
       init();
       wasmReady = true;
-      set_on_change(notifyAll);
-      setReady(true);
-      notifyAll();
+      readyListeners.forEach(fn => fn());
+      readyListeners.clear();
     });
+
+    return () => { readyListeners.delete(listener); };
   }, []);
 
   return ready;
@@ -67,14 +68,18 @@ function useQueryInternal<T>(
   mapRef.current = mapRow;
 
   useEffect(() => {
+    if (!wasmReady) return;
+
     const refresh = () => {
-      if (!wasmReady) return;
       const rows: any[] = queryFn(sql);
       setData(mapRef.current ? rows.map(mapRef.current) : rows);
     };
-    refresh();
-    listeners.add(refresh);
-    return () => { listeners.delete(refresh); };
+
+    // Subscribe — WASM calls refresh when affected tables change.
+    const subId = wasmSubscribe(sql, refresh);
+    refresh(); // initial fetch
+
+    return () => { wasmUnsubscribe(subId); };
   }, [sql, queryFn]);
 
   return data;

@@ -35,6 +35,8 @@ pub struct SubscriptionRegistry {
     next_id: u64,
     subscriptions: HashMap<SubId, Subscription>,
     reverse_index: HashMap<ReverseKey, Vec<SubId>>,
+    /// Table-level subscriptions: any mutation on the table triggers the subscription.
+    table_subs: HashMap<String, HashSet<SubId>>,
 }
 
 impl SubscriptionRegistry {
@@ -43,7 +45,25 @@ impl SubscriptionRegistry {
             next_id: 0,
             subscriptions: HashMap::new(),
             reverse_index: HashMap::new(),
+            table_subs: HashMap::new(),
         }
+    }
+
+    /// Subscribe to all changes on the given tables (no INVALIDATE_ON needed).
+    pub fn subscribe_tables(&mut self, tables: &[String]) -> SubId {
+        let id = SubId(self.next_id);
+        self.next_id += 1;
+        for table in tables {
+            self.table_subs.entry(table.clone()).or_default().insert(id);
+        }
+        self.subscriptions.insert(
+            id,
+            Subscription {
+                conditions: vec![],
+                reverse_keys: vec![],
+            },
+        );
+        id
     }
 
     /// Register a subscription. The plan must have params already resolved.
@@ -98,6 +118,11 @@ impl SubscriptionRegistry {
                 }
             }
         }
+        // Clean up table-level subscriptions.
+        for subs in self.table_subs.values_mut() {
+            subs.remove(&id);
+        }
+        self.table_subs.retain(|_, subs| !subs.is_empty());
     }
 
     /// Check which subscriptions are affected by an INSERT.
@@ -126,7 +151,12 @@ impl SubscriptionRegistry {
     fn check_row(&self, table: &str, row: &[CellValue]) -> Vec<SubId> {
         let mut candidates = HashSet::new();
 
-        // 1. Reverse-index lookup per column
+        // 1. Table-level subscriptions always match.
+        if let Some(subs) = self.table_subs.get(table) {
+            candidates.extend(subs);
+        }
+
+        // 2. Reverse-index lookup per column (fine-grained INVALIDATE_ON).
         for (col_idx, cell) in row.iter().enumerate() {
             let rk = ReverseKey {
                 table: table.to_string(),
@@ -138,11 +168,14 @@ impl SubscriptionRegistry {
             }
         }
 
-        // 2. Verify filter
+        // 3. Verify filter (table-level subs have no conditions → always pass).
         candidates
             .into_iter()
             .filter(|sub_id| {
                 let sub = &self.subscriptions[sub_id];
+                if sub.conditions.is_empty() {
+                    return true;
+                }
                 sub.conditions.iter().any(|cond| {
                     if cond.table != table {
                         return false;

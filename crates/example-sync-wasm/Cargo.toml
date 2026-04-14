@@ -12,6 +12,7 @@ sync-client = { path = "../sync-client" }
 example-sync-commands = { path = "../example-sync-commands" }
 database = { path = "../database", features = ["borsh", "serde"] }
 sql-engine = { path = "../sql-engine", features = ["borsh", "serde"] }
+sql-parser = { path = "../sql-parser" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

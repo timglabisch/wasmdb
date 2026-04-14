@@ -5,15 +5,19 @@ use js_sys::Uint8Array;
 use database::Database;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 use sql_engine::storage::CellValue;
+use sql_engine::reactive::{SubscriptionRegistry, SubId};
 use sync::protocol::CommandResponse;
+use sync::zset::ZSet;
 use sync_client::client::SyncClient;
 use sync_client::stream::StreamAction;
 use example_sync_commands::UserCommand;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 thread_local! {
     static CLIENT: RefCell<Option<SyncClient<UserCommand>>> = RefCell::new(None);
-    static ON_CHANGE: RefCell<Option<js_sys::Function>> = RefCell::new(None);
+    static REGISTRY: RefCell<SubscriptionRegistry> = RefCell::new(SubscriptionRegistry::new());
+    static CALLBACKS: RefCell<HashMap<u64, js_sys::Function>> = RefCell::new(HashMap::new());
     static ID_COUNTER: RefCell<i64> = RefCell::new(0);
 }
 
@@ -40,9 +44,37 @@ fn make_db() -> Database {
     db
 }
 
-fn notify_change() {
-    ON_CHANGE.with(|cb| {
-        if let Some(f) = cb.borrow().as_ref() {
+// ── Reactive notification ───────────────────────────────────────
+
+/// Determine affected subscriptions from a ZSet and invoke their callbacks.
+fn notify_affected(zset: &ZSet) {
+    let affected = REGISTRY.with(|r| {
+        let reg = r.borrow();
+        let mut affected = HashSet::new();
+        for entry in &zset.entries {
+            if entry.weight > 0 {
+                affected.extend(reg.on_insert(&entry.table, &entry.row));
+            } else {
+                affected.extend(reg.on_delete(&entry.table, &entry.row));
+            }
+        }
+        affected
+    });
+
+    CALLBACKS.with(|cbs| {
+        let cbs = cbs.borrow();
+        for sub_id in &affected {
+            if let Some(f) = cbs.get(&sub_id.0) {
+                let _ = f.call0(&JsValue::NULL);
+            }
+        }
+    });
+}
+
+/// Notify all subscribers (used after server response / rollback).
+fn notify_all() {
+    CALLBACKS.with(|cbs| {
+        for f in cbs.borrow().values() {
             let _ = f.call0(&JsValue::NULL);
         }
     });
@@ -109,6 +141,20 @@ fn build_action_result(action: &StreamAction) -> Result<JsValue, JsValue> {
     Ok(result.into())
 }
 
+/// Extract table names from a SQL SELECT statement.
+fn extract_tables(sql: &str) -> Vec<String> {
+    let stmt = match sql_parser::parser::parse_statement(sql) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    match stmt {
+        sql_parser::ast::Statement::Select(select) => {
+            select.sources.iter().map(|s| s.table.clone()).collect()
+        }
+        _ => vec![],
+    }
+}
+
 // ── Exported API ─────────────────────────────────────────────────
 
 #[wasm_bindgen]
@@ -119,19 +165,30 @@ pub fn init() {
 }
 
 #[wasm_bindgen]
-pub fn set_on_change(callback: js_sys::Function) {
-    ON_CHANGE.with(|cb| {
-        *cb.borrow_mut() = Some(callback);
-    });
-}
-
-#[wasm_bindgen]
 pub fn next_id() -> f64 {
     ID_COUNTER.with(|c| {
         let mut val = c.borrow_mut();
         *val += 1;
         *val as f64
     })
+}
+
+/// Register a reactive query subscription. Parses the SQL to determine
+/// which tables to watch, stores the callback, and returns a subscription ID.
+#[wasm_bindgen]
+pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
+    let tables = extract_tables(sql);
+    let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe_tables(&tables));
+    CALLBACKS.with(|cbs| cbs.borrow_mut().insert(sub_id.0, callback));
+    sub_id.0 as f64
+}
+
+/// Remove a reactive query subscription.
+#[wasm_bindgen]
+pub fn unsubscribe(sub_id: f64) {
+    let id = SubId(sub_id as u64);
+    REGISTRY.with(|r| r.borrow_mut().unsubscribe(id));
+    CALLBACKS.with(|cbs| cbs.borrow_mut().remove(&(sub_id as u64)));
 }
 
 /// Execute a command optimistically. Returns `{ zset, confirmed: Promise }`.
@@ -158,8 +215,8 @@ pub fn execute(cmd_json: &str) -> Result<JsValue, JsError> {
     // Borsh bytes for the server
     let request_bytes = borsh::to_vec(&request).map_err(|e| JsError::new(&e.to_string()))?;
 
-    // Notify: optimistic state changed
-    notify_change();
+    // Notify affected subscriptions (optimistic state changed)
+    notify_affected(&request.client_zset);
 
     // Build Promise for server confirmation
     let confirmed =
@@ -181,8 +238,13 @@ pub fn execute(cmd_json: &str) -> Result<JsValue, JsError> {
                 })
             })?;
 
-            // Notify: confirmed/rejected state changed
-            notify_change();
+            // Notify: confirmed/rejected state changed.
+            // Rejected → rollback can affect anything → notify all.
+            // Confirmed → notify all (sync status changed for subscribers on these tables).
+            match &action {
+                StreamAction::Rejected { .. } => notify_all(),
+                _ => notify_all(),
+            }
 
             build_action_result(&action)
         });
