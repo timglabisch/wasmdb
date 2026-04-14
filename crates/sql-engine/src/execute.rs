@@ -11,7 +11,19 @@ pub mod scan;
 pub mod sort;
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+struct Instant;
+
+#[cfg(target_arch = "wasm32")]
+impl Instant {
+    fn now() -> Self { Instant }
+    fn elapsed(&self) -> Duration { Duration::ZERO }
+}
 
 use crate::storage::{CellValue, Table};
 use sql_parser::ast::Value;

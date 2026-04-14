@@ -7,6 +7,7 @@ use sql_parser::ast::Statement;
 
 use crate::error::DbError;
 
+#[derive(Clone)]
 pub struct Database {
     tables: HashMap<String, Table>,
 }

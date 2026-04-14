@@ -1,0 +1,9 @@
+[package]
+name = "sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sql-engine = { path = "../sql-engine", features = ["borsh"] }
+database = { path = "../database", features = ["borsh"] }
+borsh = { version = "1", features = ["derive"] }

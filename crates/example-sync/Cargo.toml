@@ -1,0 +1,15 @@
+[package]
+name = "example-sync"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync = { path = "../sync" }
+sync-server = { path = "../sync-server" }
+example-sync-commands = { path = "../example-sync-commands" }
+database = { path = "../database", features = ["borsh"] }
+sql-engine = { path = "../sql-engine", features = ["borsh"] }
+borsh = { version = "1", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }

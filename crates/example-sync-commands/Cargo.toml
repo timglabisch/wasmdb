@@ -1,0 +1,10 @@
+[package]
+name = "example-sync-commands"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync = { path = "../sync" }
+database = { path = "../database", features = ["borsh"] }
+sql-engine = { path = "../sql-engine", features = ["borsh"] }
+borsh = { version = "1", features = ["derive"] }

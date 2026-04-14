@@ -1,3 +1,14 @@
 [workspace]
-members = ["crates/wasm-runtime", "crates/sql-parser", "crates/sql-engine", "crates/database"]
+members = [
+    "crates/wasm-runtime",
+    "crates/sql-parser",
+    "crates/sql-engine",
+    "crates/database",
+    "crates/sync",
+    "crates/sync-client",
+    "crates/sync-server",
+    "crates/example-sync",
+    "crates/example-sync-commands",
+    "crates/example-sync-wasm",
+]
 resolver = "2"

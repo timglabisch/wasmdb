@@ -4,13 +4,14 @@ use crate::bitmap::Bitmap;
 use crate::schema::{DataType, IndexType, TableSchema};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
 pub enum CellValue {
     I64(i64),
     Str(String),
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedColumn {
     I64(Vec<i64>),
     Str(Vec<String>),
@@ -124,7 +125,7 @@ impl std::error::Error for StorageError {}
 
 /// An index (single- or multi-column) backed by either a BTreeMap or HashMap.
 /// Keys are `Vec<CellValue>` — for single-column indexes the key has one element.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TableIndex {
     BTree {
         columns: Vec<usize>,
@@ -274,7 +275,7 @@ pub enum RangeOp {
     Lte,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Table {
     pub schema: TableSchema,
     pub columns: Vec<TypedColumn>,
