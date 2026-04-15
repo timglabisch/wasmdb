@@ -158,6 +158,14 @@ impl TableIndex {
         matches!(self, TableIndex::Hash { .. })
     }
 
+    /// Number of distinct keys in this index.
+    pub fn key_count(&self) -> usize {
+        match self {
+            TableIndex::BTree { map, .. } => map.len(),
+            TableIndex::Hash { map, .. } => map.len(),
+        }
+    }
+
     fn insert(&mut self, key: Vec<CellValue>, row_id: usize) {
         match self {
             TableIndex::BTree { map, .. } => map.entry(key).or_default().push(row_id),
@@ -324,6 +332,11 @@ impl Table {
 
     pub fn is_deleted(&self, row_idx: usize) -> bool {
         self.deleted.get(row_idx)
+    }
+
+    /// Number of deleted (tombstoned) rows.
+    pub fn deleted_count(&self) -> usize {
+        self.deleted.count_ones()
     }
 
 

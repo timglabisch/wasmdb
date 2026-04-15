@@ -26,6 +26,8 @@ export interface HistoryPoint {
   memory: number;
   subCount: number;
   pendingCount: number;
+  queryCount: number;
+  slowQueryCount: number;
 }
 
 export function useDebugHistory(snapshot: DebugSnapshot | null, maxPoints: number = 120): HistoryPoint[] {
@@ -37,6 +39,8 @@ export function useDebugHistory(snapshot: DebugSnapshot | null, maxPoints: numbe
       memory: snapshot.wasmMemoryBytes,
       subCount: snapshot.subscriptions.count,
       pendingCount: snapshot.syncStatus.total_pending,
+      queryCount: snapshot.queryStats.total_queries,
+      slowQueryCount: snapshot.queryStats.slow_queries,
     };
     const h = historyRef.current;
     h.push(entry);

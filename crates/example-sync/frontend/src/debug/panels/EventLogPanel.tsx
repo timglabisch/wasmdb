@@ -11,6 +11,8 @@ const EVENT_COLORS: Record<string, string> = {
   Notification: '#c084fc',
   SubscriptionCreated: '#94a3b8',
   SubscriptionRemoved: '#94a3b8',
+  QueryExecuted: '#38bdf8',
+  SlowQuery: '#f87171',
 };
 
 function formatTime(ms: number, refMs: number): string {
@@ -37,6 +39,14 @@ function eventSummary(event: DebugEvent): string {
       return `#${event.sub_id} ${event.sql.slice(0, 50)} [${event.tables.join(',')}]`;
     case 'SubscriptionRemoved':
       return `#${event.sub_id}`;
+    case 'QueryExecuted': {
+      const dur = event.duration_us < 1000 ? `${event.duration_us}us` : `${(event.duration_us / 1000).toFixed(1)}ms`;
+      return `[${event.source}] ${event.row_count}r ${dur} ${event.sql.slice(0, 50)}`;
+    }
+    case 'SlowQuery': {
+      const dur = event.duration_us < 1000 ? `${event.duration_us}us` : `${(event.duration_us / 1000).toFixed(1)}ms`;
+      return `SLOW ${dur} ${event.sql.slice(0, 60)}`;
+    }
   }
 }
 

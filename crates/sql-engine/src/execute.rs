@@ -16,10 +16,13 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-timing"))]
+use web_time::Instant;
+
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm-timing")))]
 struct Instant;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "wasm-timing")))]
 impl Instant {
     fn now() -> Self { Instant }
     fn elapsed(&self) -> Duration { Duration::ZERO }
@@ -53,6 +56,7 @@ pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 
 /// How a table scan was performed.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ScanMethod {
     Full,
     Index { columns: Vec<usize>, prefix_len: usize, is_hash: bool },
@@ -60,6 +64,7 @@ pub enum ScanMethod {
 
 /// Describes one operation in the execution tree.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum SpanOperation {
     Execute,
     Materialize { step: usize },
@@ -77,6 +82,18 @@ pub struct Span {
     pub operation: SpanOperation,
     pub duration: Duration,
     pub children: Vec<Span>,
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Span {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = s.serialize_struct("Span", 3)?;
+        state.serialize_field("operation", &self.operation)?;
+        state.serialize_field("duration_us", &(self.duration.as_micros() as u64))?;
+        state.serialize_field("children", &self.children)?;
+        state.end()
+    }
 }
 
 /// In-flight span on the context stack (children accumulate here).

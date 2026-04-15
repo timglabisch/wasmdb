@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sql_engine::execute::{Columns, ExecuteError, Params};
+use sql_engine::execute::{Columns, ExecuteError, Params, Span};
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::ast::Statement;
@@ -78,6 +78,20 @@ impl Database {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
         self.execute_statement(stmt, params)
+    }
+
+    pub fn execute_traced(&mut self, sql: &str) -> Result<(Columns, Vec<Span>), DbError> {
+        let stmt = sql_parser::parser::parse_statement(sql)
+            .map_err(|e| DbError::Parse(format!("{e:?}")))?;
+        match stmt {
+            Statement::Select(select) => {
+                crate::select::execute_select_traced(&self.tables, &select, HashMap::new())
+            }
+            _ => {
+                let result = self.execute_statement(stmt, HashMap::new())?;
+                Ok((result, vec![]))
+            }
+        }
     }
 
     fn execute_statement(&mut self, stmt: Statement, params: Params) -> Result<Columns, DbError> {

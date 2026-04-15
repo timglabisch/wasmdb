@@ -34,6 +34,19 @@
 
 .debug-toolbar-content {
   border-top: 1px solid #1a1a2a;
+  display: flex;
+  flex-direction: column;
+}
+
+.debug-resize-handle {
+  height: 5px;
+  cursor: ns-resize;
+  background: transparent;
+  flex-shrink: 0;
+}
+.debug-resize-handle:hover,
+.debug-resize-handle:active {
+  background: #2563eb;
 }
 
 .debug-toolbar-tabs {
@@ -72,7 +85,6 @@
 }
 
 .debug-toolbar-panel {
-  height: 280px;
   overflow-y: auto;
   padding: 8px 12px;
 }
@@ -291,4 +303,89 @@
 }
 .debug-spark-empty {
   color: #444;
+}
+
+/* Query Panel */
+.debug-panel-query { display: flex; flex-direction: column; height: 100%; }
+.debug-query-list { flex: 1; overflow-y: auto; min-height: 0; margin-top: 8px; }
+.debug-query-row {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  cursor: pointer;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.debug-query-row:hover { background: #111120; }
+.debug-query-row.slow { color: #f87171; }
+.debug-query-sql {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+  color: #aaa;
+}
+.debug-query-duration {
+  min-width: 60px;
+  text-align: right;
+  color: #eee;
+  font-weight: 500;
+}
+.debug-span-tree {
+  padding: 4px 0 8px 16px;
+  border-left: 1px solid #1a1a2a;
+  margin-left: 8px;
+  margin-bottom: 4px;
+}
+.debug-span-node {
+  padding: 1px 0;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.debug-selectivity {
+  color: #60a5fa;
+  font-size: 10px;
+}
+
+/* Fragmentation bar */
+.debug-frag-bar {
+  display: inline-flex;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  width: 40px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.debug-frag-live { background: #4ade80; }
+.debug-frag-dead { background: #f87171; }
+
+/* Memory tag */
+.debug-memory-tag {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+/* Bar chart (invalidation counts) */
+.debug-bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.debug-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.debug-bar-fill {
+  height: 8px;
+  border-radius: 2px;
+  background: #c084fc;
+  min-width: 2px;
+}
+.debug-bar-label {
+  font-size: 10px;
+  color: #888;
+  min-width: 60px;
 }

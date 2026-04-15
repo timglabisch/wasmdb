@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sql_engine::execute::{self, Columns, ExecutionContext, Params};
+use sql_engine::execute::{self, Columns, ExecutionContext, Params, Span};
 use sql_engine::planner;
 use sql_engine::storage::Table;
 
@@ -18,4 +18,18 @@ pub fn execute_select(
     let mut ctx = ExecutionContext::with_params(tables, params);
     let result = execute::execute_plan(&mut ctx, &plan)?;
     Ok(result)
+}
+
+pub fn execute_select_traced(
+    tables: &HashMap<String, Table>,
+    select: &sql_parser::ast::AstSelect,
+    params: Params,
+) -> Result<(Columns, Vec<Span>), DbError> {
+    let table_schemas = tables.iter()
+        .map(|(name, table)| (name.clone(), table.schema.clone()))
+        .collect();
+    let plan = planner::plan(select, &table_schemas)?;
+    let mut ctx = ExecutionContext::with_params(tables, params);
+    let result = execute::execute_plan(&mut ctx, &plan)?;
+    Ok((result, ctx.spans))
 }

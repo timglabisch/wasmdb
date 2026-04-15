@@ -27,3 +27,13 @@ pub enum Verdict {
     Confirmed { server_zset: ZSet },
     Rejected { reason: String },
 }
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct BatchCommandRequest<C> {
+    pub requests: Vec<CommandRequest<C>>,
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct BatchCommandResponse {
+    pub responses: Vec<CommandResponse>,
+}

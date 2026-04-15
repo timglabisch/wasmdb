@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import initWasm, {
   init,
   execute as wasmExecute,
+  execute_on_stream as wasmExecuteOnStream,
+  create_stream as wasmCreateStream,
+  flush_stream as wasmFlushStream,
   query as wasmQuery,
   query_confirmed as wasmQueryConfirmed,
   subscribe as wasmSubscribe,
@@ -28,6 +31,18 @@ const readyListeners = new Set<() => void>();
 
 export function execute(cmd: UserCommand): Execution {
   return wasmExecute(JSON.stringify(cmd));
+}
+
+export function createStream(batchCount: number = 1, batchWaitMs: number = 0, retryCount: number = 0): number {
+  return wasmCreateStream(batchCount, batchWaitMs, retryCount);
+}
+
+export function executeOnStream(streamId: number, cmd: UserCommand): Execution {
+  return wasmExecuteOnStream(streamId, JSON.stringify(cmd));
+}
+
+export function flushStream(streamId: number): Promise<void> {
+  return wasmFlushStream(streamId);
 }
 
 export { next_id as nextId };

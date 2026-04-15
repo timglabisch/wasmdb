@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { execute, nextId } from './sync.ts';
+import { execute, executeOnStream, createStream, flushStream, nextId } from './sync.ts';
 
 export default function AddUserForm() {
   const [name, setName] = useState('');
@@ -28,6 +28,19 @@ export default function AddUserForm() {
       .catch(e => console.error('Command failed:', e));
   };
 
+  const addBulk = async () => {
+    const stream = createStream(100); // batch up to 100 commands per request
+    for (let i = 0; i < 100; i++) {
+      executeOnStream(stream, {
+        type: 'Insert',
+        id: nextId(),
+        name: `User ${Math.random().toString(36).slice(2, 8)}`,
+        age: 18 + Math.floor(Math.random() * 50),
+      });
+    }
+    await flushStream(stream); // one HTTP request with all 100 commands
+  };
+
   return (
     <form className="form" onSubmit={handleSubmit}>
       <input
@@ -44,6 +57,7 @@ export default function AddUserForm() {
         placeholder="Age"
       />
       <button type="submit">Add User</button>
+      <button type="button" onClick={addBulk}>+100 Users</button>
     </form>
   );
 }

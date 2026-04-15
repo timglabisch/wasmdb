@@ -8,7 +8,7 @@ use borsh::BorshDeserialize;
 use database::Database;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 use sync::command::Command;
-use sync::protocol::{CommandRequest, CommandResponse, Verdict};
+use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server::state::ServerState;
 use example_sync_commands::UserCommand;
 use tower_http::services::ServeDir;
@@ -32,7 +32,7 @@ async fn handle_command(
     State(state): State<Arc<ServerState<UserCommand>>>,
     body: Bytes,
 ) -> impl IntoResponse {
-    let request = match CommandRequest::<UserCommand>::try_from_slice(&body) {
+    let batch = match BatchCommandRequest::<UserCommand>::try_from_slice(&body) {
         Ok(req) => req,
         Err(e) => {
             return (StatusCode::BAD_REQUEST, e.to_string().into_bytes());
@@ -41,28 +41,34 @@ async fn handle_command(
 
     let mut db = state.db.lock().unwrap();
 
-    let response = match request.command.execute(&mut db) {
-        Ok(server_zset) => {
-            // Log server-side
-            let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
-            eprintln!("[server] confirmed seq={} | total users: {:?}", request.seq_no.0, count[0]);
-            CommandResponse {
-                stream_id: request.stream_id,
-                seq_no: request.seq_no,
-                verdict: Verdict::Confirmed { server_zset },
+    let responses: Vec<CommandResponse> = batch
+        .requests
+        .into_iter()
+        .map(|request| {
+            match request.command.execute(&mut db) {
+                Ok(server_zset) => {
+                    let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
+                    eprintln!("[server] confirmed seq={} | total users: {:?}", request.seq_no.0, count[0]);
+                    CommandResponse {
+                        stream_id: request.stream_id,
+                        seq_no: request.seq_no,
+                        verdict: Verdict::Confirmed { server_zset },
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[server] rejected seq={}: {}", request.seq_no.0, e);
+                    CommandResponse {
+                        stream_id: request.stream_id,
+                        seq_no: request.seq_no,
+                        verdict: Verdict::Rejected { reason: e.to_string() },
+                    }
+                }
             }
-        }
-        Err(e) => {
-            eprintln!("[server] rejected seq={}: {}", request.seq_no.0, e);
-            CommandResponse {
-                stream_id: request.stream_id,
-                seq_no: request.seq_no,
-                verdict: Verdict::Rejected { reason: e.to_string() },
-            }
-        }
-    };
+        })
+        .collect();
 
-    let bytes = borsh::to_vec(&response).expect("serialize response");
+    let batch_response = BatchCommandResponse { responses };
+    let bytes = borsh::to_vec(&batch_response).expect("serialize batch response");
     (StatusCode::OK, bytes)
 }
 

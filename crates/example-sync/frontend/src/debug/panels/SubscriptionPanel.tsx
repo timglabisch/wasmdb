@@ -1,11 +1,10 @@
-import type { SubscriptionDebug } from '../types';
+import type { SubscriptionDebug, QueryStats } from '../types';
 
-export function SubscriptionPanel({ data }: { data: SubscriptionDebug }) {
-  const sorted = [...data.subscriptions].sort((a, b) => {
-    const ca = data.notification_counts[a.id] ?? 0;
-    const cb = data.notification_counts[b.id] ?? 0;
-    return cb - ca;
-  });
+export function SubscriptionPanel({ data, queryStats }: { data: SubscriptionDebug; queryStats: QueryStats }) {
+  const sorted = [...data.subscriptions].sort((a, b) => a.id - b.id);
+
+  const tableInvalidations = Object.entries(queryStats.table_invalidation_counts)
+    .sort((a, b) => b[1] - a[1]);
 
   return (
     <div className="debug-panel-subs">
@@ -25,6 +24,7 @@ export function SubscriptionPanel({ data }: { data: SubscriptionDebug }) {
           <thead>
             <tr>
               <th>SubId</th>
+              <th>SQL</th>
               <th>Tables</th>
               <th>Notifications</th>
             </tr>
@@ -33,6 +33,7 @@ export function SubscriptionPanel({ data }: { data: SubscriptionDebug }) {
             {sorted.map(sub => (
               <tr key={sub.id}>
                 <td>#{sub.id}</td>
+                <td className="debug-query-sql">{sub.sql || '-'}</td>
                 <td>{sub.tables.join(', ') || '-'}</td>
                 <td>{data.notification_counts[sub.id] ?? 0}</td>
               </tr>
@@ -41,6 +42,30 @@ export function SubscriptionPanel({ data }: { data: SubscriptionDebug }) {
         </table>
       ) : (
         <div className="debug-empty">No subscriptions</div>
+      )}
+
+      {tableInvalidations.length > 0 && (
+        <>
+          <div style={{ marginTop: 12, color: '#555', fontSize: 10, textTransform: 'uppercase', marginBottom: 4 }}>
+            Per-Table Invalidations
+          </div>
+          <table className="debug-table">
+            <thead>
+              <tr>
+                <th>Table</th>
+                <th>Invalidations</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableInvalidations.map(([table, count]) => (
+                <tr key={table}>
+                  <td>{table}</td>
+                  <td>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );

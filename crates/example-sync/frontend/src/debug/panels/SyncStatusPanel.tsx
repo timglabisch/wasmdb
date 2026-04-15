@@ -29,7 +29,7 @@ export function SyncStatusPanel({ data }: { data: SyncStatus }) {
             </tr>
           </thead>
           <tbody>
-            {data.streams.map(stream => (
+            {[...data.streams].sort((a, b) => a.id - b.id).map(stream => (
               <>
                 <tr
                   key={stream.id}
