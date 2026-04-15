@@ -243,7 +243,12 @@ fn notify_affected(zset: &ZSet) {
             let cbs = cbs.borrow();
             for sub_id in &affected {
                 if let Some(f) = cbs.get(&sub_id.0) {
-                    let _ = f.call0(&JsValue::NULL);
+                    if let Err(e) = f.call0(&JsValue::NULL) {
+                        web_sys::console::error_2(
+                            &format!("subscription {} callback error:", sub_id.0).into(),
+                            &e,
+                        );
+                    }
                 }
             }
         });
@@ -261,8 +266,13 @@ fn notify_all() {
                     *nc.entry(*id).or_insert(0) += 1;
                 }
             });
-            for f in cbs.values() {
-                let _ = f.call0(&JsValue::NULL);
+            for (id, f) in cbs.iter() {
+                if let Err(e) = f.call0(&JsValue::NULL) {
+                    web_sys::console::error_2(
+                        &format!("subscription {} callback error:", id).into(),
+                        &e,
+                    );
+                }
             }
         });
     });

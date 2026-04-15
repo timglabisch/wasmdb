@@ -584,3 +584,44 @@ fn test_update_then_delete() {
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(count[0], vec![CellValue::I64(2)]);
 }
+
+#[test]
+fn test_orders_inner_join_query() {
+    let mut db = Database::new();
+    db.execute_all("
+        CREATE TABLE users (
+            id I64 NOT NULL PRIMARY KEY,
+            name STRING NOT NULL,
+            age I64 NOT NULL
+        );
+        CREATE TABLE orders (
+            id I64 NOT NULL PRIMARY KEY,
+            user_id I64 NOT NULL,
+            amount I64 NOT NULL,
+            status STRING NOT NULL
+        );
+        INSERT INTO users VALUES (1, 'Alice', 30);
+        INSERT INTO users VALUES (2, 'Bob', 25);
+        INSERT INTO orders VALUES (100, 1, 5000, 'pending');
+        INSERT INTO orders VALUES (101, 2, 3000, 'shipped')
+    ").unwrap();
+
+    // This is the exact query from OrdersPanel
+    let result = db.execute(
+        "SELECT orders.id, orders.user_id, users.name, orders.amount, orders.status FROM orders INNER JOIN users ON orders.user_id = users.id ORDER BY orders.id"
+    ).unwrap();
+
+    eprintln!("columns: {}", result.len());
+    for (i, col) in result.iter().enumerate() {
+        eprintln!("  col[{}]: {:?}", i, col);
+    }
+
+    assert_eq!(result.len(), 5, "should have 5 columns");
+    assert_eq!(result[0].len(), 2, "should have 2 rows");
+    // First row: order 100, user_id 1, Alice, 5000, pending
+    assert_eq!(result[0][0], CellValue::I64(100));
+    assert_eq!(result[1][0], CellValue::I64(1));
+    assert_eq!(result[2][0], CellValue::Str("Alice".into()));
+    assert_eq!(result[3][0], CellValue::I64(5000));
+    assert_eq!(result[4][0], CellValue::Str("pending".into()));
+}
