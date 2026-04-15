@@ -67,7 +67,7 @@ pub fn resolve_params(
     Ok(resolved)
 }
 
-fn resolve_filter(
+pub fn resolve_filter(
     pred: &PlanFilterPredicate,
     params: &Params,
 ) -> Result<PlanFilterPredicate, ExecuteError> {
@@ -132,7 +132,7 @@ fn resolve_filter(
     }
 }
 
-fn resolve_value(value: &Value, params: &Params) -> Result<Value, ExecuteError> {
+pub fn resolve_value(value: &Value, params: &Params) -> Result<Value, ExecuteError> {
     match value {
         Value::Placeholder(name) => match params.get(name) {
             Some(ParamValue::Int(n)) => Ok(Value::Int(*n)),

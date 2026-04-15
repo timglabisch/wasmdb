@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use sql_engine::execute::value_to_cell;
+use sql_engine::execute::{Params, resolve_value, value_to_cell};
 use sql_engine::storage::{CellValue, Table};
-use sql_parser::ast::{AstUpdate, AstExpr};
+use sql_parser::ast::{AstUpdate, AstExpr, Value};
 
 use crate::error::DbError;
 use crate::filter;
@@ -11,6 +11,7 @@ use crate::filter;
 pub fn execute_update(
     tables: &mut HashMap<String, Table>,
     update: &AstUpdate,
+    params: &Params,
 ) -> Result<Vec<(Vec<CellValue>, Vec<CellValue>)>, DbError> {
     let table = tables.get(&update.table)
         .ok_or_else(|| DbError::TableNotFound(update.table.clone()))?;
@@ -27,7 +28,7 @@ pub fn execute_update(
         })
         .collect::<Result<Vec<_>, DbError>>()?;
 
-    let predicate = filter::build_predicate(&update.table, &table.schema, &update.filter, tables)?;
+    let predicate = filter::build_predicate(&update.table, &table.schema, &update.filter, tables, params)?;
     let matching = filter::find_matching_rows(table, &predicate);
 
     // Collect old rows and compute new rows
@@ -36,7 +37,7 @@ pub fn execute_update(
         let old_row: Vec<CellValue> = (0..col_count).map(|c| table.get(row_idx, c)).collect();
         let mut new_row = old_row.clone();
         for &(col_idx, expr) in &assignment_cols {
-            new_row[col_idx] = eval_set_expr(expr)?;
+            new_row[col_idx] = eval_set_expr(expr, params)?;
         }
         pairs.push((old_row, new_row));
     }
@@ -55,8 +56,13 @@ pub fn execute_update(
     Ok(pairs)
 }
 
-fn eval_set_expr(expr: &AstExpr) -> Result<CellValue, DbError> {
+fn eval_set_expr(expr: &AstExpr, params: &Params) -> Result<CellValue, DbError> {
     match expr {
+        AstExpr::Literal(Value::Placeholder(name)) => {
+            let resolved = resolve_value(&Value::Placeholder(name.clone()), params)
+                .map_err(|e| DbError::Parse(e.to_string()))?;
+            Ok(value_to_cell(&resolved))
+        }
         AstExpr::Literal(v) => Ok(value_to_cell(v)),
         _ => Err(DbError::Parse(format!("unsupported SET expression: {expr:?}"))),
     }

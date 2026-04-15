@@ -39,15 +39,14 @@ export default function UsersPanel() {
     e.preventDefault();
     if (!name.trim()) return;
     const id = nextId();
-    const n = name.trim().replace(/'/g, "''");
     const a = parseInt(age) || 0;
-    execute({ type: 'Sql', sql: `INSERT INTO users VALUES (${id}, '${n}', ${a})` });
+    execute({ type: 'InsertUser', id, name: name.trim(), age: a });
     setName('');
     setAge('');
   };
 
   const handleDelete = (id: number) => {
-    execute({ type: 'Sql', sql: `DELETE FROM users WHERE users.id = ${id}` });
+    execute({ type: 'DeleteUsers', ids: [id] });
   };
 
   const startEdit = (u: UserRow) => {
@@ -58,9 +57,8 @@ export default function UsersPanel() {
 
   const saveEdit = () => {
     if (editingId === null) return;
-    const n = editName.trim().replace(/'/g, "''");
     const a = parseInt(editAge) || 0;
-    execute({ type: 'Sql', sql: `UPDATE users SET name = '${n}', age = ${a} WHERE users.id = ${editingId}` });
+    execute({ type: 'UpdateUser', id: editingId, name: editName.trim(), age: a });
     setEditingId(null);
   };
 

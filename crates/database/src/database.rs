@@ -104,9 +104,13 @@ impl Database {
     }
 
     pub fn execute_mut(&mut self, sql: &str) -> Result<MutationResult, DbError> {
+        self.execute_mut_with_params(sql, HashMap::new())
+    }
+
+    pub fn execute_mut_with_params(&mut self, sql: &str, params: Params) -> Result<MutationResult, DbError> {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
-        self.execute_statement_mut(stmt, HashMap::new())
+        self.execute_statement_mut(stmt, params)
     }
 
     fn execute_statement(&mut self, stmt: Statement, params: Params) -> Result<Columns, DbError> {
@@ -130,7 +134,7 @@ impl Database {
                 };
                 // Collect inserted row data by reading the table before/after
                 let before_count = self.tables.get(&insert.table).map(|t| t.physical_len()).unwrap_or(0);
-                crate::insert::execute_insert(&mut self.tables, insert)?;
+                crate::insert::execute_insert(&mut self.tables, insert, &params)?;
                 let table = self.tables.get(&insert.table).unwrap();
                 let after_count = table.physical_len();
                 let mut rows = Vec::new();
@@ -141,11 +145,11 @@ impl Database {
                 Ok(MutationResult::Inserted { table: insert.table.clone(), rows })
             }
             Statement::Delete(ref delete) => {
-                let deleted = crate::delete::execute_delete(&mut self.tables, delete)?;
+                let deleted = crate::delete::execute_delete(&mut self.tables, delete, &params)?;
                 Ok(MutationResult::Deleted { table: delete.table.clone(), rows: deleted })
             }
             Statement::Update(ref update) => {
-                let pairs = crate::update::execute_update(&mut self.tables, update)?;
+                let pairs = crate::update::execute_update(&mut self.tables, update, &params)?;
                 Ok(MutationResult::Updated { table: update.table.clone(), old_new: pairs })
             }
             Statement::CreateTable(ct) => {

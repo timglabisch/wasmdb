@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use sql_engine::execute::filter_row::eval_predicate;
+use sql_engine::execute::{Params, resolve_filter};
 use sql_engine::planner::plan::{ColumnRef, PlanFilterPredicate, PlanSourceEntry, PlanScanMethod};
 use sql_engine::planner::translate::plan_expr_to_predicate;
 use sql_engine::planner::{PlanContext, PlanError};
@@ -16,6 +17,7 @@ pub fn build_predicate(
     schema: &TableSchema,
     filter: &Option<AstExpr>,
     tables: &HashMap<String, Table>,
+    params: &Params,
 ) -> Result<PlanFilterPredicate, DbError> {
     let filter_expr = match filter {
         Some(expr) => expr,
@@ -47,8 +49,15 @@ pub fn build_predicate(
         materializations: Vec::new(),
     };
 
-    plan_expr_to_predicate(filter_expr, &[source], &mut ctx)
-        .map_err(|e: PlanError| DbError::Parse(e.to_string()))
+    let predicate = plan_expr_to_predicate(filter_expr, &[source], &mut ctx)
+        .map_err(|e: PlanError| DbError::Parse(e.to_string()))?;
+
+    if params.is_empty() {
+        Ok(predicate)
+    } else {
+        resolve_filter(&predicate, params)
+            .map_err(|e| DbError::Parse(e.to_string()))
+    }
 }
 
 pub fn find_matching_rows(

@@ -48,13 +48,12 @@ export default function OrdersPanel() {
     if (!uid || !amount) return;
     const id = nextId();
     const a = parseInt(amount) || 0;
-    const s = status.replace(/'/g, "''");
-    execute({ type: 'Sql', sql: `INSERT INTO orders VALUES (${id}, ${uid}, ${a}, '${s}')` });
+    execute({ type: 'InsertOrder', id, user_id: uid, amount: a, status });
     setAmount('');
   };
 
   const handleDelete = (id: number) => {
-    execute({ type: 'Sql', sql: `DELETE FROM orders WHERE orders.id = ${id}` });
+    execute({ type: 'DeleteOrders', ids: [id] });
   };
 
   return (
