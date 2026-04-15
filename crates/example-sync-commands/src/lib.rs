@@ -38,7 +38,18 @@ impl Command for UserCommand {
                 zset.insert("users".into(), row);
             }
             UserCommand::Delete { id } => {
-                let _ = id;
+                let table = db.table("users")
+                    .ok_or_else(|| CommandError::ExecutionFailed("table users not found".into()))?;
+                // Find the row by scanning for matching id (column 0 = PK)
+                let row_idx = table.row_ids()
+                    .find(|&r| table.get(r, 0) == CellValue::I64(*id))
+                    .ok_or_else(|| CommandError::ExecutionFailed(format!("user {} not found", id)))?;
+                let row: Vec<CellValue> = (0..3).map(|c| table.get(row_idx, c)).collect();
+                let table = db.table_mut("users")
+                    .ok_or_else(|| CommandError::ExecutionFailed("table users not found".into()))?;
+                table.delete(row_idx)
+                    .map_err(|e| CommandError::ExecutionFailed(e.to_string()))?;
+                zset.delete("users".into(), row);
             }
         }
         Ok(zset)

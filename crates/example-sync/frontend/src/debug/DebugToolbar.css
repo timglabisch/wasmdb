@@ -389,3 +389,43 @@
   color: #888;
   min-width: 60px;
 }
+
+/* Scenario panel */
+.debug-scenario-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.debug-btn-scenario {
+  padding: 4px 10px;
+  border: 1px solid #333;
+  border-radius: 3px;
+  background: #1a1a2a;
+  color: #ccc;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.debug-btn-scenario:hover { background: #252540; color: #eee; }
+.debug-btn-scenario:active { background: #2563eb; }
+
+.debug-scenario-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.debug-scenario-entry {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 18px;
+}
+.debug-scenario-name { color: #eee; min-width: 140px; }
+.debug-scenario-status { min-width: 60px; font-weight: 500; }
+.debug-scenario-msg { color: #888; }
+.debug-scenario-running .debug-scenario-status { color: #facc15; }
+.debug-scenario-done .debug-scenario-status { color: #4ade80; }
+.debug-scenario-error .debug-scenario-status { color: #f87171; }

@@ -2,7 +2,22 @@
 pub enum Statement {
     Select(AstSelect),
     Insert(AstInsert),
+    Delete(AstDelete),
+    Update(AstUpdate),
     CreateTable(AstCreateTable),
+}
+
+#[derive(Debug, Clone)]
+pub struct AstDelete {
+    pub table: String,
+    pub filter: Option<AstExpr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstUpdate {
+    pub table: String,
+    pub assignments: Vec<(String, AstExpr)>,
+    pub filter: Option<AstExpr>,
 }
 
 #[derive(Debug, Clone)]

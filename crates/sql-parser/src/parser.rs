@@ -1,9 +1,11 @@
 mod core;
 mod create_table;
+mod delete;
 mod insert;
 mod lexer;
 pub(crate) mod select;
 pub mod token;
+mod update;
 
 use crate::ast::*;
 pub use token::{ParseError, Span, Token, TokenKind};
@@ -48,11 +50,13 @@ fn parse_statement_inner(p: &mut core::ParserCore) -> Result<Statement, ParseErr
     match p.peek()?.kind {
         TokenKind::Select => Ok(Statement::Select(select::parse_select_inner(p)?)),
         TokenKind::Insert => Ok(Statement::Insert(insert::parse_insert(p)?)),
+        TokenKind::Delete => Ok(Statement::Delete(delete::parse_delete(p)?)),
+        TokenKind::Update => Ok(Statement::Update(update::parse_update(p)?)),
         TokenKind::Create => Ok(Statement::CreateTable(create_table::parse_create_table(p)?)),
         _ => {
             let tok = p.peek()?.clone();
             Err(ParseError::new(
-                format!("expected SELECT, INSERT or CREATE, got {}", tok.kind.name()),
+                format!("expected SELECT, INSERT, DELETE, UPDATE or CREATE, got {}", tok.kind.name()),
                 tok.span,
             ))
         }
