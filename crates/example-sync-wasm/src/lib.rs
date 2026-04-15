@@ -4,7 +4,7 @@ use wasm_bindgen_futures::JsFuture;
 use js_sys::Uint8Array;
 use database::Database;
 use serde::Serialize;
-use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
+use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sql_engine::storage::{CellValue, TypedColumn};
 use sql_engine::execute::Span;
 use sql_engine::reactive::{SubscriptionRegistry, SubId};
@@ -182,6 +182,19 @@ fn make_db() -> Database {
         ],
         primary_key: vec![0],
         indexes: vec![],
+    }).unwrap();
+    db.create_table(TableSchema {
+        name: "orders".into(),
+        columns: vec![
+            ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "amount".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "status".into(), data_type: DataType::String, nullable: false },
+        ],
+        primary_key: vec![0],
+        indexes: vec![
+            IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
+        ],
     }).unwrap();
     db
 }

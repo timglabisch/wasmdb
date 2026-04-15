@@ -1,6 +1,8 @@
 import { useWasm } from './sync.ts';
-import AddUserForm from './AddUserForm.tsx';
-import UsersTable from './UsersTable.tsx';
+import StatsBar from './StatsBar.tsx';
+import UsersPanel from './UsersPanel.tsx';
+import OrdersPanel from './OrdersPanel.tsx';
+import BulkActions from './BulkActions.tsx';
 import { DebugToolbar } from './debug';
 import './index.css';
 
@@ -15,8 +17,12 @@ export default function App() {
       <p className="subtitle">
         optimistic client (WASM) + authoritative server (Axum) — borsh protocol
       </p>
-      <AddUserForm />
-      <UsersTable />
+      <StatsBar />
+      <div className="dashboard-grid">
+        <UsersPanel />
+        <OrdersPanel />
+      </div>
+      <BulkActions />
       {import.meta.env.DEV && <DebugToolbar />}
     </div>
   );

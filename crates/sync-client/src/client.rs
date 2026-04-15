@@ -143,8 +143,19 @@ impl<C: Command> SyncClient<C> {
         for entry in &zset.entries {
             if entry.weight > 0 {
                 let _ = self.confirmed_db.insert(&entry.table, &entry.row);
+            } else if entry.weight < 0 {
+                // Find row by matching all column values, then delete
+                if let Some(table) = self.confirmed_db.table(&entry.table) {
+                    let col_count = entry.row.len();
+                    let row_idx = table.row_ids()
+                        .find(|&r| (0..col_count).all(|c| table.get(r, c) == entry.row[c]));
+                    if let Some(idx) = row_idx {
+                        if let Some(t) = self.confirmed_db.table_mut(&entry.table) {
+                            let _ = t.delete(idx);
+                        }
+                    }
+                }
             }
-            // Deletes would need row lookup by content/PK — simplified for prototype
         }
     }
 

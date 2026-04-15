@@ -3,7 +3,7 @@ pub mod reactive;
 mod invalidation;
 mod materialize;
 pub(crate) mod optimize;
-mod translate;
+pub mod translate;
 
 use std::collections::HashMap;
 

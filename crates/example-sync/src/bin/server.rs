@@ -6,7 +6,7 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use borsh::BorshDeserialize;
 use database::Database;
-use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
+use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sync::command::Command;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server::state::ServerState;
@@ -24,6 +24,19 @@ fn make_db() -> Database {
         ],
         primary_key: vec![0],
         indexes: vec![],
+    }).unwrap();
+    db.create_table(TableSchema {
+        name: "orders".into(),
+        columns: vec![
+            ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "amount".into(), data_type: DataType::I64, nullable: false },
+            ColumnSchema { name: "status".into(), data_type: DataType::String, nullable: false },
+        ],
+        primary_key: vec![0],
+        indexes: vec![
+            IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
+        ],
     }).unwrap();
     db
 }

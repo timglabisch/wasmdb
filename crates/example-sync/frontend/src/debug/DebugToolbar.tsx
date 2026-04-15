@@ -6,10 +6,9 @@ import { EventLogPanel } from './panels/EventLogPanel';
 import { DatabasePanel } from './panels/DatabasePanel';
 import { QueryPanel } from './panels/QueryPanel';
 import { PerformancePanel } from './panels/PerformancePanel';
-import { ScenarioPanel } from './panels/ScenarioPanel';
 import './DebugToolbar.css';
 
-type PanelId = 'sync' | 'subs' | 'events' | 'db' | 'query' | 'perf' | 'scenarios';
+type PanelId = 'sync' | 'subs' | 'events' | 'db' | 'query' | 'perf';
 
 const MIN_HEIGHT = 100;
 const MAX_HEIGHT_RATIO = 0.8;
@@ -65,7 +64,6 @@ export function DebugToolbar() {
     { id: 'db', label: 'Database' },
     { id: 'query', label: 'Query', badge: snapshot.queryStats.slow_queries > 0 ? String(snapshot.queryStats.slow_queries) : undefined },
     { id: 'perf', label: 'Perf' },
-    { id: 'scenarios', label: 'Scenarios' },
   ];
 
   return (
@@ -98,7 +96,6 @@ export function DebugToolbar() {
             {activePanel === 'db' && <DatabasePanel data={snapshot.database} />}
             {activePanel === 'query' && <QueryPanel queries={snapshot.queryLog} stats={snapshot.queryStats} />}
             {activePanel === 'perf' && <PerformancePanel snapshot={snapshot} history={history} />}
-            {activePanel === 'scenarios' && <ScenarioPanel />}
           </div>
         </div>
       )}
