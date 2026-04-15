@@ -1,6 +1,7 @@
 import { useWasm } from './sync.ts';
 import AddUserForm from './AddUserForm.tsx';
 import UsersTable from './UsersTable.tsx';
+import { DebugToolbar } from './debug';
 import './index.css';
 
 export default function App() {
@@ -16,6 +17,7 @@ export default function App() {
       </p>
       <AddUserForm />
       <UsersTable />
+      {import.meta.env.DEV && <DebugToolbar />}
     </div>
   );
 }

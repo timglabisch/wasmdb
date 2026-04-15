@@ -131,6 +131,11 @@ impl<C: Command> Stream<C> {
         StreamAction::AllConfirmed { confirmed_zsets }
     }
 
+    /// Debug info: (seq_no, zset_entry_count) per pending entry.
+    pub fn pending_detail(&self) -> Vec<(u64, usize)> {
+        self.pending.iter().map(|e| (e.seq_no.0, e.zset.len())).collect()
+    }
+
     pub fn pending_count(&self) -> usize {
         self.pending.len()
     }

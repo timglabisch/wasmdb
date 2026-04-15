@@ -1,0 +1,294 @@
+/* Debug Toolbar — self-contained, all classes prefixed with debug- */
+
+.debug-toolbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12px;
+  color: #ccc;
+  background: #0a0a0f;
+  border-top: 1px solid #2a2a3a;
+}
+
+.debug-toolbar-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  cursor: pointer;
+  user-select: none;
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.debug-toolbar-tab:hover { color: #bbb; }
+
+.debug-toolbar-tab-badge {
+  color: #facc15;
+  font-size: 11px;
+}
+
+.debug-toolbar-content {
+  border-top: 1px solid #1a1a2a;
+}
+
+.debug-toolbar-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #1a1a2a;
+  padding: 0 8px;
+}
+
+.debug-toolbar-tab-btn {
+  padding: 6px 12px;
+  border: none;
+  background: none;
+  color: #666;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s;
+}
+.debug-toolbar-tab-btn:hover { color: #aaa; }
+.debug-toolbar-tab-btn.active {
+  color: #eee;
+  border-bottom-color: #2563eb;
+}
+
+.debug-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.debug-toolbar-panel {
+  height: 280px;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+/* Metrics row */
+.debug-metrics {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 8px;
+}
+.debug-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.debug-metric-label {
+  color: #555;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.debug-metric-value {
+  color: #eee;
+  font-size: 16px;
+  font-weight: 600;
+}
+.debug-metric-value[data-highlight="warn"] {
+  color: #facc15;
+}
+
+/* Tables */
+.debug-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.debug-table th {
+  color: #555;
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid #1a1a2a;
+}
+.debug-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid #111118;
+}
+.debug-table tr:hover td { background: #111120; }
+
+.debug-clickable { cursor: pointer; }
+.debug-clickable:hover { background: #111120; }
+
+.debug-detail-cell {
+  padding: 4px 8px 4px 24px !important;
+  background: #0d0d15;
+}
+.debug-detail-row {
+  color: #888;
+  padding: 1px 0;
+}
+
+.debug-empty {
+  color: #444;
+  padding: 12px;
+  text-align: center;
+  font-style: italic;
+}
+
+/* Event log */
+.debug-panel-events { display: flex; flex-direction: column; height: 100%; }
+.debug-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  color: #666;
+}
+.debug-btn-small {
+  padding: 2px 8px;
+  border: 1px solid #333;
+  border-radius: 3px;
+  background: #1a1a2a;
+  color: #888;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+}
+.debug-btn-small:hover { background: #222; color: #ccc; }
+
+.debug-event-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+.debug-event-row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.debug-event-time {
+  color: #444;
+  min-width: 60px;
+  text-align: right;
+}
+.debug-event-kind {
+  min-width: 110px;
+  font-weight: 500;
+}
+.debug-event-summary {
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Database panel */
+.debug-panel-db { height: 100%; }
+.debug-db-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  height: 100%;
+}
+.debug-db-column {
+  overflow-y: auto;
+}
+.debug-db-label {
+  color: #555;
+  font-size: 10px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #1a1a2a;
+}
+
+.debug-table-entry {
+  margin-bottom: 2px;
+}
+.debug-table-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+.debug-table-name {
+  color: #eee;
+  font-weight: 500;
+}
+.debug-table-count {
+  color: #60a5fa;
+  font-size: 11px;
+}
+.debug-table-meta {
+  color: #444;
+  font-size: 10px;
+}
+.debug-table-detail {
+  padding: 4px 6px 8px;
+}
+.debug-schema {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.debug-col-tag {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #1a1a2a;
+  color: #aaa;
+  font-size: 10px;
+}
+.debug-col-meta {
+  background: #1a1520;
+  color: #666;
+}
+.debug-rows-table td,
+.debug-rows-table th {
+  font-size: 11px;
+  padding: 2px 6px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Performance panel */
+.debug-charts {
+  display: flex;
+  gap: 24px;
+  margin-top: 8px;
+}
+.debug-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.debug-chart-label {
+  color: #555;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.debug-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  background: #111118;
+  border-radius: 3px;
+  padding: 2px;
+}
+.debug-spark-bar {
+  min-height: 1px;
+  border-radius: 1px;
+  opacity: 0.7;
+}
+.debug-spark-empty {
+  color: #444;
+}

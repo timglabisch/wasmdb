@@ -63,6 +63,18 @@ impl<C: Command> SyncClient<C> {
         &mut self.confirmed_db
     }
 
+    pub fn stream_count(&self) -> usize {
+        self.streams.len()
+    }
+
+    pub fn total_pending(&self) -> usize {
+        self.streams.values().map(|s| s.pending_count()).sum()
+    }
+
+    pub fn stream_pending_detail(&self) -> Vec<(StreamId, Vec<(u64, usize)>)> {
+        self.streams.iter().map(|(id, s)| (*id, s.pending_detail())).collect()
+    }
+
     /// Create a new independent stream.
     pub fn create_stream(&mut self) -> StreamId {
         let id = StreamId(self.next_stream_id);

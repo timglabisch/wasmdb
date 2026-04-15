@@ -49,6 +49,18 @@ impl SubscriptionRegistry {
         }
     }
 
+    pub fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
+    }
+
+    pub fn table_subscriptions(&self) -> &HashMap<String, HashSet<SubId>> {
+        &self.table_subs
+    }
+
+    pub fn reverse_index_size(&self) -> usize {
+        self.reverse_index.len()
+    }
+
     /// Subscribe to all changes on the given tables (no INVALIDATE_ON needed).
     pub fn subscribe_tables(&mut self, tables: &[String]) -> SubId {
         let id = SubId(self.next_id);

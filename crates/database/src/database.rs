@@ -52,6 +52,10 @@ impl Database {
         Ok(())
     }
 
+    pub fn table_names(&self) -> Vec<String> {
+        self.tables.keys().cloned().collect()
+    }
+
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }
