@@ -895,13 +895,12 @@ pub fn debug_sync_status() -> Result<JsValue, JsError> {
 #[wasm_bindgen]
 pub fn debug_subscriptions() -> Result<JsValue, JsError> {
     #[derive(Serialize)]
-    struct SubInfo { id: u64, sql: String, tables: Vec<String> }
+    struct SubInfo { id: u64, sql: String, tables: Vec<String>, notification_count: u64 }
 
     #[derive(Serialize)]
     struct SubscriptionDebug {
         count: usize,
         subscriptions: Vec<SubInfo>,
-        notification_counts: HashMap<u64, u64>,
         reverse_index_size: usize,
     }
 
@@ -933,8 +932,8 @@ pub fn debug_subscriptions() -> Result<JsValue, JsError> {
             id: *id,
             sql: sub_sqls.get(id).cloned().unwrap_or_default(),
             tables: tables.clone(),
+            notification_count: notification_counts.get(id).copied().unwrap_or(0),
         }).collect(),
-        notification_counts,
         reverse_index_size,
     };
 

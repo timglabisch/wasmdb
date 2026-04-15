@@ -32,12 +32,12 @@ export interface SubInfo {
   id: number;
   sql: string;
   tables: string[];
+  notification_count: number;
 }
 
 export interface SubscriptionDebug {
   count: number;
   subscriptions: SubInfo[];
-  notification_counts: Record<number, number>;
   reverse_index_size: number;
 }
 

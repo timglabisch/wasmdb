@@ -35,7 +35,7 @@ export function SubscriptionPanel({ data, queryStats }: { data: SubscriptionDebu
                 <td>#{sub.id}</td>
                 <td className="debug-query-sql">{sub.sql || '-'}</td>
                 <td>{sub.tables.join(', ') || '-'}</td>
-                <td>{data.notification_counts[sub.id] ?? 0}</td>
+                <td>{sub.notification_count}</td>
               </tr>
             ))}
           </tbody>
