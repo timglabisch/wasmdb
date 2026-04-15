@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useCallback, memo, type FormEvent } from 'react';
 import { useQuery, useQueryConfirmed, execute, nextId } from './sync.ts';
 
 interface OrderRow {
@@ -11,6 +11,32 @@ interface OrderRow {
 }
 
 const STATUSES = ['pending', 'shipped', 'delivered'];
+
+const OrderRowView = memo(function OrderRowView({
+  order,
+  onDelete,
+}: {
+  order: OrderRow;
+  onDelete: (id: number) => void;
+}) {
+  return (
+    <tr>
+      <td>{order.id}</td>
+      <td>{order.userName} (#{order.userId})</td>
+      <td>${(order.amount / 100).toFixed(2)}</td>
+      <td>{order.status}</td>
+      <td className={`sync-${order.sync}`}>{order.sync}</td>
+      <td><button onClick={() => onDelete(order.id)} className="btn-sm btn-delete">Del</button></td>
+    </tr>
+  );
+}, (prev, next) =>
+  prev.order.id === next.order.id &&
+  prev.order.userId === next.order.userId &&
+  prev.order.userName === next.order.userName &&
+  prev.order.amount === next.order.amount &&
+  prev.order.status === next.order.status &&
+  prev.order.sync === next.order.sync
+);
 
 export default function OrdersPanel() {
   const [userId, setUserId] = useState('');
@@ -52,9 +78,9 @@ export default function OrdersPanel() {
     setAmount('');
   };
 
-  const handleDelete = (id: number) => {
+  const handleDelete = useCallback((id: number) => {
     execute({ type: 'DeleteOrders', ids: [id] });
-  };
+  }, []);
 
   return (
     <div className="panel">
@@ -78,14 +104,7 @@ export default function OrdersPanel() {
           {orders.length === 0 ? (
             <tr><td colSpan={6} className="empty">no orders yet</td></tr>
           ) : orders.map(o => (
-            <tr key={o.id}>
-              <td>{o.id}</td>
-              <td>{o.userName} (#{o.userId})</td>
-              <td>${(o.amount / 100).toFixed(2)}</td>
-              <td>{o.status}</td>
-              <td className={`sync-${o.sync}`}>{o.sync}</td>
-              <td><button onClick={() => handleDelete(o.id)} className="btn-sm btn-delete">Del</button></td>
-            </tr>
+            <OrderRowView key={o.id} order={o} onDelete={handleDelete} />
           ))}
         </tbody>
       </table>

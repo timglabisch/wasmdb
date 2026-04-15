@@ -201,7 +201,7 @@ fn make_db() -> Database {
 
 // ── Reactive notification ───────────────────────────────────────
 
-/// Determine affected subscriptions from a ZSet and invoke their callbacks.
+/// Determine affected subscriptions from a ZSet and schedule deferred notification.
 fn notify_affected(zset: &ZSet) {
     let affected = REGISTRY.with(|r| {
         let reg = r.borrow();
@@ -219,45 +219,52 @@ fn notify_affected(zset: &ZSet) {
         affected
     });
 
-    if !affected.is_empty() {
-        let sub_ids: Vec<u64> = affected.iter().map(|s| s.0).collect();
-        let total_subs = CALLBACKS.with(|cbs| cbs.borrow().len());
-        log_event(DebugEvent::Notification {
-            timestamp_ms: now_ms(),
-            affected_sub_ids: sub_ids.clone(),
-            total_subs,
-        });
-        NOTIFICATION_COUNTS.with(|nc| {
-            let mut nc = nc.borrow_mut();
-            for id in &sub_ids {
-                *nc.entry(*id).or_insert(0) += 1;
-            }
-        });
+    if affected.is_empty() {
+        return;
     }
 
-    CALLBACKS.with(|cbs| {
-        let cbs = cbs.borrow();
-        for sub_id in &affected {
-            if let Some(f) = cbs.get(&sub_id.0) {
-                let _ = f.call0(&JsValue::NULL);
-            }
+    let sub_ids: Vec<u64> = affected.iter().map(|s| s.0).collect();
+    let total_subs = CALLBACKS.with(|cbs| cbs.borrow().len());
+    log_event(DebugEvent::Notification {
+        timestamp_ms: now_ms(),
+        affected_sub_ids: sub_ids.clone(),
+        total_subs,
+    });
+    NOTIFICATION_COUNTS.with(|nc| {
+        let mut nc = nc.borrow_mut();
+        for id in &sub_ids {
+            *nc.entry(*id).or_insert(0) += 1;
         }
+    });
+
+    // Fire callbacks asynchronously so the click handler returns immediately.
+    wasm_bindgen_futures::spawn_local(async move {
+        CALLBACKS.with(|cbs| {
+            let cbs = cbs.borrow();
+            for sub_id in &affected {
+                if let Some(f) = cbs.get(&sub_id.0) {
+                    let _ = f.call0(&JsValue::NULL);
+                }
+            }
+        });
     });
 }
 
 /// Notify all subscribers (used after server response / rollback).
 fn notify_all() {
-    CALLBACKS.with(|cbs| {
-        let cbs = cbs.borrow();
-        NOTIFICATION_COUNTS.with(|nc| {
-            let mut nc = nc.borrow_mut();
-            for id in cbs.keys() {
-                *nc.entry(*id).or_insert(0) += 1;
+    wasm_bindgen_futures::spawn_local(async {
+        CALLBACKS.with(|cbs| {
+            let cbs = cbs.borrow();
+            NOTIFICATION_COUNTS.with(|nc| {
+                let mut nc = nc.borrow_mut();
+                for id in cbs.keys() {
+                    *nc.entry(*id).or_insert(0) += 1;
+                }
+            });
+            for f in cbs.values() {
+                let _ = f.call0(&JsValue::NULL);
             }
         });
-        for f in cbs.values() {
-            let _ = f.call0(&JsValue::NULL);
-        }
     });
 }
 

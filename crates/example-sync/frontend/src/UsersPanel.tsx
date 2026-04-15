@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useCallback, memo, type FormEvent } from 'react';
 import { useQuery, useQueryConfirmed, execute, nextId } from './sync.ts';
 
 interface UserRow {
@@ -8,6 +8,36 @@ interface UserRow {
   orderCount: number;
   sync: 'pending' | 'confirmed';
 }
+
+const UserRowView = memo(function UserRowView({
+  user,
+  onDelete,
+  onStartEdit,
+}: {
+  user: UserRow;
+  onDelete: (id: number) => void;
+  onStartEdit: (id: number) => void;
+}) {
+  return (
+    <tr>
+      <td>{user.id}</td>
+      <td>{user.name}</td>
+      <td>{user.age}</td>
+      <td>{user.orderCount}</td>
+      <td className={`sync-${user.sync}`}>{user.sync}</td>
+      <td className="actions">
+        <button onClick={() => onStartEdit(user.id)} className="btn-sm btn-edit">Edit</button>
+        <button onClick={() => onDelete(user.id)} className="btn-sm btn-delete">Del</button>
+      </td>
+    </tr>
+  );
+}, (prev, next) =>
+  prev.user.id === next.user.id &&
+  prev.user.name === next.user.name &&
+  prev.user.age === next.user.age &&
+  prev.user.orderCount === next.user.orderCount &&
+  prev.user.sync === next.user.sync
+);
 
 export default function UsersPanel() {
   const [name, setName] = useState('');
@@ -45,15 +75,20 @@ export default function UsersPanel() {
     setAge('');
   };
 
-  const handleDelete = (id: number) => {
+  const handleDelete = useCallback((id: number) => {
     execute({ type: 'DeleteUsers', ids: [id] });
-  };
+  }, []);
 
   const startEdit = (u: UserRow) => {
     setEditingId(u.id);
     setEditName(u.name);
     setEditAge(String(u.age));
   };
+
+  const handleStartEdit = useCallback((id: number) => {
+    const u = users.find(u => u.id === id);
+    if (u) startEdit(u);
+  }, [users]);
 
   const saveEdit = () => {
     if (editingId === null) return;
@@ -80,34 +115,21 @@ export default function UsersPanel() {
           {users.length === 0 ? (
             <tr><td colSpan={6} className="empty">no users yet</td></tr>
           ) : users.map(u => (
-            <tr key={u.id}>
-              <td>{u.id}</td>
-              <td>
-                {editingId === u.id
-                  ? <input value={editName} onChange={e => setEditName(e.target.value)} className="inline-edit" />
-                  : u.name}
-              </td>
-              <td>
-                {editingId === u.id
-                  ? <input type="number" value={editAge} onChange={e => setEditAge(e.target.value)} className="inline-edit inline-edit-sm" />
-                  : u.age}
-              </td>
-              <td>{u.orderCount}</td>
-              <td className={`sync-${u.sync}`}>{u.sync}</td>
-              <td className="actions">
-                {editingId === u.id ? (
-                  <>
-                    <button onClick={saveEdit} className="btn-sm btn-save">Save</button>
-                    <button onClick={cancelEdit} className="btn-sm">Cancel</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => startEdit(u)} className="btn-sm btn-edit">Edit</button>
-                    <button onClick={() => handleDelete(u.id)} className="btn-sm btn-delete">Del</button>
-                  </>
-                )}
-              </td>
-            </tr>
+            editingId === u.id ? (
+              <tr key={u.id}>
+                <td>{u.id}</td>
+                <td><input value={editName} onChange={e => setEditName(e.target.value)} className="inline-edit" /></td>
+                <td><input type="number" value={editAge} onChange={e => setEditAge(e.target.value)} className="inline-edit inline-edit-sm" /></td>
+                <td>{u.orderCount}</td>
+                <td className={`sync-${u.sync}`}>{u.sync}</td>
+                <td className="actions">
+                  <button onClick={saveEdit} className="btn-sm btn-save">Save</button>
+                  <button onClick={cancelEdit} className="btn-sm">Cancel</button>
+                </td>
+              </tr>
+            ) : (
+              <UserRowView key={u.id} user={u} onDelete={handleDelete} onStartEdit={handleStartEdit} />
+            )
           ))}
         </tbody>
       </table>
