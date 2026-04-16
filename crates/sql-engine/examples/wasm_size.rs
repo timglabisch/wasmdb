@@ -31,7 +31,7 @@ pub extern "C" fn run() -> i64 {
     table_schemas.insert("users".into(), table_schema);
 
     let ast = parser::parse("SELECT users.name, users.age FROM users WHERE users.age > 28").unwrap();
-    let plan = planner::plan_select(&ast, &table_schemas).unwrap();
+    let plan = planner::sql::plan_select(&ast, &table_schemas).unwrap();
     let mut ctx = execute::ExecutionContext::new(&tables);
     let result = execute::execute(&mut ctx, &plan).unwrap();
 

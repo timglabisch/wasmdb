@@ -44,7 +44,7 @@ impl TestDb {
 
     fn plan(&self, sql: &str) -> String {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         plan.pretty_print()
     }
 }

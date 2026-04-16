@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use sql_engine::execute::{self, Columns, ExecutionContext, Params, Span};
-use sql_engine::planner::plan::ExecutionPlan;
+use sql_engine::planner::sql::plan::ExecutionPlan;
 use sql_engine::planner;
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::Table;
@@ -15,7 +15,7 @@ fn plan_select(
     let table_schemas: HashMap<String, TableSchema> = tables.iter()
         .map(|(name, table)| (name.clone(), table.schema.clone()))
         .collect();
-    Ok(planner::plan(select, &table_schemas)?)
+    Ok(planner::sql::plan(select, &table_schemas)?)
 }
 
 pub fn execute_select(

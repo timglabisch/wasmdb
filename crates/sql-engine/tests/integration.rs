@@ -59,14 +59,14 @@ impl TestDb {
 
     fn run(&self, sql: &str) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::new(&self.tables);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
 
     fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
@@ -816,7 +816,7 @@ fn prepared_reuse_plan_different_params() {
     let db = make_db();
     let sql = "SELECT users.name FROM users WHERE users.id = :id";
     let ast = parser::parse(sql).unwrap();
-    let plan = planner::plan(&ast, &db.table_schemas).unwrap();
+    let plan = planner::sql::plan(&ast, &db.table_schemas).unwrap();
 
     // First execution
     let mut ctx1 = execute::ExecutionContext::with_params(

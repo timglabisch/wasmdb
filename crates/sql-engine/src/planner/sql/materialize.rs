@@ -7,9 +7,10 @@
 
 use sql_parser::ast;
 
-use super::plan::*;
-use super::PlanContext;
-use super::PlanError;
+use crate::planner::plan::*;
+use crate::planner::PlanContext;
+use crate::planner::PlanError;
+use super::plan::MaterializeKind;
 
 /// Plan an IN subquery: `col IN (SELECT ...)`.
 /// Recursively plans the subquery, registers it as a List materialization,
@@ -19,7 +20,7 @@ pub fn plan_in_subquery(
     subquery: &ast::AstSelect,
     ctx: &mut PlanContext,
 ) -> Result<PlanFilterPredicate, PlanError> {
-    let subquery_plan = super::plan_select_ctx(subquery, ctx)?;
+    let subquery_plan = crate::planner::plan_select_ctx(subquery, ctx)?;
     let mat_id = ctx.add_materialization(subquery_plan, MaterializeKind::List);
     Ok(PlanFilterPredicate::InMaterialized { col, mat_id })
 }
@@ -33,7 +34,7 @@ pub fn plan_scalar_subquery(
     subquery: &ast::AstSelect,
     ctx: &mut PlanContext,
 ) -> Result<PlanFilterPredicate, PlanError> {
-    let subquery_plan = super::plan_select_ctx(subquery, ctx)?;
+    let subquery_plan = crate::planner::plan_select_ctx(subquery, ctx)?;
     let mat_id = ctx.add_materialization(subquery_plan, MaterializeKind::Scalar);
     Ok(PlanFilterPredicate::CompareMaterialized { col, op, mat_id })
 }

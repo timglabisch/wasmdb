@@ -51,7 +51,7 @@ impl TestDb {
 
     fn trace(&self, sql: &str) -> String {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = ExecutionContext::new(&self.tables);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed");
         ctx.pretty_print()
@@ -997,7 +997,7 @@ fn parent_duration_gte_children_sum() {
     let ast = parser::parse(
         "SELECT users.name, orders.amount FROM users INNER JOIN orders ON users.id = orders.user_id"
     ).unwrap();
-    let plan = planner::plan(&ast, &db.table_schemas).unwrap();
+    let plan = planner::sql::plan(&ast, &db.table_schemas).unwrap();
     let mut ctx = ExecutionContext::new(&db.tables);
     execute::execute_plan(&mut ctx, &plan).unwrap();
 

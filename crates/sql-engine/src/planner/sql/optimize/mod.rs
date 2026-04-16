@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::schema::TableSchema;
 
-use super::plan::*;
+use crate::planner::plan::*;
 
 /// Run all optimization passes on a plan (order matters).
 pub fn run(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchema>) {
@@ -19,4 +19,3 @@ pub fn run(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchema>) 
     pushdown::rewrite(plan);
     physical::rewrite(plan, table_schemas);
 }
-

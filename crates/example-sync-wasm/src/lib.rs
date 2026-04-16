@@ -7,7 +7,7 @@ use serde::Serialize;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sql_engine::storage::{CellValue, TypedColumn};
 use sql_engine::execute::Span;
-use sql_engine::reactive::{SubscriptionRegistry, SubId};
+use sql_engine::reactive::registry::{SubscriptionRegistry, SubId};
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, Verdict};
 use sync::zset::ZSet;
 use sync_client::client::SyncClient;
@@ -663,7 +663,7 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
 
     let (sub_id, tables) = with_client(|client| {
         let table_schemas = client.db().table_schemas();
-        let conditions = sql_engine::planner::plan_reactive(&select, &table_schemas)
+        let conditions = sql_engine::reactive::plan_reactive(&select, &table_schemas)
             .unwrap_or_else(|e| panic!("subscribe: plan_reactive error: {e:?}"));
 
         let tables: Vec<String> = select.sources.iter().map(|s| s.table.clone()).collect();

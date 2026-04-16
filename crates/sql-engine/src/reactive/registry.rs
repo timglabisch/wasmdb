@@ -8,16 +8,21 @@ use std::collections::{HashMap, HashSet};
 
 use crate::execute::filter_row::eval_predicate;
 use crate::execute::value_to_cell;
-use crate::planner::plan::*;
+use crate::planner::plan::ColumnRef;
 use crate::storage::CellValue;
+use super::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
 
 /// Unique subscription identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubId(pub u64);
 
-/// Reverse-index key: (table, column, value).
+/// Materialized lookup key used as hash-map key in the reverse index.
+///
+/// This is the runtime counterpart of `ReactiveLookupKey`: after parameter
+/// binding, the AST `Value` is converted to a concrete `CellValue` so it
+/// can be matched against incoming rows in O(1).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ReverseKey {
+struct MaterializedLookupKey {
     table: String,
     col: usize,
     value: CellValue,
@@ -25,16 +30,16 @@ struct ReverseKey {
 
 /// A registered subscription.
 struct Subscription {
-    conditions: Vec<ReactiveCondition>,
+    conditions: Vec<OptimizedReactiveCondition>,
     /// For deregistration: which keys belong to this subscription.
-    reverse_keys: Vec<ReverseKey>,
+    reverse_keys: Vec<MaterializedLookupKey>,
 }
 
 /// Manages subscriptions and the reverse index.
 pub struct SubscriptionRegistry {
     next_id: u64,
     subscriptions: HashMap<SubId, Subscription>,
-    reverse_index: HashMap<ReverseKey, Vec<SubId>>,
+    reverse_index: HashMap<MaterializedLookupKey, Vec<SubId>>,
     /// Table-level subscriptions: any mutation on the table triggers the subscription.
     table_subs: HashMap<String, HashSet<SubId>>,
 }
@@ -61,25 +66,25 @@ impl SubscriptionRegistry {
         self.reverse_index.len()
     }
 
-    /// Register a subscription from a plan with reactive metadata.
-    /// The plan must have params already resolved.
+    /// Register a subscription from optimized reactive conditions.
+    /// The conditions must have params already resolved.
     pub fn subscribe(
         &mut self,
-        conditions: &[ReactiveCondition],
+        conditions: &[OptimizedReactiveCondition],
     ) -> SubId {
         let id = SubId(self.next_id);
         self.next_id += 1;
 
         let mut reverse_keys = Vec::new();
         for cond in conditions {
-            match &cond.kind {
-                ReactiveConditionKind::TableLevel => {
+            match &cond.strategy {
+                ReactiveLookupStrategy::TableScan => {
                     self.table_subs.entry(cond.table.clone()).or_default().insert(id);
                 }
-                ReactiveConditionKind::Condition { eq_keys, .. } => {
-                    for key in eq_keys {
+                ReactiveLookupStrategy::IndexLookup { lookup_keys } => {
+                    for key in lookup_keys {
                         let cell = value_to_cell(&key.value);
-                        let rk = ReverseKey {
+                        let rk = MaterializedLookupKey {
                             table: cond.table.clone(),
                             col: key.col,
                             value: cell,
@@ -168,7 +173,7 @@ impl SubscriptionRegistry {
 
         // 2. Reverse-index lookup per column (fine-grained REACTIVE).
         for (col_idx, cell) in row.iter().enumerate() {
-            let rk = ReverseKey {
+            let rk = MaterializedLookupKey {
                 table: table.to_string(),
                 col: col_idx,
                 value: cell.clone(),
@@ -191,14 +196,9 @@ impl SubscriptionRegistry {
                 if cond.table != table {
                     continue;
                 }
-                let matches = match &cond.kind {
-                    ReactiveConditionKind::TableLevel => true,
-                    ReactiveConditionKind::Condition { verify_filter, .. } => {
-                        eval_predicate(verify_filter, &|col: ColumnRef| {
-                            row.get(col.col).cloned().unwrap_or(CellValue::Null)
-                        })
-                    }
-                };
+                let matches = eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
+                    row.get(col.col).cloned().unwrap_or(CellValue::Null)
+                });
                 if matches {
                     triggered.insert(idx);
                 }
@@ -215,23 +215,30 @@ impl SubscriptionRegistry {
 mod tests {
     use super::*;
     use sql_parser::ast::Value;
+    use crate::planner::plan::PlanFilterPredicate;
+    use crate::reactive::plan::ReactiveLookupKey;
 
-    fn cond_eq(table: &str, col: usize, value: Value) -> ReactiveCondition {
-        ReactiveCondition {
+    fn cond_eq(table: &str, col: usize, value: Value) -> OptimizedReactiveCondition {
+        let verify = PlanFilterPredicate::Equals {
+            col: ColumnRef { source: 0, col },
+            value: value.clone(),
+        };
+        OptimizedReactiveCondition {
             table: table.into(),
-            kind: ReactiveConditionKind::Condition {
-                eq_keys: vec![ReactiveKey { col, value }],
-                verify_filter: PlanFilterPredicate::None,
-            },
             source_idx: 0,
+            strategy: ReactiveLookupStrategy::IndexLookup {
+                lookup_keys: vec![ReactiveLookupKey { col, value }],
+            },
+            verify_filter: verify,
         }
     }
 
-    fn cond_table(table: &str) -> ReactiveCondition {
-        ReactiveCondition {
+    fn cond_table(table: &str) -> OptimizedReactiveCondition {
+        OptimizedReactiveCondition {
             table: table.into(),
-            kind: ReactiveConditionKind::TableLevel,
             source_idx: 0,
+            strategy: ReactiveLookupStrategy::TableScan,
+            verify_filter: PlanFilterPredicate::None,
         }
     }
 
@@ -295,16 +302,22 @@ mod tests {
     #[test]
     fn test_verify_filter() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[ReactiveCondition {
+        let sub_id = reg.subscribe(&[OptimizedReactiveCondition {
             table: "orders".into(),
-            kind: ReactiveConditionKind::Condition {
-                eq_keys: vec![ReactiveKey { col: 1, value: Value::Int(42) }],
-                verify_filter: PlanFilterPredicate::GreaterThan {
+            source_idx: 0,
+            strategy: ReactiveLookupStrategy::IndexLookup {
+                lookup_keys: vec![ReactiveLookupKey { col: 1, value: Value::Int(42) }],
+            },
+            verify_filter: PlanFilterPredicate::And(
+                Box::new(PlanFilterPredicate::Equals {
+                    col: ColumnRef { source: 0, col: 1 },
+                    value: Value::Int(42),
+                }),
+                Box::new(PlanFilterPredicate::GreaterThan {
                     col: ColumnRef { source: 0, col: 2 },
                     value: Value::Int(100),
-                },
-            },
-            source_idx: 0,
+                }),
+            ),
         }]);
 
         let affected = reg.on_insert("orders", &[CellValue::I64(1), CellValue::I64(42), CellValue::I64(50)]);

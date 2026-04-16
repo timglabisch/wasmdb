@@ -1,43 +1,14 @@
-//! Reactive type definitions and condition extraction from the AST.
+//! Reactive condition extraction from the AST.
+//!
+//! Walks REACTIVE() expressions in SELECT columns and WHERE clause,
+//! producing logical `ReactiveCondition`s with the full predicate.
 
-use sql_parser::ast::{self, Value};
+use sql_parser::ast;
 
-use super::plan::{PlanSelect, PlanSourceEntry, PlanFilterPredicate, ColumnRef};
-use super::translate;
-use super::PlanError;
-
-// ── Type definitions ─────────────────────────────────────────────────────
-
-/// An equality predicate that becomes a reverse-index key.
-#[derive(Debug, Clone)]
-pub struct ReactiveKey {
-    pub col: usize,
-    pub value: Value,
-}
-
-/// One REACTIVE condition — either table-level or fine-grained with index keys.
-#[derive(Debug, Clone)]
-pub struct ReactiveCondition {
-    pub table: String,
-    pub kind: ReactiveConditionKind,
-    pub source_idx: usize,
-}
-
-/// Whether a reactive condition is table-level or fine-grained.
-#[derive(Debug, Clone)]
-pub enum ReactiveConditionKind {
-    /// Table-level: any change to the table triggers invalidation.
-    /// Produced by `reactive(column_ref)`.
-    TableLevel,
-    /// Fine-grained: only changes matching the condition trigger invalidation.
-    /// Produced by `reactive(expr)` where expr contains equality predicates.
-    Condition {
-        eq_keys: Vec<ReactiveKey>,
-        verify_filter: PlanFilterPredicate,
-    },
-}
-
-// ── Extraction ───────────────────────────────────────────────────────────
+use crate::planner::plan::{PlanSelect, PlanSourceEntry};
+use crate::planner::translate;
+use crate::planner::PlanError;
+use super::plan::{ReactiveCondition, ReactiveConditionKind};
 
 /// Extract reactive conditions from REACTIVE expressions in result columns and WHERE clause.
 pub fn extract_reactive_conditions(
@@ -82,8 +53,11 @@ fn extract_reactive_from_expr(
 
 /// Decompose a REACTIVE inner expression into a ReactiveCondition.
 ///
+/// Phase 1 only: produces logical conditions with the full predicate.
+/// No lookup key extraction — that is done by the optimizer (Phase 2).
+///
 /// If the inner expression is a plain column reference → TableLevel.
-/// Otherwise → decompose into index keys + verify filter.
+/// Otherwise → Condition with the full predicate.
 fn decompose_condition(
     expr: &ast::AstExpr,
     sources: &[PlanSourceEntry],
@@ -98,102 +72,36 @@ fn decompose_condition(
         });
     }
 
-    // Expression with conditions → fine-grained
+    // Expression with conditions → Condition with full predicate
     let dummy_schemas = std::collections::HashMap::new();
     let query_schemas = sources
         .iter()
         .map(|s| (s.table.clone(), s.schema.clone()))
         .collect();
-    let mut ctx = super::PlanContext {
+    let mut ctx = crate::planner::PlanContext {
         table_schemas: &dummy_schemas,
         query_schemas,
         materializations: Vec::new(),
     };
 
     let predicate = translate::plan_expr_to_predicate(expr, sources, &mut ctx)?;
-    let (eq_keys, verify_filter) = split_eq_keys(&predicate);
 
-    if eq_keys.is_empty() {
-        // No equality predicates → treat as table-level for all referenced tables
-        let col_refs = predicate.column_refs();
-        if let Some(first) = col_refs.first() {
-            return Ok(ReactiveCondition {
-                table: sources[first.source].table.clone(),
-                kind: ReactiveConditionKind::TableLevel,
-                source_idx: first.source,
-            });
-        }
+    // Determine the table from column refs in the predicate
+    let col_refs = predicate.column_refs();
+    if col_refs.is_empty() {
         return Err(PlanError::UnsupportedExpr(
             "REACTIVE condition must reference at least one column".into(),
         ));
     }
-
-    // All index keys must reference the same table.
-    let source_idx = eq_keys[0].col_ref.source;
-    for key in &eq_keys[1..] {
-        if key.col_ref.source != source_idx {
-            return Err(PlanError::UnsupportedExpr(
-                "REACTIVE equality predicates must all reference the same table".into(),
-            ));
-        }
-    }
-
-    let table = sources[source_idx].table.clone();
+    let source_idx = col_refs[0].source;
 
     Ok(ReactiveCondition {
-        table,
+        table: sources[source_idx].table.clone(),
         kind: ReactiveConditionKind::Condition {
-            eq_keys: eq_keys
-                .into_iter()
-                .map(|k| ReactiveKey {
-                    col: k.col_ref.col,
-                    value: k.value,
-                })
-                .collect(),
-            verify_filter,
+            filter: predicate,
         },
         source_idx,
     })
-}
-
-/// Intermediate representation for extracted index keys.
-struct ExtractedKey {
-    col_ref: ColumnRef,
-    value: sql_parser::ast::Value,
-}
-
-/// Split an AND chain into index keys (equality predicates) and remaining verify filter.
-fn split_eq_keys(
-    pred: &PlanFilterPredicate,
-) -> (Vec<ExtractedKey>, PlanFilterPredicate) {
-    let mut keys = Vec::new();
-    let mut rest = Vec::new();
-    flatten_and(pred, &mut keys, &mut rest);
-    let verify = PlanFilterPredicate::combine_and(rest);
-    (keys, verify)
-}
-
-/// Recursively flatten AND nodes, extracting Equals predicates as index keys.
-fn flatten_and(
-    pred: &PlanFilterPredicate,
-    keys: &mut Vec<ExtractedKey>,
-    rest: &mut Vec<PlanFilterPredicate>,
-) {
-    match pred {
-        PlanFilterPredicate::And(l, r) => {
-            flatten_and(l, keys, rest);
-            flatten_and(r, keys, rest);
-        }
-        PlanFilterPredicate::Equals { col, value } => {
-            keys.push(ExtractedKey {
-                col_ref: *col,
-                value: value.clone(),
-            });
-        }
-        other => {
-            rest.push(other.clone());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -201,7 +109,7 @@ mod tests {
     use super::*;
     use sql_parser::ast::Value;
     use sql_parser::schema::{ColumnDef, Schema};
-    use super::super::plan::PlanScanMethod;
+    use crate::planner::plan::{PlanFilterPredicate, PlanScanMethod};
 
     fn users_sources() -> Vec<PlanSourceEntry> {
         vec![PlanSourceEntry {
@@ -228,11 +136,8 @@ mod tests {
         let cond = decompose_condition(&expr, &sources).unwrap();
         assert_eq!(cond.table, "users");
         match &cond.kind {
-            ReactiveConditionKind::Condition { eq_keys, verify_filter } => {
-                assert_eq!(eq_keys.len(), 1);
-                assert_eq!(eq_keys[0].col, 0);
-                assert!(matches!(eq_keys[0].value, Value::Placeholder(ref n) if n == "uid"));
-                assert!(matches!(verify_filter, PlanFilterPredicate::None));
+            ReactiveConditionKind::Condition { filter } => {
+                assert!(matches!(filter, PlanFilterPredicate::Equals { .. }));
             }
             _ => panic!("expected Condition"),
         }
@@ -248,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn test_decompose_no_equality_falls_back_to_table_level() {
+    fn test_decompose_non_equality_produces_condition() {
         let sources = users_sources();
         let expr = ast::AstExpr::Binary {
             left: Box::new(ast::AstExpr::Column(ast::AstColumnRef { table: "users".into(), column: "age".into() })),
@@ -257,6 +162,11 @@ mod tests {
         };
         let cond = decompose_condition(&expr, &sources).unwrap();
         assert_eq!(cond.table, "users");
-        assert!(matches!(cond.kind, ReactiveConditionKind::TableLevel));
+        match &cond.kind {
+            ReactiveConditionKind::Condition { filter } => {
+                assert!(matches!(filter, PlanFilterPredicate::GreaterThan { .. }));
+            }
+            _ => panic!("expected Condition with filter, not TableLevel"),
+        }
     }
 }

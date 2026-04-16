@@ -3,6 +3,7 @@
 use sql_parser::ast::Value;
 
 use crate::planner::plan::*;
+use crate::planner::sql::plan::ExecutionPlan;
 use super::{ExecuteError, Params, ParamValue};
 
 /// Resolve all placeholders in an ExecutionPlan. Returns the plan unchanged if params is empty.
@@ -21,25 +22,6 @@ pub fn resolve_plan_params(
     Ok(resolved)
 }
 
-/// Resolve all placeholders in reactive conditions.
-pub fn resolve_reactive_conditions(
-    conditions: &[ReactiveCondition],
-    params: &Params,
-) -> Result<Vec<ReactiveCondition>, ExecuteError> {
-    if params.is_empty() {
-        return Ok(conditions.to_vec());
-    }
-    let mut resolved = conditions.to_vec();
-    for cond in &mut resolved {
-        if let ReactiveConditionKind::Condition { ref mut eq_keys, ref mut verify_filter } = cond.kind {
-            for key in eq_keys.iter_mut() {
-                key.value = resolve_value(&key.value, params)?;
-            }
-            *verify_filter = resolve_filter(verify_filter, params)?;
-        }
-    }
-    Ok(resolved)
-}
 
 /// Resolve all Value::Placeholder in a PlanSelect using the given params.
 pub fn resolve_params(

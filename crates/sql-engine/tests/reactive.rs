@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sql_engine::execute::{self, Columns, ParamValue};
 use sql_engine::planner;
-use sql_engine::reactive::SubscriptionRegistry;
+use sql_engine::reactive::registry::SubscriptionRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
@@ -47,7 +47,7 @@ impl TestDb {
 
     fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
@@ -87,11 +87,11 @@ fn reactive_pk_watch() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
     assert_eq!(conditions.len(), 1);
     assert_eq!(conditions[0].table, "users");
 
-    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
 
@@ -109,8 +109,8 @@ fn reactive_with_verify_filter() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -127,8 +127,8 @@ fn reactive_unsubscribe() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -144,8 +144,8 @@ fn reactive_delete_triggers() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -160,8 +160,8 @@ fn reactive_update_leaving_filter() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -191,11 +191,42 @@ fn reactive_plan_pretty_print() {
     let db = make_db();
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     let pp = plan.pretty_print();
 
     // Execution plan should NOT contain reactive metadata
     assert!(!pp.contains("Reactive strategy"));
     // But should still have REACTIVE result column
     assert!(pp.contains("REACTIVE[0] AS inv"));
+}
+
+#[test]
+fn reactive_multi_eq_verify_filter_regression() {
+    // Bug regression: reactive(id = :uid AND name = 'Alice') must NOT trigger
+    // on INSERT (id=1, name='Bob') even though lookup key (id=1) matches.
+    // The verify_filter must contain the FULL predicate (id=:uid AND name='Alice').
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id = :uid AND users.name = 'Alice') AS inv FROM users WHERE users.id = :uid";
+    let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
+
+    let conditions = sql_engine::reactive::plan_reactive(
+        &parser::parse(sql).unwrap(),
+        &db.table_schemas,
+    ).unwrap();
+    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+
+    let mut registry = SubscriptionRegistry::new();
+    let sub_id = registry.subscribe(&resolved);
+
+    // name='Bob' does NOT match name='Alice' → must NOT trigger
+    let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("Bob".into()), CellValue::I64(25)]);
+    assert!(affected.is_empty(), "should NOT trigger: name mismatch");
+
+    // name='Alice' matches → must trigger
+    let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
+    assert_eq!(affected, vec![sub_id], "should trigger: full condition matches");
+
+    // Different id → must NOT trigger (lookup key doesn't match)
+    let affected = registry.on_insert("users", &[CellValue::I64(99), CellValue::Str("Alice".into()), CellValue::I64(30)]);
+    assert!(affected.is_empty(), "should NOT trigger: id mismatch");
 }

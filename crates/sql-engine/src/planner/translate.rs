@@ -6,7 +6,7 @@
 use sql_parser::ast;
 
 use super::plan::*;
-use super::materialize;
+use super::sql::materialize;
 use super::PlanContext;
 use super::PlanError;
 
@@ -178,7 +178,7 @@ pub fn plan_expr_to_predicate(
             materialize::plan_in_subquery(col, subquery, ctx)
         }
         // Reactive in WHERE: transparent — inner expression is used as normal filter.
-        // The reactive condition is extracted separately by invalidation.rs.
+        // The reactive condition is extracted separately by reactive/extract.rs.
         ast::AstExpr::Reactive(inner) => plan_expr_to_predicate(inner, sources, ctx),
         _ => Err(PlanError::UnsupportedExpr(
             "filter must be a binary expression, IN, or IN subquery".into(),

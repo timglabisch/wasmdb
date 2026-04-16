@@ -1,7 +1,5 @@
 pub mod plan;
-pub mod reactive;
-mod materialize;
-pub(crate) mod optimize;
+pub mod sql;
 pub mod translate;
 
 use std::collections::HashMap;
@@ -17,7 +15,7 @@ use plan::*;
 pub struct PlanContext<'a> {
     pub table_schemas: &'a HashMap<String, TableSchema>,
     pub query_schemas: HashMap<String, Schema>,
-    pub materializations: Vec<MaterializeStep>,
+    pub materializations: Vec<sql::plan::MaterializeStep>,
 }
 
 fn derive_query_schema(table_name: &str, ts: &TableSchema) -> Schema {
@@ -30,10 +28,21 @@ fn derive_query_schema(table_name: &str, ts: &TableSchema) -> Schema {
 }
 
 impl<'a> PlanContext<'a> {
-    fn add_materialization(&mut self, plan: PlanSelect, kind: MaterializeKind) -> usize {
+    pub(crate) fn add_materialization(&mut self, plan: PlanSelect, kind: sql::plan::MaterializeKind) -> usize {
         let id = self.materializations.len();
-        self.materializations.push(MaterializeStep { plan, kind });
+        self.materializations.push(sql::plan::MaterializeStep { plan, kind });
         id
+    }
+}
+
+pub(crate) fn make_plan_context<'a>(table_schemas: &'a HashMap<String, TableSchema>) -> PlanContext<'a> {
+    let query_schemas: HashMap<String, Schema> = table_schemas.iter()
+        .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
+        .collect();
+    PlanContext {
+        table_schemas,
+        query_schemas,
+        materializations: Vec::new(),
     }
 }
 
@@ -62,70 +71,15 @@ impl std::fmt::Display for PlanError {
 
 impl std::error::Error for PlanError {}
 
-// ── Entry points ──────────────────────────────────────────────────────────
-
-/// Translate an AstSelect into an ExecutionPlan with materialization steps for subqueries.
-pub fn plan(
-    ast: &ast::AstSelect,
-    table_schemas: &HashMap<String, TableSchema>,
-) -> Result<ExecutionPlan, PlanError> {
-    let query_schemas: HashMap<String, Schema> = table_schemas.iter()
-        .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
-        .collect();
-    let mut ctx = PlanContext {
-        table_schemas,
-        query_schemas,
-        materializations: Vec::new(),
-    };
-    let main = plan_select_ctx(ast, &mut ctx)?;
-    Ok(ExecutionPlan {
-        materializations: ctx.materializations,
-        main,
-    })
-}
-
-/// Extract reactive conditions from an AstSelect (for subscription registration).
-/// Independent of execution planning — only extracts REACTIVE() expressions.
-pub fn plan_reactive(
-    ast: &ast::AstSelect,
-    table_schemas: &HashMap<String, TableSchema>,
-) -> Result<Vec<reactive::ReactiveCondition>, PlanError> {
-    let query_schemas: HashMap<String, Schema> = table_schemas.iter()
-        .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
-        .collect();
-    let mut ctx = PlanContext {
-        table_schemas,
-        query_schemas,
-        materializations: Vec::new(),
-    };
-    let main = plan_select_ctx(ast, &mut ctx)?;
-    reactive::extract_reactive_conditions(ast, &main)
-}
-
-/// Translate an AstSelect into a PlanSelect (convenience wrapper).
-/// Errors if the AST contains subqueries — use `plan()` instead.
-pub fn plan_select(
-    select: &ast::AstSelect,
-    table_schemas: &HashMap<String, TableSchema>,
-) -> Result<PlanSelect, PlanError> {
-    let ep = plan(select, table_schemas)?;
-    if !ep.materializations.is_empty() {
-        return Err(PlanError::UnsupportedExpr(
-            "unexpected subqueries; use plan() instead".into(),
-        ));
-    }
-    Ok(ep.main)
-}
-
 // ── Internal pipeline ─────────────────────────────────────────────────────
 
 /// Build a PlanSelect: translate AST → raw plan → optimize.
-fn plan_select_ctx(
+pub(crate) fn plan_select_ctx(
     select: &ast::AstSelect,
     ctx: &mut PlanContext,
 ) -> Result<PlanSelect, PlanError> {
     let mut plan = translate::build_raw_plan(select, ctx)?;
-    optimize::run(&mut plan, ctx.table_schemas);
+    sql::optimize::run(&mut plan, ctx.table_schemas);
     Ok(plan)
 }
 
@@ -134,6 +88,7 @@ fn plan_select_ctx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::sql::plan_select;
     use sql_parser::ast::*;
     use crate::schema::{ColumnSchema, DataType};
 
