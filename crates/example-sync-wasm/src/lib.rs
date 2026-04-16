@@ -7,7 +7,7 @@ use serde::Serialize;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sql_engine::storage::{CellValue, TypedColumn};
 use sql_engine::execute::Span;
-use sql_engine::reactive::registry::{SubscriptionRegistry, SubId};
+use sql_engine::reactive::execute::registry::{SubscriptionRegistry, SubId};
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, Verdict};
 use sync::zset::ZSet;
 use sync_client::client::SyncClient;

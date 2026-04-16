@@ -10,7 +10,7 @@ use crate::execute::filter_row::eval_predicate;
 use crate::execute::value_to_cell;
 use crate::planner::plan::ColumnRef;
 use crate::storage::CellValue;
-use super::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
+use crate::reactive::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
 
 /// Unique subscription identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

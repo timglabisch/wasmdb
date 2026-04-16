@@ -3,8 +3,7 @@
 pub mod plan;
 pub mod extract;
 pub mod optimize;
-pub mod registry;
-pub mod bind;
+pub mod execute;
 
 use std::collections::HashMap;
 

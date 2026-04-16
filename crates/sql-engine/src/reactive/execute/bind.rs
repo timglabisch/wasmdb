@@ -3,7 +3,7 @@
 use crate::execute::Params;
 use crate::execute::ExecuteError;
 use crate::execute::bind::{resolve_filter, resolve_value};
-use super::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
+use crate::reactive::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
 
 /// Resolve all placeholders in optimized reactive conditions.
 pub fn resolve_reactive_conditions(

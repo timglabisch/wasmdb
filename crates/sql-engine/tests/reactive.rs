@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sql_engine::execute::{self, Columns, ParamValue};
 use sql_engine::planner;
-use sql_engine::reactive::registry::SubscriptionRegistry;
+use sql_engine::reactive::execute::registry::SubscriptionRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
@@ -91,7 +91,7 @@ fn reactive_pk_watch() {
     assert_eq!(conditions.len(), 1);
     assert_eq!(conditions[0].table, "users");
 
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
 
@@ -110,7 +110,7 @@ fn reactive_with_verify_filter() {
 
     let ast = parser::parse(sql).expect("parse failed");
     let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -128,7 +128,7 @@ fn reactive_unsubscribe() {
 
     let ast = parser::parse(sql).expect("parse failed");
     let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -145,7 +145,7 @@ fn reactive_delete_triggers() {
 
     let ast = parser::parse(sql).expect("parse failed");
     let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -161,7 +161,7 @@ fn reactive_update_leaving_filter() {
 
     let ast = parser::parse(sql).expect("parse failed");
     let conditions = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
@@ -213,7 +213,7 @@ fn reactive_multi_eq_verify_filter_regression() {
         &parser::parse(sql).unwrap(),
         &db.table_schemas,
     ).unwrap();
-    let resolved = sql_engine::reactive::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
+    let resolved = sql_engine::reactive::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&resolved);
