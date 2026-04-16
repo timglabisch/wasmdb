@@ -52,21 +52,3 @@ pub fn on_insert(registry: &SubscriptionRegistry, table: &str, new_row: &[CellVa
 pub fn on_delete(registry: &SubscriptionRegistry, table: &str, old_row: &[CellValue]) -> Vec<SubId> {
     check_mutation(registry, table, old_row).into_keys().collect()
 }
-
-/// Like `on_insert` but also returns which condition indices triggered per subscription.
-pub fn on_insert_detailed(
-    registry: &SubscriptionRegistry,
-    table: &str,
-    new_row: &[CellValue],
-) -> HashMap<SubId, HashSet<usize>> {
-    check_mutation(registry, table, new_row)
-}
-
-/// Like `on_delete` but also returns which condition indices triggered per subscription.
-pub fn on_delete_detailed(
-    registry: &SubscriptionRegistry,
-    table: &str,
-    old_row: &[CellValue],
-) -> HashMap<SubId, HashSet<usize>> {
-    check_mutation(registry, table, old_row)
-}

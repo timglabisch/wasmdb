@@ -324,7 +324,7 @@ impl PlanSelect {
 }
 
 impl PlanFilterPredicate {
-    fn pretty_print_to(&self, out: &mut String, sources: &[PlanSourceEntry]) {
+    pub fn pretty_print_to(&self, out: &mut String, sources: &[PlanSourceEntry]) {
         match self {
             PlanFilterPredicate::Equals { col, value } =>
                 out.push_str(&format!("{} = {}", col_name(col, sources), val(value))),
@@ -398,7 +398,7 @@ impl PlanFilterPredicate {
     }
 }
 
-fn col_name(col: &ColumnRef, sources: &[PlanSourceEntry]) -> String {
+pub fn col_name(col: &ColumnRef, sources: &[PlanSourceEntry]) -> String {
     if let Some(source) = sources.get(col.source) {
         if let Some(cdef) = source.schema.columns.get(col.col) {
             return format!("{}.{}", source.table, cdef.name);
@@ -407,7 +407,7 @@ fn col_name(col: &ColumnRef, sources: &[PlanSourceEntry]) -> String {
     format!("#{}.{}", col.source, col.col)
 }
 
-fn val(v: &Value) -> String {
+pub fn val(v: &Value) -> String {
     match v {
         Value::Int(n) => n.to_string(),
         Value::Float(f) => f.to_string(),

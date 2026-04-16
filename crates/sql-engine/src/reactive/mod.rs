@@ -35,12 +35,16 @@ use crate::schema::TableSchema;
 /// Entry-point: extract and optimize reactive conditions from an AstSelect.
 ///
 /// Pipeline: plan_select_ctx() → extract conditions → optimize (extract lookup keys).
+/// Returns a `ReactivePlan` that bundles the optimized conditions with the
+/// source schemas (for pretty-printing and inspection).
 pub fn plan_reactive(
     ast: &ast::AstSelect,
     table_schemas: &HashMap<String, TableSchema>,
-) -> Result<Vec<plan::OptimizedReactiveCondition>, PlanError> {
+) -> Result<plan::ReactivePlan, PlanError> {
     let mut ctx = crate::planner::make_plan_context(table_schemas);
     let main = crate::planner::plan_select_ctx(ast, &mut ctx)?;
     let logical = plan::extract::extract_reactive_conditions(ast, &main)?;
-    Ok(plan::optimize::optimize(logical))
+    let conditions = plan::optimize::optimize(logical);
+    let sources = main.sources;
+    Ok(plan::ReactivePlan { conditions, sources })
 }

@@ -53,10 +53,11 @@ pub fn build_raw_plan(
         .map(|expr| resolve_to_column_ref(expr, &sources))
         .collect::<Result<Vec<_>, _>>()?;
 
+    let mut reactive_counter = 0usize;
     let result_columns = select
         .result_columns
         .iter()
-        .map(|rc| plan_result_column(rc, &sources))
+        .map(|rc| plan_result_column(rc, &sources, &mut reactive_counter))
         .collect::<Result<Vec<_>, _>>()?;
 
     let aggregates: Vec<PlanAggregate> = result_columns
@@ -266,6 +267,7 @@ pub fn flip_op(op: ast::Operator) -> Result<ast::Operator, PlanError> {
 fn plan_result_column(
     rc: &ast::AstResultColumn,
     sources: &[PlanSourceEntry],
+    reactive_counter: &mut usize,
 ) -> Result<PlanResultColumn, PlanError> {
     match &rc.expr {
         ast::AstExpr::Aggregate { func, arg } => {
@@ -277,8 +279,10 @@ fn plan_result_column(
             })
         }
         ast::AstExpr::Reactive(_) => {
+            let idx = *reactive_counter;
+            *reactive_counter += 1;
             Ok(PlanResultColumn::Reactive {
-                condition_idx: 0,
+                condition_idx: idx,
                 alias: rc.alias.clone(),
             })
         }

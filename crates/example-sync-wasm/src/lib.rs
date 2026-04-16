@@ -655,12 +655,12 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
 
     let (sub_id, tables) = with_client(|client| {
         let table_schemas = client.db().table_schemas();
-        let conditions = sql_engine::reactive::plan_reactive(&select, &table_schemas)
+        let plan = sql_engine::reactive::plan_reactive(&select, &table_schemas)
             .unwrap_or_else(|e| panic!("subscribe: plan_reactive error: {e:?}"));
 
         let tables: Vec<String> = select.sources.iter().map(|s| s.table.clone()).collect();
 
-        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&conditions, &std::collections::HashMap::new()).unwrap());
+        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&plan.conditions, &std::collections::HashMap::new()).unwrap());
         (sub_id, tables)
     });
 

@@ -5,7 +5,7 @@ pub mod optimize;
 
 use sql_parser::ast::Value;
 
-use crate::planner::plan::PlanFilterPredicate;
+use crate::planner::plan::{self, PlanFilterPredicate, PlanSourceEntry};
 
 // ── Logical types (Phase 1: extraction output) ──────────────────────────
 
@@ -71,4 +71,48 @@ pub struct OptimizedReactiveCondition {
     /// For TableLevel conditions this is `PlanFilterPredicate::None`.
     /// For Condition-level this is the complete predicate tree, never stripped.
     pub verify_filter: PlanFilterPredicate,
+}
+
+// ── Reactive plan (top-level) ─────────────────────────────────────────
+
+/// The complete reactive plan — analogous to `ExecutionPlan` for SQL.
+///
+/// Bundles optimized conditions with the source schemas needed for
+/// pretty-printing and inspection. Produced by `plan_reactive()`.
+pub struct ReactivePlan {
+    pub conditions: Vec<OptimizedReactiveCondition>,
+    pub sources: Vec<PlanSourceEntry>,
+}
+
+impl ReactivePlan {
+    pub fn pretty_print(&self) -> String {
+        let mut out = String::new();
+        if self.conditions.is_empty() {
+            out.push_str("ReactivePlan (no conditions)\n");
+            return out;
+        }
+        for (i, cond) in self.conditions.iter().enumerate() {
+            let strategy = match &cond.strategy {
+                ReactiveLookupStrategy::TableScan => "TableScan".to_string(),
+                ReactiveLookupStrategy::IndexLookup { lookup_keys } => {
+                    let keys: Vec<String> = lookup_keys.iter().map(|k| {
+                        let col_name = plan::col_name(
+                            &crate::planner::plan::ColumnRef { source: cond.source_idx, col: k.col },
+                            &self.sources,
+                        );
+                        format!("{col_name} = {}", plan::val(&k.value))
+                    }).collect();
+                    format!("IndexLookup [{}]", keys.join(", "))
+                }
+            };
+            out.push_str(&format!("Reactive[{i}] table={} strategy={strategy}\n", cond.table));
+
+            if !matches!(cond.verify_filter, PlanFilterPredicate::None) {
+                out.push_str("  verify: ");
+                cond.verify_filter.pretty_print_to(&mut out, &self.sources);
+                out.push('\n');
+            }
+        }
+        out
+    }
 }
