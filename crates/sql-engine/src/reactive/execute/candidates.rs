@@ -7,7 +7,7 @@
 use fnv::FnvHashSet;
 
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
-use crate::reactive::registry::{CompositeKey, SubId, SubscriptionRegistry};
+use crate::reactive::registry::{SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
 
 /// Collect all candidate subscriptions for a mutation on `table` with `row`.
@@ -35,15 +35,12 @@ pub(crate) fn collect(
                 .collect();
             // Only look up if we could extract all columns.
             if cols.len() == col_indices.len() {
-                let key = CompositeKey {
-                    table: table.to_string(),
-                    cols: cols.clone(),
-                };
-                let key_values: Vec<CellValue> = cols.iter().map(|(_, v)| v.clone()).collect();
-                let hit_subs: Vec<SubId> = registry.composite_lookup(&key)
+                let hit_subs: Vec<SubId> = registry.composite_lookup(table, &cols)
                     .map(|s| s.iter().copied().collect())
                     .unwrap_or_default();
                 candidates.extend(hit_subs.iter().copied());
+                // Move `cols` into the span's key_values — no extra CellValue clones.
+                let key_values: Vec<CellValue> = cols.into_iter().map(|(_, v)| v).collect();
                 ctx.span(ReactiveSpanOperation::HashLookup { key_values, hit_subs }, |_| {});
             }
         }

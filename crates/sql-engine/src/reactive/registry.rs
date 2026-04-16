@@ -18,13 +18,12 @@ use crate::storage::CellValue;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubId(pub u64);
 
-/// Composite lookup key: table + sorted list of (col, value) pairs.
-///
-/// For `REACTIVE(id = 1 AND name = 'Alice')` this becomes:
-/// `{ table: "users", cols: [(0, I64(1)), (1, Str("Alice"))] }`.
-///
-/// A single equality `REACTIVE(id = 1)` produces `cols: [(0, I64(1))]`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Bookkeeping entry on a `Subscription`: records which (table, cols) tuples
+/// this sub registered so `unsubscribe` can walk them. Not used as a HashMap
+/// key — the reverse index is nested (`table → cols → subs`) which lets the
+/// hot path look up with `&str` + `&[(usize, CellValue)]` without constructing
+/// a composite owned key per mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompositeKey {
     pub(crate) table: String,
     pub(crate) cols: Vec<(usize, CellValue)>,
@@ -48,9 +47,12 @@ struct Subscription {
 pub struct SubscriptionRegistry {
     next_id: u64,
     subscriptions: FnvHashMap<SubId, Subscription>,
-    /// Composite reverse index: composite key → subscriptions.
-    /// Value is a HashSet so unsubscribe can remove a SubId in O(1).
-    reverse_index: FnvHashMap<CompositeKey, FnvHashSet<SubId>>,
+    /// Nested composite reverse index: `table → cols → subscriptions`.
+    /// The split lets the mutation hot path look up without building an owned
+    /// composite key: the outer `get` uses `String: Borrow<str>`, the inner
+    /// `get` uses `Vec<T>: Borrow<[T]>`, so no `String` / `Vec` allocation is
+    /// needed just to hash.
+    reverse_index: FnvHashMap<String, FnvHashMap<Vec<(usize, CellValue)>, FnvHashSet<SubId>>>,
     /// Per-table, which sorted column index sets are registered and how often.
     /// The inner map is `sorted column indices → refcount`. Refcount tracks the
     /// number of composite-key registrations using this column-set; when it
@@ -81,7 +83,7 @@ impl SubscriptionRegistry {
     }
 
     pub fn reverse_index_size(&self) -> usize {
-        self.reverse_index.len()
+        self.reverse_index.values().map(|inner| inner.len()).sum()
     }
 
     /// Register a subscription: bind parameters and insert into the reverse index.
@@ -119,12 +121,13 @@ impl SubscriptionRegistry {
                         cols.sort_by_key(|(col, _)| *col);
                         let col_indices: Vec<usize> = cols.iter().map(|(c, _)| *c).collect();
 
-                        let ck = CompositeKey {
-                            table: cond.table.clone(),
-                            cols,
-                        };
+                        // Reverse index: nested `table → cols → subs`. Only the
+                        // entries that are actually new cost a clone — once the
+                        // table / cols entry exists, we just insert into the set.
                         self.reverse_index
-                            .entry(ck.clone())
+                            .entry(cond.table.clone())
+                            .or_default()
+                            .entry(cols.clone())
                             .or_default()
                             .insert(id);
 
@@ -134,7 +137,10 @@ impl SubscriptionRegistry {
                             .entry(col_indices)
                             .or_insert(0) += 1;
 
-                        composite_keys.push(ck);
+                        composite_keys.push(CompositeKey {
+                            table: cond.table.clone(),
+                            cols,
+                        });
                     }
                 }
             }
@@ -164,10 +170,15 @@ impl SubscriptionRegistry {
         let Some(sub) = self.subscriptions.remove(&id) else { return };
 
         for ck in &sub.composite_keys {
-            if let Some(subs) = self.reverse_index.get_mut(ck) {
-                subs.remove(&id);
-                if subs.is_empty() {
-                    self.reverse_index.remove(ck);
+            if let Some(inner) = self.reverse_index.get_mut(&ck.table) {
+                if let Some(subs) = inner.get_mut(ck.cols.as_slice()) {
+                    subs.remove(&id);
+                    if subs.is_empty() {
+                        inner.remove(ck.cols.as_slice());
+                    }
+                }
+                if inner.is_empty() {
+                    self.reverse_index.remove(&ck.table);
                 }
             }
 
@@ -201,9 +212,14 @@ impl SubscriptionRegistry {
         self.table_subs.get(table)
     }
 
-    /// Look up subscriptions by composite key.
-    pub(crate) fn composite_lookup(&self, key: &CompositeKey) -> Option<&FnvHashSet<SubId>> {
-        self.reverse_index.get(key)
+    /// Look up subscriptions by composite key. Takes borrowed `table` and `cols`
+    /// so the mutation hot path can query without building an owned key per call.
+    pub(crate) fn composite_lookup(
+        &self,
+        table: &str,
+        cols: &[(usize, CellValue)],
+    ) -> Option<&FnvHashSet<SubId>> {
+        self.reverse_index.get(table).and_then(|inner| inner.get(cols))
     }
 
     /// Iterate the sorted column-index sets registered for a table.
@@ -310,8 +326,12 @@ mod tests {
         HashMap::new()
     }
 
-    fn lookup_single(reg: &SubscriptionRegistry, key: &CompositeKey) -> Option<Vec<SubId>> {
-        reg.composite_lookup(key).map(|s| {
+    fn lookup_single(
+        reg: &SubscriptionRegistry,
+        table: &str,
+        cols: &[(usize, CellValue)],
+    ) -> Option<Vec<SubId>> {
+        reg.composite_lookup(table, cols).map(|s| {
             let mut v: Vec<SubId> = s.iter().copied().collect();
             v.sort_by_key(|s| s.0);
             v
@@ -338,16 +358,31 @@ mod tests {
     ///    table_subs.
     fn check_invariants(reg: &SubscriptionRegistry) {
         // 1 & 2: reverse_index integrity
-        for (ck, subs) in &reg.reverse_index {
-            assert!(!subs.is_empty(), "[1] reverse_index has empty HashSet for {ck:?}");
-            for sub_id in subs {
-                let sub = reg.subscriptions.get(sub_id).unwrap_or_else(|| {
-                    panic!("[2] reverse_index[{ck:?}] contains dangling {sub_id:?}")
-                });
+        for (table, inner) in &reg.reverse_index {
+            assert!(
+                !inner.is_empty(),
+                "[1] reverse_index[{table}] has empty inner map"
+            );
+            for (cols, subs) in inner {
                 assert!(
-                    sub.composite_keys.contains(ck),
-                    "[2] sub {sub_id:?}.composite_keys does not list {ck:?}"
+                    !subs.is_empty(),
+                    "[1] reverse_index[{table}][{cols:?}] is an empty HashSet"
                 );
+                for sub_id in subs {
+                    let sub = reg.subscriptions.get(sub_id).unwrap_or_else(|| {
+                        panic!(
+                            "[2] reverse_index[{table}][{cols:?}] contains dangling {sub_id:?}"
+                        )
+                    });
+                    let listed = sub
+                        .composite_keys
+                        .iter()
+                        .any(|ck| ck.table == *table && ck.cols == *cols);
+                    assert!(
+                        listed,
+                        "[2] sub {sub_id:?}.composite_keys does not list ({table}, {cols:?})"
+                    );
+                }
             }
         }
 
@@ -389,12 +424,18 @@ mod tests {
         // 6 & 7: subscription → index back-references
         for (sub_id, sub) in &reg.subscriptions {
             for ck in &sub.composite_keys {
-                let subs = reg.reverse_index.get(ck).unwrap_or_else(|| {
-                    panic!("[6] sub {sub_id:?} lists ck {ck:?} missing from reverse_index")
-                });
+                let subs = reg
+                    .composite_lookup(&ck.table, &ck.cols)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "[6] sub {sub_id:?} lists ck {ck:?} missing from reverse_index"
+                        )
+                    });
                 assert!(
                     subs.contains(sub_id),
-                    "[6] reverse_index[{ck:?}] does not contain {sub_id:?}"
+                    "[6] reverse_index[{}][{:?}] does not contain {sub_id:?}",
+                    ck.table,
+                    ck.cols
                 );
                 let cols: Vec<usize> = ck.cols.iter().map(|(c, _)| *c).collect();
                 let inner = reg.column_sets.get(&ck.table).unwrap_or_else(|| {
@@ -469,11 +510,10 @@ mod tests {
     fn test_subscribe_single_eq_composite_lookup() {
         let mut reg = SubscriptionRegistry::new();
         let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &[], &empty_params()).unwrap();
-        let key = CompositeKey {
-            table: "users".into(),
-            cols: vec![(0, CellValue::I64(42))],
-        };
-        assert_eq!(lookup_single(&reg, &key), Some(vec![sub_id]));
+        assert_eq!(
+            lookup_single(&reg, "users", &[(0, CellValue::I64(42))]),
+            Some(vec![sub_id])
+        );
     }
 
     #[test]
@@ -483,15 +523,20 @@ mod tests {
         let sub_id = reg.subscribe(&[cond], &[], &empty_params()).unwrap();
 
         // Single-key lookup should NOT find it
-        let single = CompositeKey { table: "users".into(), cols: vec![(0, CellValue::I64(1))] };
-        assert_eq!(lookup_single(&reg, &single), None);
+        assert_eq!(
+            lookup_single(&reg, "users", &[(0, CellValue::I64(1))]),
+            None
+        );
 
         // Composite-key lookup should find it
-        let composite = CompositeKey {
-            table: "users".into(),
-            cols: vec![(0, CellValue::I64(1)), (1, CellValue::Str("Alice".into()))],
-        };
-        assert_eq!(lookup_single(&reg, &composite), Some(vec![sub_id]));
+        assert_eq!(
+            lookup_single(
+                &reg,
+                "users",
+                &[(0, CellValue::I64(1)), (1, CellValue::Str("Alice".into()))]
+            ),
+            Some(vec![sub_id])
+        );
     }
 
     #[test]
@@ -551,11 +596,10 @@ mod tests {
         };
         let params = HashMap::from([("uid".into(), ParamValue::Int(7))]);
         let sub_id = reg.subscribe(&[cond], &[], &params).unwrap();
-        let key = CompositeKey {
-            table: "users".into(),
-            cols: vec![(0, CellValue::I64(7))],
-        };
-        assert_eq!(lookup_single(&reg, &key), Some(vec![sub_id]));
+        assert_eq!(
+            lookup_single(&reg, "users", &[(0, CellValue::I64(7))]),
+            Some(vec![sub_id])
+        );
     }
 
     #[test]
@@ -570,10 +614,8 @@ mod tests {
         reg.unsubscribe(a);
         // Column-set [0] still in use by b.
         assert_eq!(reg.column_sets_for_table("users").unwrap().count(), 1);
-        let key = CompositeKey { table: "users".into(), cols: vec![(0, CellValue::I64(1))] };
-        assert!(reg.composite_lookup(&key).is_none());
-        let key_b = CompositeKey { table: "users".into(), cols: vec![(0, CellValue::I64(2))] };
-        assert!(reg.composite_lookup(&key_b).is_some());
+        assert!(reg.composite_lookup("users", &[(0, CellValue::I64(1))]).is_none());
+        assert!(reg.composite_lookup("users", &[(0, CellValue::I64(2))]).is_some());
     }
 
     #[test]
@@ -582,15 +624,15 @@ mod tests {
         let mut reg = SubscriptionRegistry::new();
         let a = reg.subscribe(&[cond_eq("users", 0, Value::Int(1))], &[], &empty_params()).unwrap();
         let b = reg.subscribe(&[cond_eq("users", 0, Value::Int(1))], &[], &empty_params()).unwrap();
-        let key = CompositeKey { table: "users".into(), cols: vec![(0, CellValue::I64(1))] };
-        assert_eq!(lookup_single(&reg, &key), Some({
+        let cols: Vec<(usize, CellValue)> = vec![(0, CellValue::I64(1))];
+        assert_eq!(lookup_single(&reg, "users", &cols), Some({
             let mut v = vec![a, b]; v.sort_by_key(|s| s.0); v
         }));
 
         reg.unsubscribe(a);
-        assert_eq!(lookup_single(&reg, &key), Some(vec![b]));
+        assert_eq!(lookup_single(&reg, "users", &cols), Some(vec![b]));
         reg.unsubscribe(b);
-        assert!(reg.composite_lookup(&key).is_none());
+        assert!(reg.composite_lookup("users", &cols).is_none());
         assert!(reg.column_sets_for_table("users").is_none());
     }
 
@@ -836,8 +878,10 @@ mod tests {
         check_invariants(&reg);
 
         // Composite key (users, [(0, 7)]) is registered by a, b, d (IN-list), e.
-        let key_7 = CompositeKey { table: "users".into(), cols: vec![(0, CellValue::I64(7))] };
-        let subs_at_7: FnvHashSet<SubId> = reg.composite_lookup(&key_7).unwrap().clone();
+        let subs_at_7: FnvHashSet<SubId> = reg
+            .composite_lookup("users", &[(0, CellValue::I64(7))])
+            .unwrap()
+            .clone();
         let expected: FnvHashSet<SubId> = [a, b, d, e].into_iter().collect();
         assert_eq!(subs_at_7, expected);
         // Shape [0] has refcount 6: a, b, c, e contribute 1 each, d contributes 3.
