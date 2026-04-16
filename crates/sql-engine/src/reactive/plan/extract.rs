@@ -8,7 +8,7 @@ use sql_parser::ast;
 use crate::planner::plan::{PlanSelect, PlanSourceEntry};
 use crate::planner::translate;
 use crate::planner::PlanError;
-use super::plan::{ReactiveCondition, ReactiveConditionKind};
+use super::{ReactiveCondition, ReactiveConditionKind};
 
 /// Extract reactive conditions from REACTIVE expressions in result columns and WHERE clause.
 pub fn extract_reactive_conditions(

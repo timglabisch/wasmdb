@@ -1,4 +1,7 @@
-//! Reactive type definitions: logical conditions and optimized conditions.
+//! Reactive planning: type definitions, condition extraction, and optimization.
+
+pub mod extract;
+pub mod optimize;
 
 use sql_parser::ast::Value;
 

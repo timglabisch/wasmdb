@@ -9,7 +9,7 @@
 //! but the verify filter is never stripped.
 
 use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
-use super::plan::*;
+use super::*;
 
 /// Optimize a set of logical reactive conditions into optimized conditions.
 pub fn optimize(conditions: Vec<ReactiveCondition>) -> Vec<OptimizedReactiveCondition> {

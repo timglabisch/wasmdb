@@ -1,9 +1,8 @@
 //! Reactive subscription system: planning, optimization, registry, and parameter binding.
 
 pub mod plan;
-pub mod extract;
-pub mod optimize;
 pub mod execute;
+pub mod registry;
 
 use std::collections::HashMap;
 
@@ -20,6 +19,6 @@ pub fn plan_reactive(
 ) -> Result<Vec<plan::OptimizedReactiveCondition>, PlanError> {
     let mut ctx = crate::planner::make_plan_context(table_schemas);
     let main = crate::planner::plan_select_ctx(ast, &mut ctx)?;
-    let logical = extract::extract_reactive_conditions(ast, &main)?;
-    Ok(optimize::optimize(logical))
+    let logical = plan::extract::extract_reactive_conditions(ast, &main)?;
+    Ok(plan::optimize::optimize(logical))
 }

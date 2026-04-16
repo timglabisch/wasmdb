@@ -7,7 +7,7 @@ use serde::Serialize;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sql_engine::storage::{CellValue, TypedColumn};
 use sql_engine::execute::Span;
-use sql_engine::reactive::execute::registry::{SubscriptionRegistry, SubId};
+use sql_engine::reactive::registry::{SubscriptionRegistry, SubId};
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, Verdict};
 use sync::zset::ZSet;
 use sync_client::client::SyncClient;
@@ -211,9 +211,9 @@ fn notify_affected(zset: &ZSet) {
         let mut affected: HashMap<SubId, HashSet<usize>> = HashMap::new();
         for entry in &zset.entries {
             let detailed = if entry.weight > 0 {
-                reg.on_insert_detailed(&entry.table, &entry.row)
+                sql_engine::reactive::execute::on_insert_detailed(&reg, &entry.table, &entry.row)
             } else {
-                reg.on_delete_detailed(&entry.table, &entry.row)
+                sql_engine::reactive::execute::on_delete_detailed(&reg, &entry.table, &entry.row)
             };
             for (sub_id, indices) in detailed {
                 affected.entry(sub_id).or_default().extend(indices);
@@ -668,7 +668,7 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
 
         let tables: Vec<String> = select.sources.iter().map(|s| s.table.clone()).collect();
 
-        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&conditions));
+        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&conditions, &std::collections::HashMap::new()).unwrap());
         (sub_id, tables)
     });
 
