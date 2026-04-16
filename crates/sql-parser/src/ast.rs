@@ -123,7 +123,7 @@ pub enum AstExpr {
         subquery: Box<AstSelect>,
     },
     Subquery(Box<AstSelect>),
-    InvalidateOn(Box<AstExpr>),
+    Reactive(Box<AstExpr>),
 }
 
 #[derive(Debug, Clone)]

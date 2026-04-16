@@ -112,7 +112,7 @@ pub enum TokenKind {
     Create,
     Semicolon,
     // Reactive
-    InvalidateOn,
+    Reactive,
     // Literals
     Integer(i64),
     Float(f64),
@@ -173,7 +173,7 @@ impl TokenKind {
             Self::Delete => "DELETE",
             Self::Update => "UPDATE",
             Self::Set => "SET",
-            Self::InvalidateOn => "INVALIDATE_ON",
+            Self::Reactive => "REACTIVE",
             Self::Create => "CREATE",
             Self::Semicolon => "';'",
             Self::Integer(_) => "integer",

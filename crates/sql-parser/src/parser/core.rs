@@ -165,12 +165,12 @@ impl<'a> ParserCore<'a> {
                 Ok(token_to_literal(tok))
             }
 
-            TokenKind::InvalidateOn => {
+            TokenKind::Reactive => {
                 self.eat()?;
                 self.expect(TokenKind::LParen)?;
                 let expr = self.parse_expr(0)?;
                 self.expect(TokenKind::RParen)?;
-                Ok(AstExpr::InvalidateOn(Box::new(expr)))
+                Ok(AstExpr::Reactive(Box::new(expr)))
             }
 
             TokenKind::Count | TokenKind::Sum | TokenKind::Min | TokenKind::Max => {

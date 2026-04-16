@@ -18,12 +18,24 @@ pub fn resolve_plan_params(
     for step in &mut resolved.materializations {
         step.plan = resolve_params(&step.plan, params)?;
     }
-    if let Some(ref mut reactive) = resolved.reactive {
-        for cond in &mut reactive.conditions {
-            for key in &mut cond.index_keys {
+    Ok(resolved)
+}
+
+/// Resolve all placeholders in reactive conditions.
+pub fn resolve_reactive_conditions(
+    conditions: &[ReactiveCondition],
+    params: &Params,
+) -> Result<Vec<ReactiveCondition>, ExecuteError> {
+    if params.is_empty() {
+        return Ok(conditions.to_vec());
+    }
+    let mut resolved = conditions.to_vec();
+    for cond in &mut resolved {
+        if let ReactiveConditionKind::Condition { ref mut eq_keys, ref mut verify_filter } = cond.kind {
+            for key in eq_keys.iter_mut() {
                 key.value = resolve_value(&key.value, params)?;
             }
-            cond.verify_filter = resolve_filter(&cond.verify_filter, params)?;
+            *verify_filter = resolve_filter(verify_filter, params)?;
         }
     }
     Ok(resolved)

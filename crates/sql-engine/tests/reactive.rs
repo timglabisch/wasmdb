@@ -83,28 +83,21 @@ fn make_db() -> TestDb {
 #[test]
 fn reactive_pk_watch() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    assert_eq!(conditions.len(), 1);
+    assert_eq!(conditions[0].table, "users");
 
-    // Plan should have reactive metadata
-    assert!(plan.reactive.is_some());
-    let reactive = plan.reactive.as_ref().unwrap();
-    assert_eq!(reactive.conditions.len(), 1);
-    assert_eq!(reactive.conditions[0].table, "users");
-
-    // Execute and subscribe
+    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
     let mut registry = SubscriptionRegistry::new();
-    let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan);
+    let sub_id = registry.subscribe(&resolved);
 
-    // INSERT matching row → affected
     let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("NewAlice".into()), CellValue::I64(31)]);
     assert_eq!(affected, vec![sub_id]);
 
-    // INSERT non-matching row → not affected
     let affected = registry.on_insert("users", &[CellValue::I64(99), CellValue::Str("Nobody".into()), CellValue::I64(20)]);
     assert!(affected.is_empty());
 }
@@ -112,80 +105,67 @@ fn reactive_pk_watch() {
 #[test]
 fn reactive_with_verify_filter() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(orders.user_id = :uid AND orders.amount > 100) AS inv FROM orders WHERE orders.user_id = :uid";
+    let sql = "SELECT REACTIVE(orders.user_id = :uid AND orders.amount > 100) AS inv FROM orders WHERE orders.user_id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan);
+    let sub_id = registry.subscribe(&resolved);
 
-    // amount=50 → verify filter fails
-    let affected = registry.on_insert("orders", &[CellValue::I64(10), CellValue::I64(1), CellValue::I64(50)]);
-    assert!(affected.is_empty());
-
-    // amount=200 → verify filter passes
-    let affected = registry.on_insert("orders", &[CellValue::I64(11), CellValue::I64(1), CellValue::I64(200)]);
-    assert_eq!(affected, vec![sub_id]);
-
-    // different user_id → not affected
-    let affected = registry.on_insert("orders", &[CellValue::I64(12), CellValue::I64(99), CellValue::I64(500)]);
-    assert!(affected.is_empty());
+    assert!(registry.on_insert("orders", &[CellValue::I64(10), CellValue::I64(1), CellValue::I64(50)]).is_empty());
+    assert_eq!(registry.on_insert("orders", &[CellValue::I64(11), CellValue::I64(1), CellValue::I64(200)]), vec![sub_id]);
+    assert!(registry.on_insert("orders", &[CellValue::I64(12), CellValue::I64(99), CellValue::I64(500)]).is_empty());
 }
 
 #[test]
 fn reactive_unsubscribe() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan);
+    let sub_id = registry.subscribe(&resolved);
     registry.unsubscribe(sub_id);
 
-    let affected = registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
-    assert!(affected.is_empty());
+    assert!(registry.on_insert("users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]).is_empty());
 }
 
 #[test]
 fn reactive_delete_triggers() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan);
+    let sub_id = registry.subscribe(&resolved);
 
-    let affected = registry.on_delete("users", &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
-    assert_eq!(affected, vec![sub_id]);
+    assert_eq!(registry.on_delete("users", &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]), vec![sub_id]);
 }
 
 #[test]
 fn reactive_update_leaving_filter() {
     let db = make_db();
-    // Watch user 1 with name = 'Alice'
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid AND users.name = 'Alice') AS inv FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid AND users.name = 'Alice') AS inv FROM users WHERE users.id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
+    let conditions = planner::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
+    let resolved = sql_engine::execute::bind::resolve_reactive_conditions(&conditions, &params).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let resolved_plan = sql_engine::execute::bind::resolve_plan_params(&plan, &params).unwrap();
-    let sub_id = registry.subscribe(&resolved_plan);
+    let sub_id = registry.subscribe(&resolved);
 
-    // UPDATE: name changes from 'Alice' to 'Bobby'
-    // Old row matches (name='Alice'), new row doesn't → still affected
     let affected = registry.on_update(
         "users",
         &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)],
@@ -195,29 +175,27 @@ fn reactive_update_leaving_filter() {
 }
 
 #[test]
-fn reactive_initial_result_contains_invalidate_on_column() {
+fn reactive_initial_result_contains_reactive_column() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let result = db.run_with_params(sql, params);
-    // Should have 2 columns: INVALIDATE_ON (always 0) + users.name
     assert_eq!(result.len(), 2);
-    // INVALIDATE_ON column should be 0 for all rows
     assert_eq!(result[0], vec![CellValue::I64(0)]);
-    // users.name should be "Alice"
     assert_eq!(result[1], vec![CellValue::Str("Alice".into())]);
 }
 
 #[test]
 fn reactive_plan_pretty_print() {
     let db = make_db();
-    let sql = "SELECT INVALIDATE_ON(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
     let ast = parser::parse(sql).expect("parse failed");
     let plan = planner::plan(&ast, &db.table_schemas).expect("plan failed");
     let pp = plan.pretty_print();
 
-    assert!(pp.contains("Reactive strategy=ReExecute"));
-    assert!(pp.contains("invalidation[0] table=users"));
-    assert!(pp.contains("INVALIDATE_ON[0] AS inv"));
+    // Execution plan should NOT contain reactive metadata
+    assert!(!pp.contains("Reactive strategy"));
+    // But should still have REACTIVE result column
+    assert!(pp.contains("REACTIVE[0] AS inv"));
 }

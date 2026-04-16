@@ -10,7 +10,7 @@ pub mod rowset;
 pub mod scan;
 pub mod sort;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -109,15 +109,17 @@ pub struct ExecutionContext<'execution> {
     stack: Vec<OpenSpan>,
     pub spans: Vec<Span>,
     pub params: Params,
+    /// Which reactive condition indices were triggered (for SELECT reactive() output).
+    pub triggered_conditions: Option<HashSet<usize>>,
 }
 
 impl<'execution> ExecutionContext<'execution> {
     pub fn new(db: &'execution HashMap<String, Table>) -> Self {
-        Self { db, stack: Vec::new(), spans: Vec::new(), params: HashMap::new() }
+        Self { db, stack: Vec::new(), spans: Vec::new(), params: HashMap::new(), triggered_conditions: None }
     }
 
     pub fn with_params(db: &'execution HashMap<String, Table>, params: Params) -> Self {
-        Self { db, stack: Vec::new(), spans: Vec::new(), params }
+        Self { db, stack: Vec::new(), spans: Vec::new(), params, triggered_conditions: None }
     }
 
     fn close_span(&mut self, op: SpanOperation) {

@@ -400,35 +400,35 @@ mod tests {
         assert!(matches!(ast.limit, Some(AstLimit::Value(10))));
     }
 
-    // ── INVALIDATE_ON tests ─────────────────────────────────────────────
+    // ── REACTIVE tests ──────────────────────────────────────────────────
 
     #[test]
-    fn test_parse_invalidate_on_simple() {
-        let ast = parse("SELECT INVALIDATE_ON(users.id = :uid) AS inv, users.name FROM users").unwrap();
+    fn test_parse_reactive_simple() {
+        let ast = parse("SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users").unwrap();
         assert_eq!(ast.result_columns.len(), 2);
-        assert!(matches!(&ast.result_columns[0].expr, AstExpr::InvalidateOn(_)));
+        assert!(matches!(&ast.result_columns[0].expr, AstExpr::Reactive(_)));
         assert_eq!(ast.result_columns[0].alias, Some("inv".to_string()));
-        if let AstExpr::InvalidateOn(inner) = &ast.result_columns[0].expr {
+        if let AstExpr::Reactive(inner) = &ast.result_columns[0].expr {
             assert!(matches!(inner.as_ref(), AstExpr::Binary { op: Operator::Eq, .. }));
         }
     }
 
     #[test]
-    fn test_parse_invalidate_on_compound() {
+    fn test_parse_reactive_compound() {
         let ast = parse(
-            "SELECT INVALIDATE_ON(users.id = :uid AND users.age > 18) FROM users"
+            "SELECT REACTIVE(users.id = :uid AND users.age > 18) FROM users"
         ).unwrap();
-        if let AstExpr::InvalidateOn(inner) = &ast.result_columns[0].expr {
+        if let AstExpr::Reactive(inner) = &ast.result_columns[0].expr {
             assert!(matches!(inner.as_ref(), AstExpr::Binary { op: Operator::And, .. }));
         } else {
-            panic!("expected InvalidateOn");
+            panic!("expected Reactive");
         }
     }
 
     #[test]
-    fn test_parse_invalidate_on_case_insensitive() {
-        let ast = parse("SELECT invalidate_on(users.id = :uid) FROM users").unwrap();
-        assert!(matches!(&ast.result_columns[0].expr, AstExpr::InvalidateOn(_)));
+    fn test_parse_reactive_case_insensitive() {
+        let ast = parse("SELECT reactive(users.id = :uid) FROM users").unwrap();
+        assert!(matches!(&ast.result_columns[0].expr, AstExpr::Reactive(_)));
     }
 
     // ── INSERT tests ────────────────────────────────────────────────────

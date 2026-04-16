@@ -1,6 +1,5 @@
 pub mod plan;
 pub mod reactive;
-mod invalidation;
 mod materialize;
 pub(crate) mod optimize;
 pub mod translate;
@@ -79,12 +78,28 @@ pub fn plan(
         materializations: Vec::new(),
     };
     let main = plan_select_ctx(ast, &mut ctx)?;
-    let reactive = invalidation::extract_reactive_metadata(ast, &main)?;
     Ok(ExecutionPlan {
         materializations: ctx.materializations,
         main,
-        reactive,
     })
+}
+
+/// Extract reactive conditions from an AstSelect (for subscription registration).
+/// Independent of execution planning — only extracts REACTIVE() expressions.
+pub fn plan_reactive(
+    ast: &ast::AstSelect,
+    table_schemas: &HashMap<String, TableSchema>,
+) -> Result<Vec<reactive::ReactiveCondition>, PlanError> {
+    let query_schemas: HashMap<String, Schema> = table_schemas.iter()
+        .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
+        .collect();
+    let mut ctx = PlanContext {
+        table_schemas,
+        query_schemas,
+        materializations: Vec::new(),
+    };
+    let main = plan_select_ctx(ast, &mut ctx)?;
+    reactive::extract_reactive_conditions(ast, &main)
 }
 
 /// Translate an AstSelect into a PlanSelect (convenience wrapper).

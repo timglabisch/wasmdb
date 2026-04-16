@@ -47,8 +47,8 @@ export default function UsersPanel() {
   const [editAge, setEditAge] = useState('');
 
   const rows = useQuery(
-    "SELECT users.id, users.name, users.age, COUNT(orders.id) FROM users LEFT JOIN orders ON users.id = orders.user_id GROUP BY users.id, users.name, users.age ORDER BY users.id",
-    ([id, name, age, orderCount]) => ({
+    "SELECT reactive(users.id), reactive(orders.id), users.id, users.name, users.age, COUNT(orders.id) FROM users LEFT JOIN orders ON users.id = orders.user_id GROUP BY users.id, users.name, users.age ORDER BY users.id",
+    ([_r1, _r2, id, name, age, orderCount]) => ({
       id: id as number,
       name: name as string,
       age: age as number,
@@ -57,7 +57,7 @@ export default function UsersPanel() {
   );
 
   const confirmedIds = new Set(
-    useQueryConfirmed("SELECT users.id FROM users", ([id]) => id as number),
+    useQueryConfirmed("SELECT reactive(users.id), users.id FROM users", ([_r, id]) => id as number),
   );
 
   const users: UserRow[] = rows.map(u => ({

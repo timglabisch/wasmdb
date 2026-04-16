@@ -1,11 +1,11 @@
 import { useQuery, execute, executeOnStream, createStream, flushStream, nextId } from './sync.ts';
 
 export default function BulkActions() {
-  const userIds = useQuery("SELECT users.id FROM users", ([id]) => id as number);
-  const orderIds = useQuery("SELECT orders.id FROM orders", ([id]) => id as number);
+  const userIds = useQuery("SELECT reactive(users.id), users.id FROM users", ([_r, id]) => id as number);
+  const orderIds = useQuery("SELECT reactive(orders.id), orders.id FROM orders", ([_r, id]) => id as number);
   const users = useQuery(
-    "SELECT users.id, users.name FROM users",
-    ([id, name]) => ({ id: id as number, name: name as string }),
+    "SELECT reactive(users.id), users.id, users.name FROM users",
+    ([_r, id, name]) => ({ id: id as number, name: name as string }),
   );
 
   const addBulkUsers = async (count: number) => {

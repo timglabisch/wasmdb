@@ -2,20 +2,20 @@ import { useQuery } from './sync.ts';
 
 export default function StatsBar() {
   const userCount = useQuery(
-    "SELECT COUNT(users.id) FROM users",
-    ([c]) => c as number,
+    "SELECT reactive(users.id), COUNT(users.id) FROM users",
+    ([_r, c]) => c as number,
   );
   const orderCount = useQuery(
-    "SELECT COUNT(orders.id) FROM orders",
-    ([c]) => c as number,
+    "SELECT reactive(orders.id), COUNT(orders.id) FROM orders",
+    ([_r, c]) => c as number,
   );
   const totalRevenue = useQuery(
-    "SELECT SUM(orders.amount) FROM orders",
-    ([s]) => (s as number) ?? 0,
+    "SELECT reactive(orders.id), SUM(orders.amount) FROM orders",
+    ([_r, s]) => (s as number) ?? 0,
   );
   const maxOrder = useQuery(
-    "SELECT MAX(orders.amount) FROM orders",
-    ([m]) => (m as number) ?? 0,
+    "SELECT reactive(orders.id), MAX(orders.amount) FROM orders",
+    ([_r, m]) => (m as number) ?? 0,
   );
 
   const uc = userCount[0] ?? 0;

@@ -65,6 +65,12 @@ impl Database {
         self.tables.keys().cloned().collect()
     }
 
+    pub fn table_schemas(&self) -> HashMap<String, TableSchema> {
+        self.tables.iter()
+            .map(|(name, table)| (name.clone(), table.schema.clone()))
+            .collect()
+    }
+
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables.get(name)
     }
@@ -90,11 +96,19 @@ impl Database {
     }
 
     pub fn execute_traced(&mut self, sql: &str) -> Result<(Columns, Vec<Span>), DbError> {
+        self.execute_traced_with_triggered(sql, None)
+    }
+
+    pub fn execute_traced_with_triggered(
+        &mut self,
+        sql: &str,
+        triggered_conditions: Option<std::collections::HashSet<usize>>,
+    ) -> Result<(Columns, Vec<Span>), DbError> {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
         match stmt {
             Statement::Select(select) => {
-                crate::select::execute_select_traced(&self.tables, &select, HashMap::new())
+                crate::select::execute_select_traced(&self.tables, &select, HashMap::new(), triggered_conditions)
             }
             _ => {
                 let result = self.execute_statement(stmt, HashMap::new())?;

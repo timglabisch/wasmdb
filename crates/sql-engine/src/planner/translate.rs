@@ -177,6 +177,9 @@ pub fn plan_expr_to_predicate(
             let col = resolve_to_column_ref(expr, sources)?;
             materialize::plan_in_subquery(col, subquery, ctx)
         }
+        // Reactive in WHERE: transparent — inner expression is used as normal filter.
+        // The reactive condition is extracted separately by invalidation.rs.
+        ast::AstExpr::Reactive(inner) => plan_expr_to_predicate(inner, sources, ctx),
         _ => Err(PlanError::UnsupportedExpr(
             "filter must be a binary expression, IN, or IN subquery".into(),
         )),
@@ -273,8 +276,8 @@ fn plan_result_column(
                 alias: rc.alias.clone(),
             })
         }
-        ast::AstExpr::InvalidateOn(_) => {
-            Ok(PlanResultColumn::InvalidateOn {
+        ast::AstExpr::Reactive(_) => {
+            Ok(PlanResultColumn::Reactive {
                 condition_idx: 0,
                 alias: rc.alias.clone(),
             })

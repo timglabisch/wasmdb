@@ -1,6 +1,6 @@
 //! Reactive query subscription registry with reverse index.
 //!
-//! When a query contains `INVALIDATE_ON(condition)`, the engine can register
+//! When a query contains `REACTIVE(condition)`, the engine can register
 //! a subscription. On INSERT/UPDATE/DELETE the registry determines which
 //! subscriptions are affected using a reverse hash index + verify filter.
 
@@ -25,7 +25,7 @@ struct ReverseKey {
 
 /// A registered subscription.
 struct Subscription {
-    conditions: Vec<InvalidationCondition>,
+    conditions: Vec<ReactiveCondition>,
     /// For deregistration: which keys belong to this subscription.
     reverse_keys: Vec<ReverseKey>,
 }
@@ -61,56 +61,43 @@ impl SubscriptionRegistry {
         self.reverse_index.len()
     }
 
-    /// Subscribe to all changes on the given tables (no INVALIDATE_ON needed).
-    pub fn subscribe_tables(&mut self, tables: &[String]) -> SubId {
-        let id = SubId(self.next_id);
-        self.next_id += 1;
-        for table in tables {
-            self.table_subs.entry(table.clone()).or_default().insert(id);
-        }
-        self.subscriptions.insert(
-            id,
-            Subscription {
-                conditions: vec![],
-                reverse_keys: vec![],
-            },
-        );
-        id
-    }
-
-    /// Register a subscription. The plan must have params already resolved.
+    /// Register a subscription from a plan with reactive metadata.
+    /// The plan must have params already resolved.
     pub fn subscribe(
         &mut self,
-        plan: &ExecutionPlan,
+        conditions: &[ReactiveCondition],
     ) -> SubId {
         let id = SubId(self.next_id);
         self.next_id += 1;
-        let reactive = plan
-            .reactive
-            .as_ref()
-            .expect("plan has no reactive metadata");
 
         let mut reverse_keys = Vec::new();
-        for cond in &reactive.conditions {
-            for key in &cond.index_keys {
-                let cell = value_to_cell(&key.value);
-                let rk = ReverseKey {
-                    table: cond.table.clone(),
-                    col: key.col,
-                    value: cell,
-                };
-                self.reverse_index
-                    .entry(rk.clone())
-                    .or_default()
-                    .push(id);
-                reverse_keys.push(rk);
+        for cond in conditions {
+            match &cond.kind {
+                ReactiveConditionKind::TableLevel => {
+                    self.table_subs.entry(cond.table.clone()).or_default().insert(id);
+                }
+                ReactiveConditionKind::Condition { eq_keys, .. } => {
+                    for key in eq_keys {
+                        let cell = value_to_cell(&key.value);
+                        let rk = ReverseKey {
+                            table: cond.table.clone(),
+                            col: key.col,
+                            value: cell,
+                        };
+                        self.reverse_index
+                            .entry(rk.clone())
+                            .or_default()
+                            .push(id);
+                        reverse_keys.push(rk);
+                    }
+                }
             }
         }
 
         self.subscriptions.insert(
             id,
             Subscription {
-                conditions: reactive.conditions.clone(),
+                conditions: conditions.to_vec(),
                 reverse_keys,
             },
         );
@@ -139,12 +126,12 @@ impl SubscriptionRegistry {
 
     /// Check which subscriptions are affected by an INSERT.
     pub fn on_insert(&self, table: &str, new_row: &[CellValue]) -> Vec<SubId> {
-        self.check_row(table, new_row)
+        self.check_row_detailed(table, new_row).into_keys().collect()
     }
 
     /// Check which subscriptions are affected by a DELETE.
     pub fn on_delete(&self, table: &str, old_row: &[CellValue]) -> Vec<SubId> {
-        self.check_row(table, old_row)
+        self.check_row_detailed(table, old_row).into_keys().collect()
     }
 
     /// Check which subscriptions are affected by an UPDATE.
@@ -154,13 +141,24 @@ impl SubscriptionRegistry {
         old_row: &[CellValue],
         new_row: &[CellValue],
     ) -> Vec<SubId> {
-        let mut affected = HashSet::new();
-        affected.extend(self.check_row(table, old_row));
-        affected.extend(self.check_row(table, new_row));
-        affected.into_iter().collect()
+        let mut affected = self.check_row_detailed(table, old_row);
+        for (sub_id, indices) in self.check_row_detailed(table, new_row) {
+            affected.entry(sub_id).or_default().extend(indices);
+        }
+        affected.into_keys().collect()
     }
 
-    fn check_row(&self, table: &str, row: &[CellValue]) -> Vec<SubId> {
+    /// Like on_insert but also returns which condition indices triggered per subscription.
+    pub fn on_insert_detailed(&self, table: &str, new_row: &[CellValue]) -> HashMap<SubId, HashSet<usize>> {
+        self.check_row_detailed(table, new_row)
+    }
+
+    /// Like on_delete but also returns which condition indices triggered per subscription.
+    pub fn on_delete_detailed(&self, table: &str, old_row: &[CellValue]) -> HashMap<SubId, HashSet<usize>> {
+        self.check_row_detailed(table, old_row)
+    }
+
+    fn check_row_detailed(&self, table: &str, row: &[CellValue]) -> HashMap<SubId, HashSet<usize>> {
         let mut candidates = HashSet::new();
 
         // 1. Table-level subscriptions always match.
@@ -168,7 +166,7 @@ impl SubscriptionRegistry {
             candidates.extend(subs);
         }
 
-        // 2. Reverse-index lookup per column (fine-grained INVALIDATE_ON).
+        // 2. Reverse-index lookup per column (fine-grained REACTIVE).
         for (col_idx, cell) in row.iter().enumerate() {
             let rk = ReverseKey {
                 table: table.to_string(),
@@ -180,24 +178,36 @@ impl SubscriptionRegistry {
             }
         }
 
-        // 3. Verify filter (table-level subs have no conditions → always pass).
-        candidates
-            .into_iter()
-            .filter(|sub_id| {
-                let sub = &self.subscriptions[sub_id];
-                if sub.conditions.is_empty() {
-                    return true;
+        // 3. Verify filter — collect which condition indices triggered.
+        let mut result: HashMap<SubId, HashSet<usize>> = HashMap::new();
+        for sub_id in candidates {
+            let sub = &self.subscriptions[&sub_id];
+            if sub.conditions.is_empty() {
+                result.insert(sub_id, HashSet::new());
+                continue;
+            }
+            let mut triggered = HashSet::new();
+            for (idx, cond) in sub.conditions.iter().enumerate() {
+                if cond.table != table {
+                    continue;
                 }
-                sub.conditions.iter().any(|cond| {
-                    if cond.table != table {
-                        return false;
+                let matches = match &cond.kind {
+                    ReactiveConditionKind::TableLevel => true,
+                    ReactiveConditionKind::Condition { verify_filter, .. } => {
+                        eval_predicate(verify_filter, &|col: ColumnRef| {
+                            row.get(col.col).cloned().unwrap_or(CellValue::Null)
+                        })
                     }
-                    eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
-                        row.get(col.col).cloned().unwrap_or(CellValue::Null)
-                    })
-                })
-            })
-            .collect()
+                };
+                if matches {
+                    triggered.insert(idx);
+                }
+            }
+            if !triggered.is_empty() {
+                result.insert(sub_id, triggered);
+            }
+        }
+        result
     }
 }
 
@@ -206,56 +216,37 @@ mod tests {
     use super::*;
     use sql_parser::ast::Value;
 
-    fn make_plan(conditions: Vec<InvalidationCondition>, strategy: InvalidationStrategy) -> ExecutionPlan {
-        ExecutionPlan {
-            materializations: vec![],
-            main: PlanSelect {
-                sources: vec![],
-                filter: PlanFilterPredicate::None,
-                group_by: vec![],
-                aggregates: vec![],
-                order_by: vec![],
-                limit: None,
-                result_columns: vec![],
+    fn cond_eq(table: &str, col: usize, value: Value) -> ReactiveCondition {
+        ReactiveCondition {
+            table: table.into(),
+            kind: ReactiveConditionKind::Condition {
+                eq_keys: vec![ReactiveKey { col, value }],
+                verify_filter: PlanFilterPredicate::None,
             },
-            reactive: Some(ReactiveMetadata {
-                conditions,
-                strategy,
-            }),
+            source_idx: 0,
         }
     }
 
-    fn simple_condition(table: &str, col: usize, value: Value) -> InvalidationCondition {
-        InvalidationCondition {
+    fn cond_table(table: &str) -> ReactiveCondition {
+        ReactiveCondition {
             table: table.into(),
-            index_keys: vec![InvalidationKey { col, value }],
-            verify_filter: PlanFilterPredicate::None,
+            kind: ReactiveConditionKind::TableLevel,
             source_idx: 0,
         }
     }
 
     #[test]
-    fn test_subscribe_and_on_insert_matching() {
+    fn test_insert_matching() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub_id = reg.subscribe(&plan);
-
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         let affected = reg.on_insert("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
         assert_eq!(affected, vec![sub_id]);
     }
 
     #[test]
-    fn test_subscribe_and_on_insert_non_matching() {
+    fn test_insert_non_matching() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        reg.subscribe(&plan);
-
+        reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         let affected = reg.on_insert("users", &[CellValue::I64(99), CellValue::Str("Bob".into())]);
         assert!(affected.is_empty());
     }
@@ -263,39 +254,24 @@ mod tests {
     #[test]
     fn test_unsubscribe() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub_id = reg.subscribe(&plan);
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         reg.unsubscribe(sub_id);
-
         let affected = reg.on_insert("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
         assert!(affected.is_empty());
     }
 
     #[test]
-    fn test_on_delete_matching() {
+    fn test_delete_matching() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub_id = reg.subscribe(&plan);
-
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         let affected = reg.on_delete("users", &[CellValue::I64(42), CellValue::Str("Alice".into())]);
         assert_eq!(affected, vec![sub_id]);
     }
 
     #[test]
-    fn test_on_update_old_matches() {
+    fn test_update_old_matches() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub_id = reg.subscribe(&plan);
-
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         let affected = reg.on_update(
             "users",
             &[CellValue::I64(42), CellValue::Str("Alice".into())],
@@ -305,14 +281,9 @@ mod tests {
     }
 
     #[test]
-    fn test_on_update_neither_matches() {
+    fn test_update_neither_matches() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        reg.subscribe(&plan);
-
+        reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
         let affected = reg.on_update(
             "users",
             &[CellValue::I64(99), CellValue::Str("X".into())],
@@ -324,28 +295,21 @@ mod tests {
     #[test]
     fn test_verify_filter() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![InvalidationCondition {
-                table: "orders".into(),
-                index_keys: vec![InvalidationKey {
-                    col: 1, // user_id
-                    value: Value::Int(42),
-                }],
+        let sub_id = reg.subscribe(&[ReactiveCondition {
+            table: "orders".into(),
+            kind: ReactiveConditionKind::Condition {
+                eq_keys: vec![ReactiveKey { col: 1, value: Value::Int(42) }],
                 verify_filter: PlanFilterPredicate::GreaterThan {
-                    col: ColumnRef { source: 0, col: 2 }, // amount
+                    col: ColumnRef { source: 0, col: 2 },
                     value: Value::Int(100),
                 },
-                source_idx: 0,
-            }],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub_id = reg.subscribe(&plan);
+            },
+            source_idx: 0,
+        }]);
 
-        // amount=50 → verify fails
         let affected = reg.on_insert("orders", &[CellValue::I64(1), CellValue::I64(42), CellValue::I64(50)]);
         assert!(affected.is_empty());
 
-        // amount=200 → verify passes
         let affected = reg.on_insert("orders", &[CellValue::I64(2), CellValue::I64(42), CellValue::I64(200)]);
         assert_eq!(affected, vec![sub_id]);
     }
@@ -353,37 +317,35 @@ mod tests {
     #[test]
     fn test_multiple_subscriptions() {
         let mut reg = SubscriptionRegistry::new();
-        let plan1 = make_plan(
-            vec![simple_condition("users", 0, Value::Int(1))],
-            InvalidationStrategy::ReExecute,
-        );
-        let plan2 = make_plan(
-            vec![simple_condition("users", 0, Value::Int(2))],
-            InvalidationStrategy::ReExecute,
-        );
-        let sub1 = reg.subscribe(&plan1);
-        let sub2 = reg.subscribe(&plan2);
+        let sub1 = reg.subscribe(&[cond_eq("users", 0, Value::Int(1))]);
+        let sub2 = reg.subscribe(&[cond_eq("users", 0, Value::Int(2))]);
 
-        let affected = reg.on_insert("users", &[CellValue::I64(1), CellValue::Str("A".into())]);
-        assert_eq!(affected, vec![sub1]);
-
-        let affected = reg.on_insert("users", &[CellValue::I64(2), CellValue::Str("B".into())]);
-        assert_eq!(affected, vec![sub2]);
-
-        let affected = reg.on_insert("users", &[CellValue::I64(99), CellValue::Str("C".into())]);
-        assert!(affected.is_empty());
+        assert_eq!(reg.on_insert("users", &[CellValue::I64(1), CellValue::Str("A".into())]), vec![sub1]);
+        assert_eq!(reg.on_insert("users", &[CellValue::I64(2), CellValue::Str("B".into())]), vec![sub2]);
+        assert!(reg.on_insert("users", &[CellValue::I64(99), CellValue::Str("C".into())]).is_empty());
     }
 
     #[test]
     fn test_different_table_not_affected() {
         let mut reg = SubscriptionRegistry::new();
-        let plan = make_plan(
-            vec![simple_condition("users", 0, Value::Int(42))],
-            InvalidationStrategy::ReExecute,
-        );
-        reg.subscribe(&plan);
+        reg.subscribe(&[cond_eq("users", 0, Value::Int(42))]);
+        assert!(reg.on_insert("orders", &[CellValue::I64(42), CellValue::I64(1)]).is_empty());
+    }
 
-        let affected = reg.on_insert("orders", &[CellValue::I64(42), CellValue::I64(1)]);
-        assert!(affected.is_empty());
+    #[test]
+    fn test_table_level() {
+        let mut reg = SubscriptionRegistry::new();
+        let sub_id = reg.subscribe(&[cond_table("users")]);
+        assert_eq!(reg.on_insert("users", &[CellValue::I64(1), CellValue::Str("Alice".into())]), vec![sub_id]);
+        assert_eq!(reg.on_insert("users", &[CellValue::I64(99), CellValue::Str("Bob".into())]), vec![sub_id]);
+        assert!(reg.on_insert("orders", &[CellValue::I64(1), CellValue::I64(1)]).is_empty());
+    }
+
+    #[test]
+    fn test_table_level_unsubscribe() {
+        let mut reg = SubscriptionRegistry::new();
+        let sub_id = reg.subscribe(&[cond_table("users")]);
+        reg.unsubscribe(sub_id);
+        assert!(reg.on_insert("users", &[CellValue::I64(1), CellValue::Str("Alice".into())]).is_empty());
     }
 }

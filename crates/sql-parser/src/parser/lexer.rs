@@ -183,7 +183,7 @@ impl<'a> Lexer<'a> {
             "DELETE" => TokenKind::Delete,
             "UPDATE" => TokenKind::Update,
             "SET" => TokenKind::Set,
-            "INVALIDATE_ON" => TokenKind::InvalidateOn,
+            "REACTIVE" => TokenKind::Reactive,
             "CREATE" => TokenKind::Create,
             _ => TokenKind::Ident(text.to_string()),
         };
@@ -353,12 +353,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lex_invalidate_on() {
-        let tokens = lex_all("INVALIDATE_ON").unwrap();
-        assert_eq!(tokens[0].kind, TokenKind::InvalidateOn);
+    fn test_lex_reactive() {
+        let tokens = lex_all("REACTIVE").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Reactive);
 
-        let tokens = lex_all("invalidate_on").unwrap();
-        assert_eq!(tokens[0].kind, TokenKind::InvalidateOn);
+        let tokens = lex_all("reactive").unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Reactive);
     }
 
     #[test]

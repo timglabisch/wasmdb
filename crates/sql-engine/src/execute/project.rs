@@ -3,12 +3,19 @@ use crate::storage::CellValue;
 
 use super::{Columns, ExecutionContext, SpanOperation};
 
+fn reactive_value(ctx: &ExecutionContext, condition_idx: usize) -> CellValue {
+    let triggered = ctx.triggered_conditions
+        .as_ref()
+        .map_or(false, |set| set.contains(&condition_idx));
+    if triggered { CellValue::I64(1) } else { CellValue::I64(0) }
+}
+
 pub fn project_rowset(
     ctx: &mut ExecutionContext,
     rs: &super::RowSet,
     result_columns: &[PlanResultColumn],
 ) -> Columns {
-    ctx.span_with(|_ctx| {
+    ctx.span_with(|ctx| {
         let mut result: Columns = Vec::with_capacity(result_columns.len());
         for rc in result_columns {
             match rc {
@@ -18,8 +25,9 @@ pub fn project_rowset(
                 PlanResultColumn::Aggregate { .. } => {
                     unreachable!("aggregate result column without aggregates in plan");
                 }
-                PlanResultColumn::InvalidateOn { .. } => {
-                    result.push(vec![CellValue::I64(0); rs.num_rows]);
+                PlanResultColumn::Reactive { condition_idx, .. } => {
+                    let val = reactive_value(ctx, *condition_idx);
+                    result.push(vec![val; rs.num_rows]);
                 }
             }
         }
@@ -36,7 +44,7 @@ pub fn project(
     result_columns: &[PlanResultColumn],
     group_by: &[ColumnRef],
 ) -> Columns {
-    ctx.span_with(|_ctx| {
+    ctx.span_with(|ctx| {
         let mut result: Columns = Vec::with_capacity(result_columns.len());
         let mut agg_counter = 0;
         for rc in result_columns {
@@ -51,9 +59,10 @@ pub fn project(
                     result.push(cols[pos].clone());
                     agg_counter += 1;
                 }
-                PlanResultColumn::InvalidateOn { .. } => {
+                PlanResultColumn::Reactive { condition_idx, .. } => {
                     let num_rows = cols.first().map_or(0, |c| c.len());
-                    result.push(vec![CellValue::I64(0); num_rows]);
+                    let val = reactive_value(ctx, *condition_idx);
+                    result.push(vec![val; num_rows]);
                 }
             }
         }

@@ -44,13 +44,13 @@ export default function OrdersPanel() {
   const [status, setStatus] = useState('pending');
 
   const userList = useQuery(
-    "SELECT users.id, users.name FROM users ORDER BY users.name",
-    ([id, name]) => ({ id: id as number, name: name as string }),
+    "SELECT reactive(users.id), users.id, users.name FROM users ORDER BY users.name",
+    ([_r, id, name]) => ({ id: id as number, name: name as string }),
   );
 
   const rows = useQuery(
-    "SELECT orders.id, orders.user_id, users.name, orders.amount, orders.status FROM orders INNER JOIN users ON orders.user_id = users.id ORDER BY orders.id",
-    ([id, userId, userName, amount, status]) => ({
+    "SELECT reactive(orders.id), reactive(users.id), orders.id, orders.user_id, users.name, orders.amount, orders.status FROM orders INNER JOIN users ON orders.user_id = users.id ORDER BY orders.id",
+    ([_r1, _r2, id, userId, userName, amount, status]) => ({
       id: id as number,
       userId: userId as number,
       userName: userName as string,
@@ -60,7 +60,7 @@ export default function OrdersPanel() {
   );
 
   const confirmedIds = new Set(
-    useQueryConfirmed("SELECT orders.id FROM orders", ([id]) => id as number),
+    useQueryConfirmed("SELECT reactive(orders.id), orders.id FROM orders", ([_r, id]) => id as number),
   );
 
   const orders: OrderRow[] = rows.map(o => ({

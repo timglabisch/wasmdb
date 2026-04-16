@@ -18,7 +18,7 @@ pub fn sort_materialized(
             let pos = result_columns.iter().position(|rc| match rc {
                 PlanResultColumn::Column { col, .. } => *col == spec.col,
                 PlanResultColumn::Aggregate { col, .. } => *col == spec.col,
-                PlanResultColumn::InvalidateOn { .. } => false,
+                PlanResultColumn::Reactive { .. } => false,
             });
             pos.map(|p| (p, spec.direction))
         }).collect();

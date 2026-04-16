@@ -161,6 +161,7 @@ thread_local! {
     static NOTIFICATION_COUNTS: RefCell<HashMap<u64, u64>> = RefCell::new(HashMap::new());
     static QUERY_LOG: RefCell<QueryLog> = RefCell::new(QueryLog::new());
     static TABLE_INVALIDATION_COUNTS: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+    static TRIGGERED_CONDITIONS: RefCell<HashMap<u64, HashSet<usize>>> = RefCell::new(HashMap::new());
 }
 
 fn with_client<T>(f: impl FnOnce(&mut SyncClient<UserCommand>) -> T) -> T {
@@ -202,15 +203,20 @@ fn make_db() -> Database {
 // ── Reactive notification ───────────────────────────────────────
 
 /// Determine affected subscriptions from a ZSet and schedule deferred notification.
+/// Also stores which reactive condition indices triggered per subscription, so that
+/// SELECT reactive(...) columns can return true/false on re-execution.
 fn notify_affected(zset: &ZSet) {
-    let affected = REGISTRY.with(|r| {
+    let affected: HashMap<SubId, HashSet<usize>> = REGISTRY.with(|r| {
         let reg = r.borrow();
-        let mut affected = HashSet::new();
+        let mut affected: HashMap<SubId, HashSet<usize>> = HashMap::new();
         for entry in &zset.entries {
-            if entry.weight > 0 {
-                affected.extend(reg.on_insert(&entry.table, &entry.row));
+            let detailed = if entry.weight > 0 {
+                reg.on_insert_detailed(&entry.table, &entry.row)
             } else {
-                affected.extend(reg.on_delete(&entry.table, &entry.row));
+                reg.on_delete_detailed(&entry.table, &entry.row)
+            };
+            for (sub_id, indices) in detailed {
+                affected.entry(sub_id).or_default().extend(indices);
             }
             TABLE_INVALIDATION_COUNTS.with(|tc| {
                 *tc.borrow_mut().entry(entry.table.clone()).or_insert(0) += 1;
@@ -223,7 +229,7 @@ fn notify_affected(zset: &ZSet) {
         return;
     }
 
-    let sub_ids: Vec<u64> = affected.iter().map(|s| s.0).collect();
+    let sub_ids: Vec<u64> = affected.keys().map(|s| s.0).collect();
     let total_subs = CALLBACKS.with(|cbs| cbs.borrow().len());
     log_event(DebugEvent::Notification {
         timestamp_ms: now_ms(),
@@ -237,11 +243,19 @@ fn notify_affected(zset: &ZSet) {
         }
     });
 
+    // Store triggered conditions so query re-execution can read them.
+    TRIGGERED_CONDITIONS.with(|tc| {
+        let mut tc = tc.borrow_mut();
+        for (sub_id, indices) in &affected {
+            tc.insert(sub_id.0, indices.clone());
+        }
+    });
+
     // Fire callbacks asynchronously so the click handler returns immediately.
     wasm_bindgen_futures::spawn_local(async move {
         CALLBACKS.with(|cbs| {
             let cbs = cbs.borrow();
-            for sub_id in &affected {
+            for sub_id in affected.keys() {
                 if let Some(f) = cbs.get(&sub_id.0) {
                     if let Err(e) = f.call0(&JsValue::NULL) {
                         web_sys::console::error_2(
@@ -309,6 +323,16 @@ async fn do_fetch(body: &[u8]) -> Result<Vec<u8>, JsValue> {
 
 // ── Internal: query helpers ──────────────────────────────────────
 
+/// Find the triggered condition indices for a SQL query's subscription.
+/// Returns None if no subscription exists or no conditions were triggered.
+fn find_triggered_for_sql(sql: &str) -> Option<HashSet<usize>> {
+    SUB_SQL.with(|s| {
+        let s = s.borrow();
+        let sub_id = s.iter().find(|(_, v)| v.as_str() == sql).map(|(k, _)| *k)?;
+        TRIGGERED_CONDITIONS.with(|tc| tc.borrow_mut().remove(&sub_id))
+    })
+}
+
 fn columns_to_rows(columns: Vec<Vec<CellValue>>) -> Vec<Vec<CellValue>> {
     if columns.is_empty() || columns[0].is_empty() {
         return vec![];
@@ -319,19 +343,7 @@ fn columns_to_rows(columns: Vec<Vec<CellValue>>) -> Vec<Vec<CellValue>> {
         .collect()
 }
 
-/// Extract table names from a SQL SELECT statement.
-fn extract_tables(sql: &str) -> Vec<String> {
-    let stmt = match sql_parser::parser::parse_statement(sql) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-    match stmt {
-        sql_parser::ast::Statement::Select(select) => {
-            select.sources.iter().map(|s| s.table.clone()).collect()
-        }
-        _ => vec![],
-    }
-}
+
 
 // ── Stream batching logic ───────────────────────────────────────
 
@@ -638,12 +650,28 @@ pub fn create_stream(batch_count: u32, batch_wait_ms: u32, retry_count: u32) -> 
     })
 }
 
-/// Register a reactive query subscription. Parses the SQL to determine
-/// which tables to watch, stores the callback, and returns a subscription ID.
+/// Register a reactive query subscription. Parses the SQL, builds an execution plan
+/// with reactive metadata, and registers with the subscription registry.
 #[wasm_bindgen]
 pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
-    let tables = extract_tables(sql);
-    let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe_tables(&tables));
+    let stmt = sql_parser::parser::parse_statement(sql)
+        .unwrap_or_else(|e| panic!("subscribe: parse error: {}", e));
+    let select = match stmt {
+        sql_parser::ast::Statement::Select(s) => s,
+        _ => panic!("subscribe only supports SELECT statements"),
+    };
+
+    let (sub_id, tables) = with_client(|client| {
+        let table_schemas = client.db().table_schemas();
+        let conditions = sql_engine::planner::plan_reactive(&select, &table_schemas)
+            .unwrap_or_else(|e| panic!("subscribe: plan_reactive error: {e:?}"));
+
+        let tables: Vec<String> = select.sources.iter().map(|s| s.table.clone()).collect();
+
+        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&conditions));
+        (sub_id, tables)
+    });
+
     CALLBACKS.with(|cbs| cbs.borrow_mut().insert(sub_id.0, callback));
     SUB_SQL.with(|s| s.borrow_mut().insert(sub_id.0, sql.to_string()));
     log_event(DebugEvent::SubscriptionCreated {
@@ -783,10 +811,13 @@ pub fn flush_stream(stream_id: f64) -> js_sys::Promise {
 /// Returns a row-major array of arrays, e.g. `[[1, "Alice", 30], [2, "Bob", 25]]`.
 #[wasm_bindgen]
 pub fn query(sql: &str) -> Result<JsValue, JsError> {
+    // Look up triggered conditions for this SQL's subscription.
+    let triggered = find_triggered_for_sql(sql);
+
     with_client(|client| {
         let (columns, spans) = client
             .db_mut()
-            .execute_traced(sql)
+            .execute_traced_with_triggered(sql, triggered)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         let row_count = rows.len();
@@ -828,10 +859,12 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
 /// Execute a SQL query against the confirmed (server-acknowledged) database.
 #[wasm_bindgen]
 pub fn query_confirmed(sql: &str) -> Result<JsValue, JsError> {
+    let triggered = find_triggered_for_sql(sql);
+
     with_client(|client| {
         let (columns, spans) = client
             .confirmed_db_mut()
-            .execute_traced(sql)
+            .execute_traced_with_triggered(sql, triggered)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         let row_count = rows.len();
