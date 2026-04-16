@@ -1358,3 +1358,237 @@ OnZSet 1 mutations
   Condition[0]: run=1/0 total=1/0
 ");
 }
+
+// ── Tests: IN expansion ────────────────────────────────────────────────
+
+#[test]
+fn reactive_plan_snapshot_in() {
+    let db = make_db();
+    assert_reactive_plan(&reactive_plan(&db,
+        "SELECT REACTIVE(users.id IN (1, 2, 3)) AS inv FROM users"), "
+Reactive[0] table=users strategy=IndexLookup 3 sets: [users.id = 1], [users.id = 2], [users.id = 3]
+  verify: users.id IN (1, 2, 3)
+");
+}
+
+#[test]
+fn reactive_plan_snapshot_eq_and_in() {
+    let db = make_db();
+    assert_reactive_plan(&reactive_plan(&db,
+        "SELECT REACTIVE(users.name = 'Alice' AND users.id IN (1, 2)) AS inv FROM users"), "
+Reactive[0] table=users strategy=IndexLookup 2 sets: [users.name = 'Alice', users.id = 1], [users.name = 'Alice', users.id = 2]
+  verify: (users.name = 'Alice' AND users.id IN (1, 2))
+");
+}
+
+#[test]
+fn reactive_in_matching_value_triggers() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 3)) AS inv FROM users";
+    let (registry, sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(20)],
+    );
+    assert_eq!(affected, vec![sub_id]);
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(3), CellValue::Str("Y".into()), CellValue::I64(25)],
+    );
+    assert_eq!(affected, vec![sub_id]);
+}
+
+#[test]
+fn reactive_in_non_matching_value_does_not_trigger() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 3)) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(2), CellValue::Str("Z".into()), CellValue::I64(30)],
+    );
+    assert!(affected.is_empty());
+}
+
+#[test]
+fn reactive_in_with_eq_combined() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.name = 'Alice' AND users.id IN (1, 2)) AS inv FROM users";
+    let (registry, sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)],
+    );
+    assert_eq!(affected, vec![sub_id]);
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(3), CellValue::Str("Alice".into()), CellValue::I64(30)],
+    );
+    assert!(affected.is_empty());
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(1), CellValue::Str("Bob".into()), CellValue::I64(30)],
+    );
+    assert!(affected.is_empty());
+}
+
+#[test]
+fn reactive_in_trace_shows_o1_lookups() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 2, 3)) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(2), CellValue::Str("X".into()), CellValue::I64(20)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert_eq!(affected.len(), 1);
+    assert_reactive_trace(&trace, "
+OnZSet 1 mutations
+  INSERT users [2, 'X', 20]
+    Hash [2] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id IN (1, 2, 3)) --> true
+  Condition[0]: run=1/1 total=1/1
+");
+}
+
+#[test]
+fn reactive_in_trace_no_match() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 2, 3)) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("X".into()), CellValue::I64(20)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert!(affected.is_empty());
+    assert_reactive_trace(&trace, "
+OnZSet 1 mutations
+  INSERT users [99, 'X', 20]
+    Hash [99] --> miss
+");
+}
+
+#[test]
+fn reactive_in_with_eq_trace() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.name = 'Alice' AND users.id IN (1, 2)) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert_eq!(affected.len(), 1);
+    assert_reactive_trace(&trace, "
+OnZSet 1 mutations
+  INSERT users [1, 'Alice', 30]
+    Hash [1, 'Alice'] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] ((users.name = 'Alice' AND users.id IN (1, 2))) --> true
+  Condition[0]: run=1/1 total=1/1
+");
+}
+
+#[test]
+fn reactive_in_unsubscribe_cleans_all_keys() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 2, 3)) AS inv FROM users";
+    let ast = parser::parse(sql).expect("parse failed");
+    let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
+    let mut registry = SubscriptionRegistry::new();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::new()).unwrap();
+
+    assert_eq!(registry.reverse_index_size(), 3);
+    assert_eq!(registry.subscription_count(), 1);
+
+    registry.unsubscribe(sub_id);
+    assert_eq!(registry.reverse_index_size(), 0);
+    assert_eq!(registry.subscription_count(), 0);
+}
+
+#[test]
+fn reactive_in_multiple_subscriptions_share_keys() {
+    let db = make_db();
+    let sql1 = "SELECT REACTIVE(users.id IN (1, 2)) AS inv FROM users";
+    let sql2 = "SELECT REACTIVE(users.id IN (2, 3)) AS inv FROM users";
+
+    let ast1 = parser::parse(sql1).expect("parse failed");
+    let plan1 = sql_engine::reactive::plan_reactive(&ast1, &db.table_schemas).unwrap();
+    let ast2 = parser::parse(sql2).expect("parse failed");
+    let plan2 = sql_engine::reactive::plan_reactive(&ast2, &db.table_schemas).unwrap();
+
+    let mut registry = SubscriptionRegistry::new();
+    let sub1 = registry.subscribe(&plan1.conditions, &plan1.sources, &HashMap::new()).unwrap();
+    let sub2 = registry.subscribe(&plan2.conditions, &plan2.sources, &HashMap::new()).unwrap();
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(2), CellValue::Str("X".into()), CellValue::I64(20)],
+    );
+    assert_eq!(affected.len(), 2);
+    assert!(affected.contains(&sub1));
+    assert!(affected.contains(&sub2));
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(1), CellValue::Str("Y".into()), CellValue::I64(25)],
+    );
+    assert_eq!(affected, vec![sub1]);
+
+    let affected = sql_engine::reactive::execute::on_insert(
+        &registry, "users",
+        &[CellValue::I64(3), CellValue::Str("Z".into()), CellValue::I64(30)],
+    );
+    assert_eq!(affected, vec![sub2]);
+}
+
+#[test]
+fn reactive_in_with_range_trace() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 2) AND users.age > 25) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(30)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert_eq!(affected.len(), 1);
+    assert_reactive_trace(&trace, "
+OnZSet 1 mutations
+  INSERT users [1, 'X', 30]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] ((users.id IN (1, 2) AND users.age > 25)) --> true
+  Condition[0]: run=1/1 total=1/1
+");
+}
+
+#[test]
+fn reactive_in_with_range_verify_rejects() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id IN (1, 2) AND users.age > 25) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(20)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert!(affected.is_empty());
+    assert_reactive_trace(&trace, "
+OnZSet 1 mutations
+  INSERT users [1, 'X', 20]
+    Hash [1] --> Sub(0)
+    Verify 0/1 triggered
+      Sub(0) Condition[0] ((users.id IN (1, 2) AND users.age > 25)) --> false
+  Condition[0]: run=1/0 total=1/0
+");
+}
