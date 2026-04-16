@@ -11,7 +11,7 @@
 pub mod candidates;
 pub mod verify;
 
-use std::collections::{HashMap, HashSet};
+use fnv::{FnvHashMap, FnvHashSet};
 
 use crate::reactive::registry::{SubId, SubscriptionRegistry};
 use crate::storage::{CellValue, ZSet};
@@ -111,8 +111,8 @@ struct OpenReactiveSpan {
 pub struct ReactiveContext {
     stack: Vec<OpenReactiveSpan>,
     pub spans: Vec<ReactiveSpan>,
-    run_stats: HashMap<usize, ConditionStats>,
-    pub total_stats: HashMap<usize, ConditionStats>,
+    run_stats: FnvHashMap<usize, ConditionStats>,
+    pub total_stats: FnvHashMap<usize, ConditionStats>,
 }
 
 impl ReactiveContext {
@@ -120,8 +120,8 @@ impl ReactiveContext {
         Self {
             stack: Vec::new(),
             spans: Vec::new(),
-            run_stats: HashMap::new(),
-            total_stats: HashMap::new(),
+            run_stats: FnvHashMap::default(),
+            total_stats: FnvHashMap::default(),
         }
     }
 
@@ -209,7 +209,7 @@ fn format_row(row: &[CellValue]) -> String {
 pub fn on_zset(
     registry: &SubscriptionRegistry,
     zset: &ZSet,
-) -> HashMap<SubId, HashSet<usize>> {
+) -> FnvHashMap<SubId, FnvHashSet<usize>> {
     let mut ctx = ReactiveContext::new();
     on_zset_ctx(&mut ctx, registry, zset)
 }
@@ -219,10 +219,10 @@ pub fn on_zset_ctx(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
     zset: &ZSet,
-) -> HashMap<SubId, HashSet<usize>> {
+) -> FnvHashMap<SubId, FnvHashSet<usize>> {
     ctx.run_stats.clear();
     ctx.span_with(|ctx| {
-        let mut affected: HashMap<SubId, HashSet<usize>> = HashMap::new();
+        let mut affected: FnvHashMap<SubId, FnvHashSet<usize>> = FnvHashMap::default();
         for entry in &zset.entries {
             let mutations = check_mutation_ctx(ctx, registry, &entry.table, &entry.row, entry.weight);
             for (sub_id, indices) in mutations {
@@ -239,7 +239,7 @@ fn check_mutation_ctx(
     table: &str,
     row: &[CellValue],
     weight: i32,
-) -> HashMap<SubId, HashSet<usize>> {
+) -> FnvHashMap<SubId, FnvHashSet<usize>> {
     ctx.span(ReactiveSpanOperation::CheckMutation { table: table.to_string(), row: row.to_vec(), weight }, |ctx| {
         let candidate_set = candidates::collect(ctx, registry, table, row);
         verify::check(ctx, registry, candidate_set, table, row)

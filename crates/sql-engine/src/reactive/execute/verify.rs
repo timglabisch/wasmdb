@@ -3,7 +3,7 @@
 //! Evaluates the full verify_filter predicate on each candidate subscription.
 //! Only candidates that pass the predicate check are returned as affected.
 
-use std::collections::{HashMap, HashSet};
+use fnv::{FnvHashMap, FnvHashSet};
 
 use crate::execute::filter_row::eval_predicate;
 use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
@@ -19,23 +19,23 @@ use crate::storage::CellValue;
 pub(crate) fn check(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
-    candidates: HashSet<SubId>,
+    candidates: FnvHashSet<SubId>,
     table: &str,
     row: &[CellValue],
-) -> HashMap<SubId, HashSet<usize>> {
+) -> FnvHashMap<SubId, FnvHashSet<usize>> {
     ctx.span_with(|ctx| {
         let num_candidates = candidates.len();
-        let mut result: HashMap<SubId, HashSet<usize>> = HashMap::new();
+        let mut result: FnvHashMap<SubId, FnvHashSet<usize>> = FnvHashMap::default();
 
         for sub_id in candidates {
             let conditions = registry.conditions(sub_id);
             let sources = registry.sources(sub_id);
             if conditions.is_empty() {
-                result.insert(sub_id, HashSet::new());
+                result.insert(sub_id, FnvHashSet::default());
                 continue;
             }
 
-            let mut triggered = HashSet::new();
+            let mut triggered = FnvHashSet::default();
             for (idx, cond) in conditions.iter().enumerate() {
                 if cond.table != table {
                     continue;

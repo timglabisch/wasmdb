@@ -640,6 +640,7 @@ name = "sql-engine"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "fnv",
  "serde",
  "sql-parser",
  "web-time",

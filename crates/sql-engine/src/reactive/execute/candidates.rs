@@ -4,7 +4,7 @@
 //! Uses O(1) composite reverse-index lookups + table-level subscriptions.
 //! Candidates are then verified by `verify::check()`.
 
-use std::collections::HashSet;
+use fnv::FnvHashSet;
 
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
 use crate::reactive::registry::{CompositeKey, SubId, SubscriptionRegistry};
@@ -23,25 +23,25 @@ pub(crate) fn collect(
     registry: &SubscriptionRegistry,
     table: &str,
     row: &[CellValue],
-) -> HashSet<SubId> {
-    let mut candidates = HashSet::new();
+) -> FnvHashSet<SubId> {
+    let mut candidates = FnvHashSet::default();
 
     // 1. Composite reverse-index: iterate registered column-sets for this table.
     if let Some(column_sets) = registry.column_sets_for_table(table) {
-        for cs in column_sets {
-            let cols: Vec<(usize, CellValue)> = cs.cols
+        for col_indices in column_sets {
+            let cols: Vec<(usize, CellValue)> = col_indices
                 .iter()
                 .filter_map(|&col| row.get(col).map(|v| (col, v.clone())))
                 .collect();
             // Only look up if we could extract all columns.
-            if cols.len() == cs.cols.len() {
+            if cols.len() == col_indices.len() {
                 let key = CompositeKey {
                     table: table.to_string(),
                     cols: cols.clone(),
                 };
                 let key_values: Vec<CellValue> = cols.iter().map(|(_, v)| v.clone()).collect();
                 let hit_subs: Vec<SubId> = registry.composite_lookup(&key)
-                    .map(|s| s.to_vec())
+                    .map(|s| s.iter().copied().collect())
                     .unwrap_or_default();
                 candidates.extend(hit_subs.iter().copied());
                 ctx.span(ReactiveSpanOperation::HashLookup { key_values, hit_subs }, |_| {});

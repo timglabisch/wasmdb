@@ -1323,7 +1323,7 @@ fn assert_reactive_trace(actual: &str, expected: &str) {
 fn traced_on_zset(
     registry: &SubscriptionRegistry,
     zset: &sql_engine::storage::ZSet,
-) -> (HashMap<sql_engine::reactive::registry::SubId, HashSet<usize>>, String) {
+) -> (fnv::FnvHashMap<sql_engine::reactive::registry::SubId, fnv::FnvHashSet<usize>>, String) {
     let mut ctx = sql_engine::reactive::execute::ReactiveContext::new();
     let affected = sql_engine::reactive::execute::on_zset_ctx(&mut ctx, registry, zset);
     (affected, ctx.pretty_print())

@@ -213,7 +213,7 @@ fn notify_affected(zset: &ZSet) {
         });
     }
 
-    let affected: HashMap<SubId, HashSet<usize>> = REGISTRY.with(|r| {
+    let affected = REGISTRY.with(|r| {
         sql_engine::reactive::execute::on_zset(&r.borrow(), zset)
     });
 
