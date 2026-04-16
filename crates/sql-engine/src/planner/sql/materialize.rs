@@ -7,7 +7,7 @@
 
 use sql_parser::ast;
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 use crate::planner::PlanContext;
 use crate::planner::PlanError;
 use super::plan::MaterializeKind;

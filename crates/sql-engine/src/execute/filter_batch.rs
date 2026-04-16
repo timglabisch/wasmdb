@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use crate::planner::plan::PlanFilterPredicate;
+use crate::planner::shared::plan::PlanFilterPredicate;
 use crate::storage::{CellValue, Table, TypedColumn};
 use sql_parser::ast::Value;
 
@@ -248,7 +248,7 @@ fn sorted_union(a: &[usize], b: &[usize]) -> Vec<usize> {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use crate::planner::plan::ColumnRef;
+    use crate::planner::shared::plan::ColumnRef;
     use crate::schema::{ColumnSchema, DataType, TableSchema};
 
     fn make_i64_table(name: &str, col_name: &str, values: &[i64]) -> Table {

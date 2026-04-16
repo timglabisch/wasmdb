@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::planner::plan::PlanAggregate;
+use crate::planner::shared::plan::PlanAggregate;
 use crate::storage::CellValue;
 use sql_parser::ast::AggFunc;
 
@@ -9,7 +9,7 @@ use super::{Columns, ExecutionContext, SpanOperation};
 pub fn aggregate_rowset(
     ctx: &mut ExecutionContext,
     rs: &super::RowSet,
-    group_by: &[crate::planner::plan::ColumnRef],
+    group_by: &[crate::planner::shared::plan::ColumnRef],
     aggregates: &[PlanAggregate],
 ) -> Columns {
     ctx.span_with(|_ctx| {
@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use crate::execute::RowSet;
-    use crate::planner::plan::ColumnRef;
+    use crate::planner::shared::plan::ColumnRef;
     use crate::storage::Table;
     use crate::schema::{ColumnSchema, DataType, TableSchema};
 

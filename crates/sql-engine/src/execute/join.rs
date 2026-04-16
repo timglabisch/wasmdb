@@ -1,4 +1,4 @@
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
+use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::Table;
 use sql_parser::ast::JoinType;
 
@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use crate::execute::scan::scan_row_ids;
-    use crate::planner::plan::ColumnRef;
+    use crate::planner::shared::plan::ColumnRef;
     use crate::storage::CellValue;
     use crate::schema::{ColumnSchema, DataType, TableSchema};
 

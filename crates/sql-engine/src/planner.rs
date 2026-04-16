@@ -1,13 +1,14 @@
-pub mod plan;
+pub mod shared;
 pub mod sql;
-pub mod translate;
+pub mod reactive;
 
 use std::collections::HashMap;
 
 use sql_parser::ast;
 use sql_parser::schema::{ColumnDef, Schema};
 use crate::schema::TableSchema;
-use plan::*;
+use shared::plan::*;
+use shared::translate;
 
 
 // ── Context ───────────────────────────────────────────────────────────────

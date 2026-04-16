@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::schema::TableSchema;
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 /// Populate `scan_method` and join `strategy` for each source in the plan.
 /// When an index scan is chosen, `pre_filter` is narrowed to only the post_filter

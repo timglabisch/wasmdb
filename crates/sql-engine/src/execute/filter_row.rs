@@ -6,7 +6,7 @@
 //! This is the flexible path. For the optimized single-table batch path
 //! that operates directly on typed column arrays, see [`super::filter_batch`].
 
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
+use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
 use crate::storage::CellValue;
 
 use super::value_to_cell;

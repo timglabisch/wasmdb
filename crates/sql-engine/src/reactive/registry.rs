@@ -10,8 +10,8 @@ use std::collections::{HashMap, HashSet};
 use crate::execute::bind::{resolve_filter, resolve_value};
 use crate::execute::value_to_cell;
 use crate::execute::{ExecuteError, Params};
-use crate::planner::plan::PlanSourceEntry;
-use crate::reactive::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
+use crate::planner::shared::plan::PlanSourceEntry;
+use crate::planner::reactive::{OptimizedReactiveCondition, ReactiveLookupStrategy};
 use crate::storage::CellValue;
 
 /// Unique subscription identifier.
@@ -235,8 +235,8 @@ fn resolve_conditions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
-    use crate::reactive::plan::ReactiveLookupKey;
+    use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
+    use crate::planner::reactive::ReactiveLookupKey;
     use sql_parser::ast::Value;
     use std::collections::HashMap;
 

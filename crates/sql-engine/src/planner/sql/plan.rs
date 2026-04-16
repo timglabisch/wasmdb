@@ -1,6 +1,6 @@
 //! SQL-specific plan types: execution plan, materialization, pretty-printing.
 
-use crate::planner::plan::PlanSelect;
+use crate::planner::shared::plan::PlanSelect;
 
 /// Top-level execution plan: materialization steps + main query.
 #[derive(Debug, Clone)]

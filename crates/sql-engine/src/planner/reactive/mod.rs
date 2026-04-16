@@ -1,11 +1,21 @@
 //! Reactive planning: type definitions, condition extraction, and optimization.
+//!
+//! Pipeline:
+//!   `plan_reactive(ast, schemas)`
+//!     ├─ `plan_select_ctx`            — reuse the SQL planner for source resolution
+//!     ├─ `extract::extract_reactive_conditions` — AST REACTIVE() exprs → logical conditions
+//!     └─ `optimize::optimize`         — logical → optimized (lookup keys + verify filter)
 
 pub mod extract;
 pub mod optimize;
 
-use sql_parser::ast::Value;
+use std::collections::HashMap;
 
-use crate::planner::plan::{self, PlanFilterPredicate, PlanSourceEntry};
+use sql_parser::ast::{self, Value};
+
+use crate::planner::PlanError;
+use crate::planner::shared::plan::{self, PlanFilterPredicate, PlanSourceEntry};
+use crate::schema::TableSchema;
 
 // ── Logical types (Phase 1: extraction output) ──────────────────────────
 
@@ -86,6 +96,7 @@ pub struct OptimizedReactiveCondition {
 ///
 /// Bundles optimized conditions with the source schemas needed for
 /// pretty-printing and inspection. Produced by `plan_reactive()`.
+#[derive(Debug)]
 pub struct ReactivePlan {
     pub conditions: Vec<OptimizedReactiveCondition>,
     pub sources: Vec<PlanSourceEntry>,
@@ -105,7 +116,7 @@ impl ReactivePlan {
                     let sets: Vec<String> = lookup_key_sets.iter().map(|keys| {
                         let parts: Vec<String> = keys.iter().map(|k| {
                             let col_name = plan::col_name(
-                                &crate::planner::plan::ColumnRef { source: cond.source_idx, col: k.col },
+                                &crate::planner::shared::plan::ColumnRef { source: cond.source_idx, col: k.col },
                                 &self.sources,
                             );
                             format!("{col_name} = {}", plan::val(&k.value))
@@ -129,4 +140,23 @@ impl ReactivePlan {
         }
         out
     }
+}
+
+// ── Entry point ──────────────────────────────────────────────────────────
+
+/// Extract and optimize reactive conditions from an AstSelect.
+///
+/// Pipeline: `plan_select_ctx()` → `extract_reactive_conditions` → `optimize`.
+/// Returns a `ReactivePlan` that bundles the optimized conditions with the
+/// source schemas (for pretty-printing and inspection).
+pub fn plan_reactive(
+    ast: &ast::AstSelect,
+    table_schemas: &HashMap<String, TableSchema>,
+) -> Result<ReactivePlan, PlanError> {
+    let mut ctx = crate::planner::make_plan_context(table_schemas);
+    let main = crate::planner::plan_select_ctx(ast, &mut ctx)?;
+    let logical = extract::extract_reactive_conditions(ast, &main)?;
+    let conditions = optimize::optimize(logical);
+    let sources = main.sources;
+    Ok(ReactivePlan { conditions, sources })
 }

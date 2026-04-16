@@ -5,7 +5,7 @@
 
 use crate::schema::{self, IndexSchema, IndexType, TableSchema};
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 // ── Predicate helpers ────────────────────────────────────────────────────
 

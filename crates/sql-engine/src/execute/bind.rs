@@ -2,7 +2,7 @@
 
 use sql_parser::ast::Value;
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 use crate::planner::sql::plan::ExecutionPlan;
 use super::{ExecuteError, Params, ParamValue};
 
@@ -148,7 +148,7 @@ pub fn resolve_value(value: &Value, params: &Params) -> Result<Value, ExecuteErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planner::plan::ColumnRef;
+    use crate::planner::shared::plan::ColumnRef;
     use std::collections::HashMap;
 
     fn c(source: usize, col: usize) -> ColumnRef {

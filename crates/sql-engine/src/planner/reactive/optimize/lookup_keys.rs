@@ -1,54 +1,12 @@
-//! Reactive condition optimization: extract lookup strategies from logical conditions.
+//! Extract composite reverse-index lookup keys from a (normalized) predicate.
 //!
-//! Takes logical `ReactiveCondition`s and produces `OptimizedReactiveCondition`s
-//! with reverse-index lookup keys while ALWAYS preserving the full original predicate
-//! as verify_filter for correctness.
-//!
-//! Mirrors the structure of `planner::sql::optimize::physical::scan_method` for query
-//! optimization: lookup keys are extracted from equality predicates in AND chains,
-//! but the verify filter is never stripped.
+//! Walks an AND chain, collects `Equals` and `In` predicates on columns of a
+//! single source, and computes the Cartesian product across IN lists to
+//! produce one or more composite key sets. Non-extractable predicates stay
+//! in the verify filter.
 
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
-use super::*;
-
-/// Optimize a set of logical reactive conditions into optimized conditions.
-pub fn optimize(conditions: Vec<ReactiveCondition>) -> Vec<OptimizedReactiveCondition> {
-    conditions.into_iter().map(optimize_condition).collect()
-}
-
-/// Optimize a single reactive condition.
-fn optimize_condition(cond: ReactiveCondition) -> OptimizedReactiveCondition {
-    match cond.kind {
-        ReactiveConditionKind::TableLevel => OptimizedReactiveCondition {
-            table: cond.table,
-            source_idx: cond.source_idx,
-            strategy: ReactiveLookupStrategy::TableScan,
-            verify_filter: PlanFilterPredicate::None,
-        },
-        ReactiveConditionKind::Condition { filter } => {
-            // Normalize OR-chains of equalities on the same column into IN,
-            // so a subsequent `extract_lookup_key_sets` can expand them into
-            // multiple hash-index lookups (same mechanism as IN literals).
-            let filter = crate::planner::sql::optimize::or_to_in::normalize(filter);
-            let key_sets = extract_lookup_key_sets(&filter);
-            let strategy = if key_sets.is_empty() {
-                ReactiveLookupStrategy::TableScan
-            } else {
-                ReactiveLookupStrategy::IndexLookup { lookup_key_sets: key_sets }
-            };
-            OptimizedReactiveCondition {
-                table: cond.table,
-                source_idx: cond.source_idx,
-                strategy,
-                // ALWAYS preserve the full original predicate as verify filter.
-                // Lookup keys narrow candidates, verify filter ensures correctness.
-                verify_filter: filter,
-            }
-        }
-    }
-}
-
-// ── Lookup key extraction ───────────────────────────────────────────────
+use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
+use super::super::ReactiveLookupKey;
 
 /// Intermediate equality predicate: single value.
 struct ExtractedEq {
@@ -74,7 +32,7 @@ struct ExtractedIn {
 /// Returns empty Vec (→ TableScan fallback) when:
 /// - No equality or IN predicates found
 /// - Keys reference multiple source tables
-fn extract_lookup_key_sets(pred: &PlanFilterPredicate) -> Vec<Vec<ReactiveLookupKey>> {
+pub(crate) fn extract_lookup_key_sets(pred: &PlanFilterPredicate) -> Vec<Vec<ReactiveLookupKey>> {
     let mut eqs = Vec::new();
     let mut ins = Vec::new();
     collect_extractable_keys(pred, &mut eqs, &mut ins);
@@ -153,9 +111,15 @@ fn collect_extractable_keys(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use sql_parser::ast::Value;
-    use crate::planner::plan::ColumnRef;
+
+    use crate::planner::reactive::{
+        OptimizedReactiveCondition, ReactiveCondition, ReactiveConditionKind,
+        ReactiveLookupKey, ReactiveLookupStrategy,
+    };
+    use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
+
+    use super::super::optimize_condition;
 
     fn c(source: usize, col: usize) -> ColumnRef {
         ColumnRef { source, col }

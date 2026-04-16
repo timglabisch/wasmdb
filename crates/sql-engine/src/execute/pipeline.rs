@@ -1,6 +1,6 @@
 //! Core execution pipeline: scan -> join -> filter -> aggregate -> sort -> limit -> project.
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 use super::{aggregate, join, project, scan, sort};
 use super::{Columns, ExecuteError, ExecutionContext, SpanOperation};

@@ -4,7 +4,7 @@
 //! during the scan of that table (via `filter_batch`), reducing the number
 //! of rows that enter joins and post-filters.
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 pub fn rewrite(plan: &mut PlanSelect) {
     let filter = std::mem::replace(&mut plan.filter, PlanFilterPredicate::None);

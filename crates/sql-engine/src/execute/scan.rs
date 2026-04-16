@@ -1,4 +1,4 @@
-use crate::planner::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSourceEntry};
+use crate::planner::shared::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSourceEntry};
 use crate::storage::{CellValue, RangeOp, Table};
 use super::value_to_cell;
 use super::{ExecutionContext, ScanMethod, SpanOperation};
@@ -121,7 +121,7 @@ fn execute_index_lookup(
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use crate::planner::plan::{ColumnRef, PlanScanMethod};
+    use crate::planner::shared::plan::{ColumnRef, PlanScanMethod};
     use crate::storage::CellValue;
     use sql_parser::ast::Value;
     use sql_parser::schema::Schema;

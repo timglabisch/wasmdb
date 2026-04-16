@@ -1,4 +1,4 @@
-use crate::planner::plan::{ColumnRef, PlanResultColumn};
+use crate::planner::shared::plan::{ColumnRef, PlanResultColumn};
 use crate::storage::CellValue;
 
 use super::{Columns, ExecutionContext, SpanOperation};

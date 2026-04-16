@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::execute::filter_row::eval_predicate;
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
+use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
 use crate::reactive::registry::{SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
@@ -72,7 +72,7 @@ pub(crate) fn check(
 
 fn pretty_print_filter(
     filter: &PlanFilterPredicate,
-    sources: &[crate::planner::plan::PlanSourceEntry],
+    sources: &[crate::planner::shared::plan::PlanSourceEntry],
 ) -> String {
     if matches!(filter, PlanFilterPredicate::None) {
         return "None".to_string();

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use sql_parser::ast;
 use crate::schema::TableSchema;
 use crate::planner::PlanError;
-use crate::planner::plan::PlanSelect;
+use crate::planner::shared::plan::PlanSelect;
 
 /// Translate an AstSelect into an ExecutionPlan with materialization steps for subqueries.
 pub fn plan(

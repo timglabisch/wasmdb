@@ -5,7 +5,7 @@
 
 use sql_parser::ast;
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 pub fn rewrite(plan: &mut PlanSelect) {
     plan.filter = normalize(std::mem::replace(&mut plan.filter, PlanFilterPredicate::None));

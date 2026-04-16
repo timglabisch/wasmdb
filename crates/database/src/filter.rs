@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use sql_engine::execute::filter_row::eval_predicate;
 use sql_engine::execute::{Params, resolve_filter};
-use sql_engine::planner::plan::{ColumnRef, PlanFilterPredicate, PlanSourceEntry, PlanScanMethod};
-use sql_engine::planner::translate::plan_expr_to_predicate;
+use sql_engine::planner::shared::plan::{ColumnRef, PlanFilterPredicate, PlanSourceEntry, PlanScanMethod};
+use sql_engine::planner::shared::translate::plan_expr_to_predicate;
 use sql_engine::planner::{PlanContext, PlanError};
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::Table;

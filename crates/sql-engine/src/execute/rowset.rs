@@ -1,4 +1,4 @@
-use crate::planner::plan::{ColumnRef, PlanFilterPredicate, PlanOrderSpec};
+use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate, PlanOrderSpec};
 use crate::storage::{CellValue, Table};
 use sql_parser::ast::OrderDirection;
 

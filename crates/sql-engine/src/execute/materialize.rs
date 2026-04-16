@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use crate::planner::sql::optimize;
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 use crate::planner::sql::plan::{ExecutionPlan, MaterializeStep, MaterializeKind};
 use sql_parser::ast::{Operator, Value};
 use crate::schema::TableSchema;

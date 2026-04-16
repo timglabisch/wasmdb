@@ -6,7 +6,7 @@
 
 use crate::schema::{self, IndexType, TableSchema};
 
-use crate::planner::plan::*;
+use crate::planner::shared::plan::*;
 
 pub fn choose(
     on: &PlanFilterPredicate,

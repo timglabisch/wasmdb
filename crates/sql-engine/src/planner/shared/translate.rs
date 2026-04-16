@@ -6,9 +6,9 @@
 use sql_parser::ast;
 
 use super::plan::*;
-use super::sql::materialize;
-use super::PlanContext;
-use super::PlanError;
+use crate::planner::sql::materialize;
+use crate::planner::PlanContext;
+use crate::planner::PlanError;
 
 /// Build a raw PlanSelect from an AST (before optimization passes).
 pub fn build_raw_plan(
