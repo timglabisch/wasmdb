@@ -26,6 +26,10 @@ fn optimize_condition(cond: ReactiveCondition) -> OptimizedReactiveCondition {
             verify_filter: PlanFilterPredicate::None,
         },
         ReactiveConditionKind::Condition { filter } => {
+            // Normalize OR-chains of equalities on the same column into IN,
+            // so a subsequent `extract_lookup_key_sets` can expand them into
+            // multiple hash-index lookups (same mechanism as IN literals).
+            let filter = crate::planner::sql::optimize::or_to_in::normalize(filter);
             let key_sets = extract_lookup_key_sets(&filter);
             let strategy = if key_sets.is_empty() {
                 ReactiveLookupStrategy::TableScan
@@ -425,5 +429,218 @@ mod tests {
         assert_eq!(sets[0].len(), 1);
         assert_eq!(sets[0][0].col, 0);
         assert!(matches!(sets[0][0].value, Value::Int(42)));
+    }
+
+    // ── OR expansion tests ────────────────────────────────────────────
+    //
+    // `id = 1 OR id = 2` is semantically identical to `id IN (1, 2)`.
+    // The optimizer normalizes OR-chains of equalities on the same column
+    // into IN and then runs the existing IN-expansion machinery. Nothing
+    // special happens in candidate collection — it reuses the IN path.
+
+    /// Helper: build an OR tree left-associatively from `n` equality values.
+    fn or_chain_eq(col_ref: ColumnRef, values: Vec<Value>) -> PlanFilterPredicate {
+        values.into_iter()
+            .map(|v| PlanFilterPredicate::Equals { col: col_ref, value: v })
+            .reduce(|a, b| PlanFilterPredicate::Or(Box::new(a), Box::new(b)))
+            .expect("at least one value")
+    }
+
+    #[test]
+    fn test_or_same_column_merges_to_in() {
+        // REACTIVE(id = 1 OR id = 2) → 2 key sets, verify filter rewritten to IN
+        let filter = or_chain_eq(c(0, 0), vec![Value::Int(1), Value::Int(2)]);
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 2);
+        assert_eq!(sets[0], vec![ReactiveLookupKey { col: 0, value: Value::Int(1) }]);
+        assert_eq!(sets[1], vec![ReactiveLookupKey { col: 0, value: Value::Int(2) }]);
+        // verify filter should be normalized to IN
+        match &opt.verify_filter {
+            PlanFilterPredicate::In { col, values } => {
+                assert_eq!(*col, c(0, 0));
+                assert_eq!(values.len(), 2);
+            }
+            other => panic!("expected In, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_or_three_values_on_same_column() {
+        // REACTIVE(id = 1 OR id = 2 OR id = 3) → 3 key sets
+        let filter = or_chain_eq(c(0, 0), vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 3);
+        assert_eq!(sets[0][0].value, Value::Int(1));
+        assert_eq!(sets[1][0].value, Value::Int(2));
+        assert_eq!(sets[2][0].value, Value::Int(3));
+    }
+
+    #[test]
+    fn test_or_different_columns_stays_table_scan() {
+        // REACTIVE(id = 1 OR name = 'X') → TableScan — cannot merge cross-column
+        let filter = PlanFilterPredicate::Or(
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 0),
+                value: Value::Int(1),
+            }),
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 1),
+                value: Value::Text("X".into()),
+            }),
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        assert!(matches!(opt.strategy, ReactiveLookupStrategy::TableScan));
+        // verify filter stays as OR (could not be merged)
+        assert!(matches!(opt.verify_filter, PlanFilterPredicate::Or(_, _)));
+    }
+
+    #[test]
+    fn test_or_mixed_with_in_merges() {
+        // REACTIVE(id IN (1, 2) OR id = 3) → merged to id IN (1, 2, 3) → 3 key sets
+        let filter = PlanFilterPredicate::Or(
+            Box::new(PlanFilterPredicate::In {
+                col: c(0, 0),
+                values: vec![Value::Int(1), Value::Int(2)],
+            }),
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 0),
+                value: Value::Int(3),
+            }),
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 3);
+        assert_eq!(sets[0][0].value, Value::Int(1));
+        assert_eq!(sets[1][0].value, Value::Int(2));
+        assert_eq!(sets[2][0].value, Value::Int(3));
+    }
+
+    #[test]
+    fn test_or_inside_and_cartesian_product() {
+        // REACTIVE(name = 'Alice' AND (id = 1 OR id = 2)) → 2 sets with fixed name + each id
+        let or = or_chain_eq(c(0, 0), vec![Value::Int(1), Value::Int(2)]);
+        let filter = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 1),
+                value: Value::Text("Alice".into()),
+            }),
+            Box::new(or),
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 2);
+        assert_eq!(sets[0].len(), 2);
+        assert_eq!(sets[1].len(), 2);
+        // Fixed key (name) present in each set
+        assert_eq!(sets[0][0], ReactiveLookupKey { col: 1, value: Value::Text("Alice".into()) });
+        assert_eq!(sets[0][1], ReactiveLookupKey { col: 0, value: Value::Int(1) });
+        assert_eq!(sets[1][0], ReactiveLookupKey { col: 1, value: Value::Text("Alice".into()) });
+        assert_eq!(sets[1][1], ReactiveLookupKey { col: 0, value: Value::Int(2) });
+    }
+
+    #[test]
+    fn test_or_with_non_eq_leaf_stays_table_scan() {
+        // REACTIVE(id = 1 OR age > 10) → cannot merge (range leaf) → TableScan
+        let filter = PlanFilterPredicate::Or(
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 0),
+                value: Value::Int(1),
+            }),
+            Box::new(PlanFilterPredicate::GreaterThan {
+                col: c(0, 2),
+                value: Value::Int(10),
+            }),
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        assert!(matches!(opt.strategy, ReactiveLookupStrategy::TableScan));
+        assert!(matches!(opt.verify_filter, PlanFilterPredicate::Or(_, _)));
+    }
+
+    #[test]
+    fn test_or_mixed_sources_degrades_to_table_scan() {
+        // OR across sources — can't be merged into a single-column IN.
+        let filter = PlanFilterPredicate::Or(
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(0, 0),
+                value: Value::Int(1),
+            }),
+            Box::new(PlanFilterPredicate::Equals {
+                col: c(1, 0),
+                value: Value::Int(2),
+            }),
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        assert!(matches!(opt.strategy, ReactiveLookupStrategy::TableScan));
+    }
+
+    #[test]
+    fn test_or_single_equality_trivial() {
+        // Degenerate: a lone Equals (no Or) still extracts one key set.
+        // (Sanity check that normalize is a no-op on non-Or predicates.)
+        let filter = PlanFilterPredicate::Equals {
+            col: c(0, 0),
+            value: Value::Int(7),
+        };
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 1);
+        assert_eq!(sets[0][0].value, Value::Int(7));
+        // verify filter remains Equals (normalize doesn't touch it)
+        assert!(matches!(opt.verify_filter, PlanFilterPredicate::Equals { .. }));
+    }
+
+    #[test]
+    fn test_or_with_placeholder_values() {
+        // REACTIVE(id = :a OR id = :b) → 2 key sets with placeholder values
+        let filter = or_chain_eq(
+            c(0, 0),
+            vec![Value::Placeholder("a".into()), Value::Placeholder("b".into())],
+        );
+        let cond = ReactiveCondition {
+            table: "users".into(),
+            kind: ReactiveConditionKind::Condition { filter },
+            source_idx: 0,
+        };
+        let opt = optimize_condition(cond);
+        let sets = assert_key_sets(&opt, 2);
+        assert!(matches!(sets[0][0].value, Value::Placeholder(_)));
+        assert!(matches!(sets[1][0].value, Value::Placeholder(_)));
     }
 }

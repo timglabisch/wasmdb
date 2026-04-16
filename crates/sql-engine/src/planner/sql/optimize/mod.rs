@@ -3,7 +3,7 @@
 //! Applied after AST translation, before execution.
 //! Each pass is in its own submodule. New passes are added here.
 
-mod or_to_in;
+pub(crate) mod or_to_in;
 pub(crate) mod physical;
 mod pushdown;
 

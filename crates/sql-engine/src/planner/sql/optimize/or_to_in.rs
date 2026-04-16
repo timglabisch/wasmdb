@@ -8,27 +8,30 @@ use sql_parser::ast;
 use crate::planner::plan::*;
 
 pub fn rewrite(plan: &mut PlanSelect) {
-    plan.filter = optimize(std::mem::replace(&mut plan.filter, PlanFilterPredicate::None));
+    plan.filter = normalize(std::mem::replace(&mut plan.filter, PlanFilterPredicate::None));
     for source in &mut plan.sources {
-        source.pre_filter = optimize(std::mem::replace(&mut source.pre_filter, PlanFilterPredicate::None));
+        source.pre_filter = normalize(std::mem::replace(&mut source.pre_filter, PlanFilterPredicate::None));
         if let Some(ref mut join) = source.join {
-            join.on = optimize(std::mem::replace(&mut join.on, PlanFilterPredicate::None));
+            join.on = normalize(std::mem::replace(&mut join.on, PlanFilterPredicate::None));
         }
     }
 }
 
-fn optimize(pred: PlanFilterPredicate) -> PlanFilterPredicate {
+/// Recursively rewrite OR-chains of equalities/INs on the same column into a
+/// single `In`. Exposed so the reactive optimizer can apply the same
+/// normalization to REACTIVE() predicates.
+pub(crate) fn normalize(pred: PlanFilterPredicate) -> PlanFilterPredicate {
     match pred {
         PlanFilterPredicate::Or(l, r) => {
-            let l = optimize(*l);
-            let r = optimize(*r);
+            let l = normalize(*l);
+            let r = normalize(*r);
             let or_pred = PlanFilterPredicate::Or(Box::new(l), Box::new(r));
             try_merge(&or_pred).unwrap_or(or_pred)
         }
         PlanFilterPredicate::And(l, r) => {
             PlanFilterPredicate::And(
-                Box::new(optimize(*l)),
-                Box::new(optimize(*r)),
+                Box::new(normalize(*l)),
+                Box::new(normalize(*r)),
             )
         }
         other => other,
