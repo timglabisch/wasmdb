@@ -15,7 +15,7 @@ use crate::storage::CellValue;
 ///
 /// For each candidate, iterates over its conditions for the given table and
 /// evaluates the full predicate against the row. Emits a `ConditionEval` child
-/// span per evaluated condition showing strategy, filter, and match result.
+/// span per evaluated condition showing sub_id, filter, and match result.
 pub(crate) fn check(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
