@@ -22,16 +22,14 @@ use crate::storage::{CellValue, ZSet};
 #[derive(Debug, Clone)]
 pub enum ReactiveSpanOperation {
     OnZSet { entries: usize },
-    CheckMutation { table: String, weight: i32 },
-    /// How candidates were found:
-    /// - `by_value`: O(1) reverse-index lookup per column value
-    /// - `by_table`: O(1) lookup, but subscription watches ALL mutations on the table
-    Candidates { by_value: usize, by_table: usize, total: usize },
+    CheckMutation { table: String, row: Vec<CellValue>, weight: i32 },
+    /// Individual hash-index lookup: composite key values → which subs matched.
+    HashLookup { key_values: Vec<CellValue>, hit_subs: Vec<SubId> },
+    /// Table-level scan: subs watching the entire table.
+    ScanLookup { hit_subs: Vec<SubId> },
     Verify { candidates: usize, triggered: usize },
     /// Per-condition evaluation result — child of Verify.
-    /// `cost`: `"O(1)"` = equality key extracted → found via reverse-index,
-    ///         `"O(s)"` = no key → registered as table-level (s = subscriptions on table).
-    ConditionEval { idx: usize, cost: &'static str, filter: String, matched: bool },
+    ConditionEval { sub_id: SubId, idx: usize, filter: String, matched: bool },
 }
 
 /// A completed reactive span: operation + children.
@@ -44,18 +42,47 @@ pub struct ReactiveSpan {
 impl ReactiveSpan {
     fn pretty_print_to(&self, out: &mut String, depth: usize) {
         use std::fmt::Write;
-        for _ in 0..depth { out.push_str("  "); }
+        let indent = |out: &mut String| { for _ in 0..depth { out.push_str("  "); } };
         match &self.operation {
-            ReactiveSpanOperation::OnZSet { entries } =>
-                writeln!(out, "OnZSet entries={entries}").unwrap(),
-            ReactiveSpanOperation::CheckMutation { table, weight } =>
-                writeln!(out, "CheckMutation table={table} weight={weight}").unwrap(),
-            ReactiveSpanOperation::Candidates { by_value, by_table, total } =>
-                writeln!(out, "Candidates by_value={by_value} by_table={by_table} total={total}").unwrap(),
-            ReactiveSpanOperation::Verify { candidates, triggered } =>
-                writeln!(out, "Verify candidates={candidates} triggered={triggered}").unwrap(),
-            ReactiveSpanOperation::ConditionEval { idx, cost, filter, matched } =>
-                writeln!(out, "Condition[{idx}] {cost} filter=({filter}) matched={matched}").unwrap(),
+            ReactiveSpanOperation::OnZSet { entries } => {
+                indent(out);
+                writeln!(out, "OnZSet {entries} mutations").unwrap();
+            }
+            ReactiveSpanOperation::CheckMutation { table, row, weight } => {
+                indent(out);
+                let op = if *weight >= 0 { "INSERT" } else { "DELETE" };
+                let row_str = format_row(row);
+                writeln!(out, "{op} {table} {row_str}").unwrap();
+            }
+            ReactiveSpanOperation::HashLookup { key_values, hit_subs } => {
+                indent(out);
+                let key_str = format_row(key_values);
+                if hit_subs.is_empty() {
+                    writeln!(out, "Hash {key_str} --> miss").unwrap();
+                } else {
+                    let subs: Vec<String> = hit_subs.iter().map(|s| format!("Sub({})", s.0)).collect();
+                    writeln!(out, "Hash {key_str} --> {}", subs.join(", ")).unwrap();
+                }
+            }
+            ReactiveSpanOperation::ScanLookup { hit_subs } => {
+                indent(out);
+                if hit_subs.is_empty() {
+                    writeln!(out, "Scan --> miss").unwrap();
+                } else {
+                    let subs: Vec<String> = hit_subs.iter().map(|s| format!("Sub({})", s.0)).collect();
+                    writeln!(out, "Scan --> {}", subs.join(", ")).unwrap();
+                }
+            }
+            ReactiveSpanOperation::Verify { candidates, triggered } => {
+                // Skip verify header when no candidates
+                if *candidates == 0 { return; }
+                indent(out);
+                writeln!(out, "Verify {triggered}/{candidates} triggered").unwrap();
+            }
+            ReactiveSpanOperation::ConditionEval { sub_id, idx, filter, matched } => {
+                indent(out);
+                writeln!(out, "Sub({}) Condition[{idx}] ({filter}) --> {matched}", sub_id.0).unwrap();
+            }
         }
         for child in &self.children {
             child.pretty_print_to(out, depth + 1);
@@ -164,6 +191,15 @@ impl ReactiveContext {
     }
 }
 
+fn format_row(row: &[CellValue]) -> String {
+    let vals: Vec<String> = row.iter().map(|v| match v {
+        CellValue::I64(n) => n.to_string(),
+        CellValue::Str(s) => format!("'{s}'"),
+        CellValue::Null => "NULL".to_string(),
+    }).collect();
+    format!("[{}]", vals.join(", "))
+}
+
 // ── Execution ────────────────────────────────────────────────────────────
 
 /// Process a ZSet against the registry — the primary integration point.
@@ -204,7 +240,7 @@ fn check_mutation_ctx(
     row: &[CellValue],
     weight: i32,
 ) -> HashMap<SubId, HashSet<usize>> {
-    ctx.span(ReactiveSpanOperation::CheckMutation { table: table.to_string(), weight }, |ctx| {
+    ctx.span(ReactiveSpanOperation::CheckMutation { table: table.to_string(), row: row.to_vec(), weight }, |ctx| {
         let candidate_set = candidates::collect(ctx, registry, table, row);
         verify::check(ctx, registry, candidate_set, table, row)
     })

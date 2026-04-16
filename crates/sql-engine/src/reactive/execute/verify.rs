@@ -8,7 +8,6 @@ use std::collections::{HashMap, HashSet};
 use crate::execute::filter_row::eval_predicate;
 use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
-use crate::reactive::plan::ReactiveLookupStrategy;
 use crate::reactive::registry::{SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
 
@@ -44,15 +43,11 @@ pub(crate) fn check(
                 let matches = eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
                     row.get(col.col).cloned().unwrap_or(CellValue::Null)
                 });
-                let cost = match &cond.strategy {
-                    ReactiveLookupStrategy::IndexLookup { .. } => "O(1)",
-                    ReactiveLookupStrategy::TableScan => "O(s)",
-                };
                 let filter = pretty_print_filter(&cond.verify_filter, sources);
                 ctx.record_condition(idx, matches);
                 ctx.span(ReactiveSpanOperation::ConditionEval {
+                    sub_id,
                     idx,
-                    cost,
                     filter,
                     matched: matches,
                 }, |_| {});

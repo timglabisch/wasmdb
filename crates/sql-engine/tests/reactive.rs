@@ -193,16 +193,14 @@ fn reactive_update_leaving_filter() {
     // delete row: id=1 + name='Alice' → both lookup keys match (index=2), verify passes
     // insert row: id=1 matches but name='Bobby' ≠ 'Alice' → only one key (index=1), verify fails
     assert_reactive_trace(&trace, "
-OnZSet entries=2
-  CheckMutation table=users weight=-1
-    Candidates by_value=2 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=true
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=0
-      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=false
-  conditions: evaluated=2 O(1)=2 O(s)=0 matched=1
+OnZSet 2 mutations
+  DELETE users [1, 'Alice', 30]
+    Hash [1, 'Alice'] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] ((users.id = 1 AND users.name = 'Alice')) --> true
+  INSERT users [1, 'Bobby', 30]
+    Hash [1, 'Bobby'] --> miss
+  Condition[0]: run=1/1 total=1/1
 ");
 }
 
@@ -416,16 +414,16 @@ fn reactive_update_staying_in_filter() {
     let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub_id), "update staying in filter should trigger");
     assert_reactive_trace(&trace, "
-OnZSet entries=2
-  CheckMutation table=users weight=-1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+OnZSet 2 mutations
+  DELETE users [1, 'Alice', 30]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+  INSERT users [1, 'Bob', 30]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+  Condition[0]: run=2/2 total=2/2
 ");
 }
 
@@ -447,16 +445,14 @@ fn reactive_update_entering_filter() {
     // delete row: id=1 matches index, but name='Other' fails verify → triggered=0
     // insert row: id=1 + name='Alice' both match index, verify passes → triggered=1
     assert_reactive_trace(&trace, "
-OnZSet entries=2
-  CheckMutation table=users weight=-1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=0
-      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=false
-  CheckMutation table=users weight=1
-    Candidates by_value=2 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=true
-  conditions: evaluated=2 O(1)=2 O(s)=0 matched=1
+OnZSet 2 mutations
+  DELETE users [1, 'Other', 30]
+    Hash [1, 'Other'] --> miss
+  INSERT users [1, 'Alice', 30]
+    Hash [1, 'Alice'] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] ((users.id = 1 AND users.name = 'Alice')) --> true
+  Condition[0]: run=1/1 total=1/1
 ");
 }
 
@@ -476,14 +472,11 @@ fn reactive_update_no_match_neither_old_nor_new() {
     let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.is_empty(), "update on unrelated row should not trigger");
     assert_reactive_trace(&trace, "
-OnZSet entries=2
-  CheckMutation table=users weight=-1
-    Candidates by_value=0 by_table=0 total=0
-    Verify candidates=0 triggered=0
-  CheckMutation table=users weight=1
-    Candidates by_value=0 by_table=0 total=0
-    Verify candidates=0 triggered=0
-  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+OnZSet 2 mutations
+  DELETE users [99, 'X', 1]
+    Hash [99] --> miss
+  INSERT users [99, 'Y', 1]
+    Hash [99] --> miss
 ");
 }
 
@@ -512,19 +505,18 @@ fn reactive_zset_multiple_entries() {
     assert!(affected.contains_key(&sub2), "sub2 should be triggered by user 2 insert");
     assert_eq!(affected.len(), 2, "only 2 subs should be triggered, not the user 99 row");
     assert_reactive_trace(&trace, "
-OnZSet entries=3
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 2) matched=true
-  CheckMutation table=users weight=1
-    Candidates by_value=0 by_table=0 total=0
-    Verify candidates=0 triggered=0
-  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+OnZSet 3 mutations
+  INSERT users [1, 'A', 1]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+  INSERT users [2, 'B', 2]
+    Hash [2] --> Sub(1)
+    Verify 1/1 triggered
+      Sub(1) Condition[0] (users.id = 2) --> true
+  INSERT users [99, 'C', 3]
+    Hash [99] --> miss
+  Condition[0]: run=2/2 total=2/2
 ");
 }
 
@@ -553,16 +545,16 @@ fn reactive_zset_mixed_tables() {
     assert!(affected.contains_key(&sub_u));
     assert!(affected.contains_key(&sub_o));
     assert_reactive_trace(&trace, "
-OnZSet entries=2
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-  CheckMutation table=orders weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(orders.user_id = 1) matched=true
-  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+OnZSet 2 mutations
+  INSERT users [1, 'New', 1]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+  INSERT orders [99, 1, 999]
+    Hash [1] --> Sub(1)
+    Verify 1/1 triggered
+      Sub(1) Condition[0] (orders.user_id = 1) --> true
+  Condition[0]: run=2/2 total=2/2
 ");
 }
 
@@ -627,9 +619,10 @@ fn reactive_plan_eq_condition_is_index_lookup() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     match &plan.conditions[0].strategy {
-        sql_engine::reactive::plan::ReactiveLookupStrategy::IndexLookup { lookup_keys } => {
-            assert_eq!(lookup_keys.len(), 1);
-            assert_eq!(lookup_keys[0].col, 0); // users.id is column 0
+        sql_engine::reactive::plan::ReactiveLookupStrategy::IndexLookup { lookup_key_sets } => {
+            assert_eq!(lookup_key_sets.len(), 1);
+            assert_eq!(lookup_key_sets[0].len(), 1);
+            assert_eq!(lookup_key_sets[0][0].col, 0); // users.id is column 0
         }
         _ => panic!("expected IndexLookup for equality condition"),
     }
@@ -642,9 +635,10 @@ fn reactive_plan_mixed_eq_range_extracts_eq_key() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     match &plan.conditions[0].strategy {
-        sql_engine::reactive::plan::ReactiveLookupStrategy::IndexLookup { lookup_keys } => {
-            assert_eq!(lookup_keys.len(), 1);
-            assert_eq!(lookup_keys[0].col, 1); // orders.user_id is column 1
+        sql_engine::reactive::plan::ReactiveLookupStrategy::IndexLookup { lookup_key_sets } => {
+            assert_eq!(lookup_key_sets.len(), 1);
+            assert_eq!(lookup_key_sets[0].len(), 1);
+            assert_eq!(lookup_key_sets[0][0].col, 1); // orders.user_id is column 1
         }
         _ => panic!("expected IndexLookup: equality should be extracted even with range"),
     }
@@ -930,13 +924,15 @@ fn reactive_two_conditions_triggered_indices() {
     assert!(indices.contains(&1), "condition 1 (age>30) should trigger");
     // condition 0 is IndexLookup, condition 1 is TableScan → both index and table_level hits
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=1 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-      Condition[1] O(s) filter=(users.age > 30) matched=true
-  conditions: evaluated=2 O(1)=1 O(s)=1 matched=2
+OnZSet 1 mutations
+  INSERT users [1, 'X', 35]
+    Hash [1] --> Sub(0)
+    Scan --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+      Sub(0) Condition[1] (users.age > 30) --> true
+  Condition[0]: run=1/1 total=1/1
+  Condition[1]: run=1/1 total=1/1
 ");
 
     // Insert id=1, age=25 → only condition 0 matches (id=1, but age not >30)
@@ -949,13 +945,15 @@ OnZSet entries=1
     assert!(!indices.contains(&1), "condition 1 (age>30) should NOT trigger");
     // Same candidates, condition 0 passes but condition 1 fails
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=1 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-      Condition[1] O(s) filter=(users.age > 30) matched=false
-  conditions: evaluated=2 O(1)=1 O(s)=1 matched=1
+OnZSet 1 mutations
+  INSERT users [1, 'Y', 25]
+    Hash [1] --> Sub(0)
+    Scan --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+      Sub(0) Condition[1] (users.age > 30) --> false
+  Condition[0]: run=1/1 total=1/1
+  Condition[1]: run=1/0 total=1/0
 ");
 }
 
@@ -1145,12 +1143,12 @@ fn reactive_e2e_single_condition_triggered() {
     let triggered = affected.get(&sub_id).expect("sub should be triggered");
     assert!(triggered.contains(&0));
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-  conditions: evaluated=1 O(1)=1 O(s)=0 matched=1
+OnZSet 1 mutations
+  INSERT users [1, 'NewAlice', 31]
+    Hash [1] --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+  Condition[0]: run=1/1 total=1/1
 ");
 
     // 3. Re-query with triggered conditions → REACTIVE column should be 1
@@ -1177,11 +1175,9 @@ fn reactive_e2e_single_condition_not_triggered() {
     let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.is_empty());
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=0 by_table=0 total=0
-    Verify candidates=0 triggered=0
-  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+OnZSet 1 mutations
+  INSERT users [99, 'Nobody', 20]
+    Hash [99] --> miss
 ");
 
     // 3. Query without triggered conditions → REACTIVE column should be 0
@@ -1211,13 +1207,15 @@ fn reactive_e2e_two_conditions_partial_trigger() {
     // condition 0 is IndexLookup (id=1), condition 1 is TableScan (age>30)
     // sub found via both paths, but only condition 0 passes verify
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=1 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-      Condition[1] O(s) filter=(users.age > 30) matched=false
-  conditions: evaluated=2 O(1)=1 O(s)=1 matched=1
+OnZSet 1 mutations
+  INSERT users [1, 'X', 25]
+    Hash [1] --> Sub(0)
+    Scan --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+      Sub(0) Condition[1] (users.age > 30) --> false
+  Condition[0]: run=1/1 total=1/1
+  Condition[1]: run=1/0 total=1/0
 ");
 
     // 3. Re-query with triggered {0} → inv_id=1, inv_age=0
@@ -1247,13 +1245,15 @@ fn reactive_e2e_two_conditions_both_trigger() {
     assert!(triggered.contains(&0));
     assert!(triggered.contains(&1));
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=1 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(1) filter=(users.id = 1) matched=true
-      Condition[1] O(s) filter=(users.age > 30) matched=true
-  conditions: evaluated=2 O(1)=1 O(s)=1 matched=2
+OnZSet 1 mutations
+  INSERT users [1, 'X', 35]
+    Hash [1] --> Sub(0)
+    Scan --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (users.id = 1) --> true
+      Sub(0) Condition[1] (users.age > 30) --> true
+  Condition[0]: run=1/1 total=1/1
+  Condition[1]: run=1/1 total=1/1
 ");
 
     // 3. Re-query with triggered {0, 1} → inv_id=1, inv_age=1
@@ -1309,12 +1309,12 @@ fn reactive_trace_table_level() {
     let (_affected, trace) = traced_on_zset(&registry, &zset);
 
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=0 by_table=1 total=1
-    Verify candidates=1 triggered=1
-      Condition[0] O(s) filter=(None) matched=true
-  conditions: evaluated=1 O(1)=0 O(s)=1 matched=1
+OnZSet 1 mutations
+  INSERT users [99, 'X', 20]
+    Scan --> Sub(0)
+    Verify 1/1 triggered
+      Sub(0) Condition[0] (None) --> true
+  Condition[0]: run=1/1 total=1/1
 ");
 }
 
@@ -1331,11 +1331,8 @@ fn reactive_trace_wrong_table() {
 
     assert!(affected.is_empty());
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=orders weight=1
-    Candidates by_value=0 by_table=0 total=0
-    Verify candidates=0 triggered=0
-  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+OnZSet 1 mutations
+  INSERT orders [1, 1, 100]
 ");
 }
 
@@ -1353,11 +1350,11 @@ fn reactive_trace_verify_filter_rejects() {
 
     assert!(affected.is_empty());
     assert_reactive_trace(&trace, "
-OnZSet entries=1
-  CheckMutation table=users weight=1
-    Candidates by_value=1 by_table=0 total=1
-    Verify candidates=1 triggered=0
-      Condition[0] O(1) filter=((users.id = 1 AND users.age > 50)) matched=false
-  conditions: evaluated=1 O(1)=1 O(s)=0 matched=0
+OnZSet 1 mutations
+  INSERT users [1, 'X', 30]
+    Hash [1] --> Sub(0)
+    Verify 0/1 triggered
+      Sub(0) Condition[0] ((users.id = 1 AND users.age > 50)) --> false
+  Condition[0]: run=1/0 total=1/0
 ");
 }

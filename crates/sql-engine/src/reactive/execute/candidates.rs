@@ -1,56 +1,60 @@
 //! Phase 1: Candidate collection.
 //!
 //! Collects candidate subscription IDs that *might* be affected by a mutation.
-//! Uses O(1) reverse-index lookups + table-level subscriptions.
+//! Uses O(1) composite reverse-index lookups + table-level subscriptions.
 //! Candidates are then verified by `verify::check()`.
 
 use std::collections::HashSet;
 
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
-use crate::reactive::registry::{MaterializedLookupKey, SubId, SubscriptionRegistry};
+use crate::reactive::registry::{CompositeKey, SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
 
 /// Collect all candidate subscriptions for a mutation on `table` with `row`.
 ///
 /// Two sources of candidates:
 /// 1. **Table-level**: subscriptions watching the entire table (always candidates).
-/// 2. **Reverse-index**: O(1) lookup per column value — finds subscriptions whose
-///    lookup keys match a column in the mutated row.
+/// 2. **Composite reverse-index**: For each registered column-set on the table,
+///    build a composite key from the row values and do an O(1) lookup.
+///
+/// Emits `HashLookup` and `ScanLookup` child spans for tracing.
 pub(crate) fn collect(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
     table: &str,
     row: &[CellValue],
 ) -> HashSet<SubId> {
-    ctx.span_with(|_ctx| {
-        let mut candidates = HashSet::new();
-        let mut table_level_hits = 0usize;
-        let mut index_hits = 0usize;
+    let mut candidates = HashSet::new();
 
-        // 1. Table-level subscriptions — any mutation on this table is a candidate.
-        if let Some(subs) = registry.table_level_subs(table) {
-            table_level_hits = subs.len();
-            candidates.extend(subs);
-        }
-
-        // 2. Reverse-index lookup per column.
-        for (col_idx, cell) in row.iter().enumerate() {
-            let key = MaterializedLookupKey {
-                table: table.to_string(),
-                col: col_idx,
-                value: cell.clone(),
-            };
-            if let Some(subs) = registry.index_lookup(&key) {
-                index_hits += subs.len();
-                candidates.extend(subs);
+    // 1. Composite reverse-index: iterate registered column-sets for this table.
+    if let Some(column_sets) = registry.column_sets_for_table(table) {
+        for cs in column_sets {
+            let cols: Vec<(usize, CellValue)> = cs.cols
+                .iter()
+                .filter_map(|&col| row.get(col).map(|v| (col, v.clone())))
+                .collect();
+            // Only look up if we could extract all columns.
+            if cols.len() == cs.cols.len() {
+                let key = CompositeKey {
+                    table: table.to_string(),
+                    cols: cols.clone(),
+                };
+                let key_values: Vec<CellValue> = cols.iter().map(|(_, v)| v.clone()).collect();
+                let hit_subs: Vec<SubId> = registry.composite_lookup(&key)
+                    .map(|s| s.to_vec())
+                    .unwrap_or_default();
+                candidates.extend(hit_subs.iter().copied());
+                ctx.span(ReactiveSpanOperation::HashLookup { key_values, hit_subs }, |_| {});
             }
         }
+    }
 
-        let op = ReactiveSpanOperation::Candidates {
-            by_value: index_hits,
-            by_table: table_level_hits,
-            total: candidates.len(),
-        };
-        (op, candidates)
-    })
+    // 2. Table-level subscriptions — any mutation on this table is a candidate.
+    if let Some(subs) = registry.table_level_subs(table) {
+        let hit_subs: Vec<SubId> = subs.iter().copied().collect();
+        candidates.extend(&hit_subs);
+        ctx.span(ReactiveSpanOperation::ScanLookup { hit_subs }, |_| {});
+    }
+
+    candidates
 }

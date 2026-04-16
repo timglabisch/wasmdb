@@ -38,7 +38,7 @@ pub enum ReactiveConditionKind {
 /// At plan time `value` may be a `Value::Placeholder`; after parameter binding
 /// it becomes a concrete value (Int, Text, ...) that serves as hash key
 /// in the `SubscriptionRegistry`'s reverse index.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReactiveLookupKey {
     pub col: usize,
     pub value: Value,
@@ -50,10 +50,17 @@ pub enum ReactiveLookupStrategy {
     /// No equality predicate could be extracted; every mutation on the table
     /// is checked against the verify filter.
     TableScan,
-    /// One or more equality predicates extracted for O(1) reverse-index lookup.
-    /// After candidate retrieval, the verify filter is always evaluated.
+    /// O(1) reverse-index lookup via one or more composite key sets.
+    ///
+    /// Each inner `Vec<ReactiveLookupKey>` is one composite key registered in the
+    /// reverse index. Multiple sets arise from IN-list expansion:
+    ///
+    /// - `REACTIVE(id = 1)` → 1 key set: `[[(id, 1)]]`
+    /// - `REACTIVE(id IN (1, 2))` → 2 key sets: `[[(id, 1)], [(id, 2)]]`
+    /// - `REACTIVE(status = 'a' AND id IN (1, 2))` → 2 key sets (Cartesian product):
+    ///   `[[(status, 'a'), (id, 1)], [(status, 'a'), (id, 2)]]`
     IndexLookup {
-        lookup_keys: Vec<ReactiveLookupKey>,
+        lookup_key_sets: Vec<Vec<ReactiveLookupKey>>,
     },
 }
 
@@ -94,15 +101,22 @@ impl ReactivePlan {
         for (i, cond) in self.conditions.iter().enumerate() {
             let strategy = match &cond.strategy {
                 ReactiveLookupStrategy::TableScan => "TableScan".to_string(),
-                ReactiveLookupStrategy::IndexLookup { lookup_keys } => {
-                    let keys: Vec<String> = lookup_keys.iter().map(|k| {
-                        let col_name = plan::col_name(
-                            &crate::planner::plan::ColumnRef { source: cond.source_idx, col: k.col },
-                            &self.sources,
-                        );
-                        format!("{col_name} = {}", plan::val(&k.value))
+                ReactiveLookupStrategy::IndexLookup { lookup_key_sets } => {
+                    let sets: Vec<String> = lookup_key_sets.iter().map(|keys| {
+                        let parts: Vec<String> = keys.iter().map(|k| {
+                            let col_name = plan::col_name(
+                                &crate::planner::plan::ColumnRef { source: cond.source_idx, col: k.col },
+                                &self.sources,
+                            );
+                            format!("{col_name} = {}", plan::val(&k.value))
+                        }).collect();
+                        format!("[{}]", parts.join(", "))
                     }).collect();
-                    format!("IndexLookup [{}]", keys.join(", "))
+                    if sets.len() == 1 {
+                        format!("IndexLookup {}", sets[0])
+                    } else {
+                        format!("IndexLookup {} sets: {}", sets.len(), sets.join(", "))
+                    }
                 }
             };
             out.push_str(&format!("Reactive[{i}] table={} strategy={strategy}\n", cond.table));
