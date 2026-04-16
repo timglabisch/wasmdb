@@ -14,7 +14,24 @@ pub mod verify;
 use std::collections::{HashMap, HashSet};
 
 use crate::reactive::registry::{SubId, SubscriptionRegistry};
-use crate::storage::CellValue;
+use crate::storage::{CellValue, ZSet};
+
+/// Process a ZSet against the registry — the primary integration point.
+///
+/// Iterates all entries in the ZSet and determines which subscriptions are
+/// affected. Returns a map of SubId → set of triggered condition indices.
+pub fn on_zset(
+    registry: &SubscriptionRegistry,
+    zset: &ZSet,
+) -> HashMap<SubId, HashSet<usize>> {
+    let mut affected: HashMap<SubId, HashSet<usize>> = HashMap::new();
+    for entry in &zset.entries {
+        for (sub_id, indices) in check_mutation(registry, &entry.table, &entry.row) {
+            affected.entry(sub_id).or_default().extend(indices);
+        }
+    }
+    affected
+}
 
 /// Core pipeline: collect candidates, then verify.
 fn check_mutation(
@@ -34,22 +51,6 @@ pub fn on_insert(registry: &SubscriptionRegistry, table: &str, new_row: &[CellVa
 /// Check which subscriptions are affected by a DELETE.
 pub fn on_delete(registry: &SubscriptionRegistry, table: &str, old_row: &[CellValue]) -> Vec<SubId> {
     check_mutation(registry, table, old_row).into_keys().collect()
-}
-
-/// Check which subscriptions are affected by an UPDATE.
-///
-/// A subscription is affected if either the old or new row matches.
-pub fn on_update(
-    registry: &SubscriptionRegistry,
-    table: &str,
-    old_row: &[CellValue],
-    new_row: &[CellValue],
-) -> Vec<SubId> {
-    let mut affected = check_mutation(registry, table, old_row);
-    for (sub_id, indices) in check_mutation(registry, table, new_row) {
-        affected.entry(sub_id).or_default().extend(indices);
-    }
-    affected.into_keys().collect()
 }
 
 /// Like `on_insert` but also returns which condition indices triggered per subscription.

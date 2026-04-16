@@ -1,6 +1,17 @@
 use database::{Database, MutResult};
 use sql_engine::storage::{CellValue, ZSet};
 
+/// Extract entries from a MutResult::Mutation, filtering by table and weight.
+fn zset_rows(result: &MutResult, table: &str, weight: i32) -> Vec<Vec<CellValue>> {
+    match result {
+        MutResult::Mutation(zset) => zset.entries.iter()
+            .filter(|e| e.table == table && e.weight == weight)
+            .map(|e| e.row.clone())
+            .collect(),
+        _ => panic!("expected Mutation"),
+    }
+}
+
 fn make_db() -> Database {
     let mut db = Database::new();
     db.execute_all("
@@ -175,13 +186,8 @@ fn test_execute_all_mixed() {
 fn test_delete_all() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users").unwrap();
-    match result {
-        MutationResult::Deleted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 3);
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 3);
     let result = db.execute("SELECT users.id FROM users").unwrap();
     assert_eq!(result[0].len(), 0);
 }
@@ -190,16 +196,11 @@ fn test_delete_all() {
 fn test_delete_with_equality_filter() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users WHERE users.id = 2").unwrap();
-    match result {
-        MutationResult::Deleted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][0], CellValue::I64(2));
-            assert_eq!(rows[0][1], CellValue::Str("Bob".into()));
-            assert_eq!(rows[0][2], CellValue::I64(25));
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], CellValue::I64(2));
+    assert_eq!(rows[0][1], CellValue::Str("Bob".into()));
+    assert_eq!(rows[0][2], CellValue::I64(25));
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(count[0], vec![CellValue::I64(2)]);
     // Bob should be gone
@@ -211,13 +212,8 @@ fn test_delete_with_equality_filter() {
 fn test_delete_with_range_filter() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users WHERE users.age > 28").unwrap();
-    match result {
-        MutationResult::Deleted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 2); // Alice(30) and Carol(35)
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 2); // Alice(30) and Carol(35)
     let names = db.execute("SELECT users.name FROM users").unwrap();
     assert_eq!(names[0], vec![CellValue::Str("Bob".into())]);
 }
@@ -226,27 +222,17 @@ fn test_delete_with_range_filter() {
 fn test_delete_with_and_filter() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users WHERE users.age > 20 AND users.age < 30").unwrap();
-    match result {
-        MutationResult::Deleted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 1); // Bob(25)
-            assert_eq!(rows[0][1], CellValue::Str("Bob".into()));
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 1); // Bob(25)
+    assert_eq!(rows[0][1], CellValue::Str("Bob".into()));
 }
 
 #[test]
 fn test_delete_with_or_filter() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users WHERE users.id = 1 OR users.id = 3").unwrap();
-    match result {
-        MutationResult::Deleted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 2); // Alice and Carol
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 2); // Alice and Carol
     let names = db.execute("SELECT users.name FROM users").unwrap();
     assert_eq!(names[0], vec![CellValue::Str("Bob".into())]);
 }
@@ -255,10 +241,8 @@ fn test_delete_with_or_filter() {
 fn test_delete_no_match() {
     let mut db = make_db();
     let result = db.execute_mut("DELETE FROM users WHERE users.id = 999").unwrap();
-    match result {
-        MutationResult::Deleted { rows, .. } => assert_eq!(rows.len(), 0),
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&result, "users", -1);
+    assert_eq!(rows.len(), 0);
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(count[0], vec![CellValue::I64(3)]);
 }
@@ -297,18 +281,15 @@ fn test_delete_updates_indexes() {
 fn test_update_all_rows() {
     let mut db = make_db();
     let result = db.execute_mut("UPDATE users SET age = 99").unwrap();
-    match result {
-        MutationResult::Updated { table, old_new } => {
-            assert_eq!(table, "users");
-            assert_eq!(old_new.len(), 3);
-            for (old, new) in &old_new {
-                assert_ne!(old[2], CellValue::I64(99)); // old age was not 99
-                assert_eq!(new[2], CellValue::I64(99));  // new age is 99
-                assert_eq!(old[0], new[0]); // id unchanged
-                assert_eq!(old[1], new[1]); // name unchanged
-            }
-        }
-        _ => panic!("expected Updated"),
+    let old_rows = zset_rows(&result, "users", -1);
+    let new_rows = zset_rows(&result, "users", 1);
+    assert_eq!(old_rows.len(), 3);
+    assert_eq!(new_rows.len(), 3);
+    for old in &old_rows {
+        assert_ne!(old[2], CellValue::I64(99)); // old age was not 99
+    }
+    for new in &new_rows {
+        assert_eq!(new[2], CellValue::I64(99)); // new age is 99
     }
     let ages = db.execute("SELECT users.age FROM users").unwrap();
     assert_eq!(ages[0], vec![CellValue::I64(99), CellValue::I64(99), CellValue::I64(99)]);
@@ -318,20 +299,16 @@ fn test_update_all_rows() {
 fn test_update_single_row() {
     let mut db = make_db();
     let result = db.execute_mut("UPDATE users SET age = 31 WHERE users.id = 1").unwrap();
-    match result {
-        MutationResult::Updated { table, old_new } => {
-            assert_eq!(table, "users");
-            assert_eq!(old_new.len(), 1);
-            let (old, new) = &old_new[0];
-            assert_eq!(old[0], CellValue::I64(1));
-            assert_eq!(old[1], CellValue::Str("Alice".into()));
-            assert_eq!(old[2], CellValue::I64(30));
-            assert_eq!(new[0], CellValue::I64(1));
-            assert_eq!(new[1], CellValue::Str("Alice".into()));
-            assert_eq!(new[2], CellValue::I64(31));
-        }
-        _ => panic!("expected Updated"),
-    }
+    let old_rows = zset_rows(&result, "users", -1);
+    let new_rows = zset_rows(&result, "users", 1);
+    assert_eq!(old_rows.len(), 1);
+    assert_eq!(new_rows.len(), 1);
+    assert_eq!(old_rows[0][0], CellValue::I64(1));
+    assert_eq!(old_rows[0][1], CellValue::Str("Alice".into()));
+    assert_eq!(old_rows[0][2], CellValue::I64(30));
+    assert_eq!(new_rows[0][0], CellValue::I64(1));
+    assert_eq!(new_rows[0][1], CellValue::Str("Alice".into()));
+    assert_eq!(new_rows[0][2], CellValue::I64(31));
     let result = db.execute("SELECT users.age FROM users WHERE users.id = 1").unwrap();
     assert_eq!(result[0], vec![CellValue::I64(31)]);
 }
@@ -340,17 +317,14 @@ fn test_update_single_row() {
 fn test_update_multiple_columns() {
     let mut db = make_db();
     let result = db.execute_mut("UPDATE users SET name = 'Alicia', age = 31 WHERE users.id = 1").unwrap();
-    match result {
-        MutationResult::Updated { old_new, .. } => {
-            assert_eq!(old_new.len(), 1);
-            let (old, new) = &old_new[0];
-            assert_eq!(old[1], CellValue::Str("Alice".into()));
-            assert_eq!(old[2], CellValue::I64(30));
-            assert_eq!(new[1], CellValue::Str("Alicia".into()));
-            assert_eq!(new[2], CellValue::I64(31));
-        }
-        _ => panic!("expected Updated"),
-    }
+    let old_rows = zset_rows(&result, "users", -1);
+    let new_rows = zset_rows(&result, "users", 1);
+    assert_eq!(old_rows.len(), 1);
+    assert_eq!(new_rows.len(), 1);
+    assert_eq!(old_rows[0][1], CellValue::Str("Alice".into()));
+    assert_eq!(old_rows[0][2], CellValue::I64(30));
+    assert_eq!(new_rows[0][1], CellValue::Str("Alicia".into()));
+    assert_eq!(new_rows[0][2], CellValue::I64(31));
     let result = db.execute("SELECT users.name, users.age FROM users WHERE users.id = 1").unwrap();
     assert_eq!(result[0], vec![CellValue::Str("Alicia".into())]);
     assert_eq!(result[1], vec![CellValue::I64(31)]);
@@ -360,10 +334,10 @@ fn test_update_multiple_columns() {
 fn test_update_no_match() {
     let mut db = make_db();
     let result = db.execute_mut("UPDATE users SET age = 99 WHERE users.id = 999").unwrap();
-    match result {
-        MutationResult::Updated { old_new, .. } => assert_eq!(old_new.len(), 0),
-        _ => panic!("expected Updated"),
-    }
+    let old_rows = zset_rows(&result, "users", -1);
+    let new_rows = zset_rows(&result, "users", 1);
+    assert_eq!(old_rows.len(), 0);
+    assert_eq!(new_rows.len(), 0);
     // DB unchanged
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(count[0], vec![CellValue::I64(3)]);
@@ -433,29 +407,19 @@ fn test_update_with_and_filter() {
 fn test_execute_mut_insert() {
     let mut db = make_db();
     let result = db.execute_mut("INSERT INTO users VALUES (4, 'Dave', 40)").unwrap();
-    match result {
-        MutationResult::Inserted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0], vec![CellValue::I64(4), CellValue::Str("Dave".into()), CellValue::I64(40)]);
-        }
-        _ => panic!("expected Inserted"),
-    }
+    let rows = zset_rows(&result, "users", 1);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0], vec![CellValue::I64(4), CellValue::Str("Dave".into()), CellValue::I64(40)]);
 }
 
 #[test]
 fn test_execute_mut_insert_multi_row() {
     let mut db = make_db();
     let result = db.execute_mut("INSERT INTO users VALUES (4, 'Dave', 40), (5, 'Eve', 28)").unwrap();
-    match result {
-        MutationResult::Inserted { table, rows } => {
-            assert_eq!(table, "users");
-            assert_eq!(rows.len(), 2);
-            assert_eq!(rows[0][0], CellValue::I64(4));
-            assert_eq!(rows[1][0], CellValue::I64(5));
-        }
-        _ => panic!("expected Inserted"),
-    }
+    let rows = zset_rows(&result, "users", 1);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], CellValue::I64(4));
+    assert_eq!(rows[1][0], CellValue::I64(5));
 }
 
 #[test]
@@ -463,7 +427,7 @@ fn test_execute_mut_select() {
     let mut db = make_db();
     let result = db.execute_mut("SELECT users.name FROM users WHERE users.id = 1").unwrap();
     match result {
-        MutationResult::Rows(cols) => {
+        MutResult::Rows(cols) => {
             assert_eq!(cols[0], vec![CellValue::Str("Alice".into())]);
         }
         _ => panic!("expected Rows"),
@@ -474,7 +438,7 @@ fn test_execute_mut_select() {
 fn test_execute_mut_ddl() {
     let mut db = Database::new();
     let result = db.execute_mut("CREATE TABLE t (id I64 NOT NULL PRIMARY KEY)").unwrap();
-    assert!(matches!(result, MutationResult::Ddl));
+    assert!(matches!(result, MutResult::Ddl));
 }
 
 // ── Integration / lifecycle tests ────────────────────────────────────
@@ -489,13 +453,9 @@ fn test_insert_delete_select_lifecycle() {
 
     // Delete the new user
     let deleted = db.execute_mut("DELETE FROM users WHERE users.id = 4").unwrap();
-    match deleted {
-        MutationResult::Deleted { rows, .. } => {
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][1], CellValue::Str("Dave".into()));
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&deleted, "users", -1);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][1], CellValue::Str("Dave".into()));
 
     // Verify gone
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
@@ -508,17 +468,14 @@ fn test_insert_update_select_lifecycle() {
     db.execute_mut("INSERT INTO users VALUES (4, 'Dave', 40)").unwrap();
 
     let updated = db.execute_mut("UPDATE users SET name = 'David', age = 41 WHERE users.id = 4").unwrap();
-    match updated {
-        MutationResult::Updated { old_new, .. } => {
-            assert_eq!(old_new.len(), 1);
-            let (old, new) = &old_new[0];
-            assert_eq!(old[1], CellValue::Str("Dave".into()));
-            assert_eq!(new[1], CellValue::Str("David".into()));
-            assert_eq!(old[2], CellValue::I64(40));
-            assert_eq!(new[2], CellValue::I64(41));
-        }
-        _ => panic!("expected Updated"),
-    }
+    let old_rows = zset_rows(&updated, "users", -1);
+    let new_rows = zset_rows(&updated, "users", 1);
+    assert_eq!(old_rows.len(), 1);
+    assert_eq!(new_rows.len(), 1);
+    assert_eq!(old_rows[0][1], CellValue::Str("Dave".into()));
+    assert_eq!(new_rows[0][1], CellValue::Str("David".into()));
+    assert_eq!(old_rows[0][2], CellValue::I64(40));
+    assert_eq!(new_rows[0][2], CellValue::I64(41));
 
     let result = db.execute("SELECT users.name, users.age FROM users WHERE users.id = 4").unwrap();
     assert_eq!(result[0], vec![CellValue::Str("David".into())]);
@@ -564,22 +521,15 @@ fn test_delete_then_reinsert_same_id() {
 fn test_update_then_delete() {
     let mut db = make_db();
     let updated = db.execute_mut("UPDATE users SET age = 99 WHERE users.id = 1").unwrap();
-    match &updated {
-        MutationResult::Updated { old_new, .. } => {
-            assert_eq!(old_new[0].0[2], CellValue::I64(30)); // old age
-            assert_eq!(old_new[0].1[2], CellValue::I64(99)); // new age
-        }
-        _ => panic!("expected Updated"),
-    }
+    let old_rows = zset_rows(&updated, "users", -1);
+    let new_rows = zset_rows(&updated, "users", 1);
+    assert_eq!(old_rows[0][2], CellValue::I64(30)); // old age
+    assert_eq!(new_rows[0][2], CellValue::I64(99)); // new age
 
     let deleted = db.execute_mut("DELETE FROM users WHERE users.id = 1").unwrap();
-    match deleted {
-        MutationResult::Deleted { rows, .. } => {
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][2], CellValue::I64(99)); // deletes the updated row
-        }
-        _ => panic!("expected Deleted"),
-    }
+    let rows = zset_rows(&deleted, "users", -1);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][2], CellValue::I64(99)); // deletes the updated row
 
     let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
     assert_eq!(count[0], vec![CellValue::I64(2)]);

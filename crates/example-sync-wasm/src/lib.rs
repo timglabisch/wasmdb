@@ -206,23 +206,15 @@ fn make_db() -> Database {
 /// Also stores which reactive condition indices triggered per subscription, so that
 /// SELECT reactive(...) columns can return true/false on re-execution.
 fn notify_affected(zset: &ZSet) {
+    // Track table invalidation counts for debugging.
+    for entry in &zset.entries {
+        TABLE_INVALIDATION_COUNTS.with(|tc| {
+            *tc.borrow_mut().entry(entry.table.clone()).or_insert(0) += 1;
+        });
+    }
+
     let affected: HashMap<SubId, HashSet<usize>> = REGISTRY.with(|r| {
-        let reg = r.borrow();
-        let mut affected: HashMap<SubId, HashSet<usize>> = HashMap::new();
-        for entry in &zset.entries {
-            let detailed = if entry.weight > 0 {
-                sql_engine::reactive::execute::on_insert_detailed(&reg, &entry.table, &entry.row)
-            } else {
-                sql_engine::reactive::execute::on_delete_detailed(&reg, &entry.table, &entry.row)
-            };
-            for (sub_id, indices) in detailed {
-                affected.entry(sub_id).or_default().extend(indices);
-            }
-            TABLE_INVALIDATION_COUNTS.with(|tc| {
-                *tc.borrow_mut().entry(entry.table.clone()).or_insert(0) += 1;
-            });
-        }
-        affected
+        sql_engine::reactive::execute::on_zset(&r.borrow(), zset)
     });
 
     if affected.is_empty() {

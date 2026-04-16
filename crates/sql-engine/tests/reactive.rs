@@ -161,13 +161,12 @@ fn reactive_update_leaving_filter() {
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&conditions, &params).unwrap();
 
-    let affected = sql_engine::reactive::execute::on_update(
-        &registry,
-        "users",
-        &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)],
-        &[CellValue::I64(1), CellValue::Str("Bobby".into()), CellValue::I64(30)],
-    );
-    assert!(affected.contains(&sub_id));
+    // UPDATE is represented as delete(old) + insert(new) in a ZSet.
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.delete("users".into(), vec![CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
+    zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Bobby".into()), CellValue::I64(30)]);
+    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    assert!(affected.contains_key(&sub_id));
 }
 
 #[test]

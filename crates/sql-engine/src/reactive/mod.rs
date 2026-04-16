@@ -13,7 +13,8 @@
 //!        └─ binds parameters, inserts into reverse index
 //!
 //! 3. Execute (on every mutation — hot path)
-//!    let affected = reactive::execute::on_insert(&registry, table, &row);
+//!    let zset = db.execute_mut(sql)?;
+//!    let affected = reactive::execute::on_zset(&registry, &zset);
 //!        └─ execute::candidates::collect — O(1) reverse-index lookup
 //!        └─ execute::verify::check       — evaluate verify_filter per candidate
 //!
