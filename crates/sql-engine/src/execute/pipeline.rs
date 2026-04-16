@@ -66,7 +66,7 @@ fn execute_inner(
         let aggregated = aggregate::aggregate_rowset(ctx, &rs, &plan.group_by, &plan.aggregates);
         let mut result = project::project(ctx, &aggregated, &plan.result_columns, &plan.group_by);
         if !plan.order_by.is_empty() {
-            sort::sort_materialized(ctx, &mut result, &plan.order_by, &plan.result_columns);
+            sort::sort_columns(ctx, &mut result, &plan.order_by, &plan.result_columns);
         }
         if let Some(PlanLimit::Value(limit)) = plan.limit {
             for col in &mut result { col.truncate(limit); }

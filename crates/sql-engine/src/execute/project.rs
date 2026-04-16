@@ -36,7 +36,7 @@ pub fn project_rowset(
     })
 }
 
-/// Project materialized columns after aggregation.
+/// Project result columns out of an aggregation's intermediate column layout.
 /// Layout of `cols`: `[group_by_0, group_by_1, ..., agg_0, agg_1, ...]`.
 pub fn project(
     ctx: &mut ExecutionContext,

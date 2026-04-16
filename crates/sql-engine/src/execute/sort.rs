@@ -4,7 +4,7 @@ use sql_parser::ast::OrderDirection;
 
 use super::{Columns, ExecutionContext, SpanOperation};
 
-pub fn sort_materialized(
+pub fn sort_columns(
     ctx: &mut ExecutionContext,
     cols: &mut Columns,
     order_by: &[PlanOrderSpec],

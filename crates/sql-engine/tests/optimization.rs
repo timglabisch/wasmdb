@@ -856,7 +856,7 @@ Execute
 #[test]
 fn shape_aggregate_with_sort() {
     let db = make_db();
-    // Aggregate path: Aggregate → Project → Sort (sort on materialized columns)
+    // Aggregate path: Aggregate → Project → Sort (sort on projected columns)
     assert_trace(&db.trace(
         "SELECT users.name, SUM(orders.amount) \
          FROM users \
