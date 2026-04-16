@@ -6,7 +6,7 @@ use super::{Columns, ExecutionContext, SpanOperation};
 fn reactive_value(ctx: &ExecutionContext, condition_idx: usize) -> CellValue {
     let triggered = ctx.triggered_conditions
         .as_ref()
-        .map_or(false, |set: &fnv::FnvHashSet<usize>| set.contains(&condition_idx));
+        .map_or(false, |set| set.contains(&condition_idx));
     if triggered { CellValue::I64(1) } else { CellValue::I64(0) }
 }
 

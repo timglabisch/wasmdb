@@ -10,10 +10,8 @@ pub mod rowset;
 pub mod scan;
 pub mod sort;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-
-use fnv::FnvHashSet;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -112,7 +110,7 @@ pub struct ExecutionContext<'execution> {
     pub spans: Vec<Span>,
     pub params: Params,
     /// Which reactive condition indices were triggered (for SELECT reactive() output).
-    pub triggered_conditions: Option<FnvHashSet<usize>>,
+    pub triggered_conditions: Option<HashSet<usize>>,
 }
 
 impl<'execution> ExecutionContext<'execution> {

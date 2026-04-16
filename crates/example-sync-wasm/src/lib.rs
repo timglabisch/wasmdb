@@ -239,7 +239,8 @@ fn notify_affected(zset: &ZSet) {
     TRIGGERED_CONDITIONS.with(|tc| {
         let mut tc = tc.borrow_mut();
         for (sub_id, indices) in &affected {
-            tc.insert(sub_id.0, indices.clone());
+            let converted: HashSet<usize> = indices.iter().copied().collect();
+            tc.insert(sub_id.0, converted);
         }
     });
 

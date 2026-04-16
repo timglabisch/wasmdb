@@ -1183,7 +1183,8 @@ OnZSet 1 mutations
 ");
 
     // 3. Re-query with triggered conditions → REACTIVE column should be 1
-    let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
+    let triggered_std: HashSet<usize> = triggered.iter().copied().collect();
+    let result = db.run_with_triggered(sql, params.clone(), triggered_std);
     assert_eq!(result[0], vec![CellValue::I64(1)], "REACTIVE column should be 1 when triggered");
     assert_eq!(result[1], vec![CellValue::Str("Alice".into())]);
 }
@@ -1250,7 +1251,8 @@ OnZSet 1 mutations
 ");
 
     // 3. Re-query with triggered {0} → inv_id=1, inv_age=0
-    let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
+    let triggered_std: HashSet<usize> = triggered.iter().copied().collect();
+    let result = db.run_with_triggered(sql, params.clone(), triggered_std);
     assert_eq!(result[0], vec![CellValue::I64(1)], "inv_id should be 1 (condition 0 triggered)");
     assert_eq!(result[1], vec![CellValue::I64(0)], "inv_age should be 0 (condition 1 not triggered)");
     assert_eq!(result[2], vec![CellValue::Str("Alice".into())]);
@@ -1288,7 +1290,8 @@ OnZSet 1 mutations
 ");
 
     // 3. Re-query with triggered {0, 1} → inv_id=1, inv_age=1
-    let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
+    let triggered_std: HashSet<usize> = triggered.iter().copied().collect();
+    let result = db.run_with_triggered(sql, params.clone(), triggered_std);
     assert_eq!(result[0], vec![CellValue::I64(1)], "inv_id should be 1");
     assert_eq!(result[1], vec![CellValue::I64(1)], "inv_age should be 1");
     assert_eq!(result[2], vec![CellValue::Str("Alice".into())]);
@@ -1788,7 +1791,8 @@ fn reactive_or_different_columns_falls_back_to_scan() {
     zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("Alice".into()), CellValue::I64(20)]);
     let (affected, trace) = traced_on_zset(&registry, &zset);
 
-    assert_eq!(affected, HashMap::from([(sub_id, HashSet::from([0]))]));
+    let expected: fnv::FnvHashMap<_, fnv::FnvHashSet<usize>> = std::iter::once((sub_id, [0usize].into_iter().collect())).collect();
+    assert_eq!(affected, expected);
     assert_reactive_trace(&trace, "
 OnZSet 1 mutations
   INSERT users [99, 'Alice', 20]
