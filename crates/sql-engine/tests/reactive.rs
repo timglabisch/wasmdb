@@ -97,7 +97,7 @@ fn plan_and_subscribe(
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect("plan_reactive failed");
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions, params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, params).unwrap();
     (registry, sub_id)
 }
 
@@ -115,7 +115,7 @@ fn reactive_pk_watch() {
     assert_eq!(plan.conditions[0].table, "users");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("NewAlice".into()), CellValue::I64(31)]);
     assert_eq!(affected, vec![sub_id]);
@@ -134,7 +134,7 @@ fn reactive_with_verify_filter() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     assert!(sql_engine::reactive::execute::on_insert(&registry, "orders", &[CellValue::I64(10), CellValue::I64(1), CellValue::I64(50)]).is_empty());
     assert_eq!(sql_engine::reactive::execute::on_insert(&registry, "orders", &[CellValue::I64(11), CellValue::I64(1), CellValue::I64(200)]), vec![sub_id]);
@@ -151,7 +151,7 @@ fn reactive_unsubscribe() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
     registry.unsubscribe(sub_id);
 
     assert!(sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]).is_empty());
@@ -167,7 +167,7 @@ fn reactive_delete_triggers() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     assert_eq!(sql_engine::reactive::execute::on_delete(&registry, "users", &[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]), vec![sub_id]);
 }
@@ -182,14 +182,28 @@ fn reactive_update_leaving_filter() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // UPDATE is represented as delete(old) + insert(new) in a ZSet.
     let mut zset = sql_engine::storage::ZSet::new();
     zset.delete("users".into(), vec![CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Bobby".into()), CellValue::I64(30)]);
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub_id));
+    // delete row: id=1 + name='Alice' → both lookup keys match (index=2), verify passes
+    // insert row: id=1 matches but name='Bobby' ≠ 'Alice' → only one key (index=1), verify fails
+    assert_reactive_trace(&trace, "
+OnZSet entries=2
+  CheckMutation table=users weight=-1
+    Candidates by_value=2 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=true
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=0
+      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=false
+  conditions: evaluated=2 O(1)=2 O(s)=0 matched=1
+");
 }
 
 #[test]
@@ -226,7 +240,7 @@ fn reactive_multi_eq_verify_filter_regression() {
     ).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions, &params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("Bob".into()), CellValue::I64(25)]);
     assert!(affected.is_empty(), "should NOT trigger: name mismatch");
@@ -249,8 +263,8 @@ fn reactive_multiple_subs_same_table() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub1 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
-    let sub2 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(2))])).unwrap();
+    let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub2 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(2))])).unwrap();
 
     // Insert for user 1 → only sub1
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -274,8 +288,8 @@ fn reactive_multiple_subs_same_key() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub1 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
-    let sub2 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub2 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
 
     // Both subs watch user 1 → both triggered
     let mut affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -313,8 +327,8 @@ fn reactive_separate_table_subscriptions() {
 
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
     let mut registry = SubscriptionRegistry::new();
-    let sub_u = registry.subscribe(&plan_u.conditions, &params).unwrap();
-    let sub_o = registry.subscribe(&plan_o.conditions, &params).unwrap();
+    let sub_u = registry.subscribe(&plan_u.conditions, &plan_u.sources, &params).unwrap();
+    let sub_o = registry.subscribe(&plan_o.conditions, &plan_o.sources, &params).unwrap();
 
     // Mutation on users → only user sub
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -399,8 +413,20 @@ fn reactive_update_staying_in_filter() {
     zset.delete("users".into(), vec![CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Bob".into()), CellValue::I64(30)]);
 
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub_id), "update staying in filter should trigger");
+    assert_reactive_trace(&trace, "
+OnZSet entries=2
+  CheckMutation table=users weight=-1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+");
 }
 
 #[test]
@@ -416,8 +442,22 @@ fn reactive_update_entering_filter() {
     zset.delete("users".into(), vec![CellValue::I64(1), CellValue::Str("Other".into()), CellValue::I64(30)]);
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]);
 
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub_id), "update entering filter should trigger");
+    // delete row: id=1 matches index, but name='Other' fails verify → triggered=0
+    // insert row: id=1 + name='Alice' both match index, verify passes → triggered=1
+    assert_reactive_trace(&trace, "
+OnZSet entries=2
+  CheckMutation table=users weight=-1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=0
+      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=false
+  CheckMutation table=users weight=1
+    Candidates by_value=2 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=((users.id = 1 AND users.name = 'Alice')) matched=true
+  conditions: evaluated=2 O(1)=2 O(s)=0 matched=1
+");
 }
 
 #[test]
@@ -433,8 +473,18 @@ fn reactive_update_no_match_neither_old_nor_new() {
     zset.delete("users".into(), vec![CellValue::I64(99), CellValue::Str("X".into()), CellValue::I64(1)]);
     zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("Y".into()), CellValue::I64(1)]);
 
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.is_empty(), "update on unrelated row should not trigger");
+    assert_reactive_trace(&trace, "
+OnZSet entries=2
+  CheckMutation table=users weight=-1
+    Candidates by_value=0 by_table=0 total=0
+    Verify candidates=0 triggered=0
+  CheckMutation table=users weight=1
+    Candidates by_value=0 by_table=0 total=0
+    Verify candidates=0 triggered=0
+  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+");
 }
 
 // ── Tests: ZSet with multiple entries ───────────────────────────────────
@@ -448,8 +498,8 @@ fn reactive_zset_multiple_entries() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub1 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
-    let sub2 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(2))])).unwrap();
+    let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub2 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(2))])).unwrap();
 
     // ZSet with inserts for both user 1 and user 2
     let mut zset = sql_engine::storage::ZSet::new();
@@ -457,10 +507,25 @@ fn reactive_zset_multiple_entries() {
     zset.insert("users".into(), vec![CellValue::I64(2), CellValue::Str("B".into()), CellValue::I64(2)]);
     zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("C".into()), CellValue::I64(3)]);
 
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub1), "sub1 should be triggered by user 1 insert");
     assert!(affected.contains_key(&sub2), "sub2 should be triggered by user 2 insert");
     assert_eq!(affected.len(), 2, "only 2 subs should be triggered, not the user 99 row");
+    assert_reactive_trace(&trace, "
+OnZSet entries=3
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 2) matched=true
+  CheckMutation table=users weight=1
+    Candidates by_value=0 by_table=0 total=0
+    Verify candidates=0 triggered=0
+  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+");
 }
 
 #[test]
@@ -476,17 +541,29 @@ fn reactive_zset_mixed_tables() {
 
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
     let mut registry = SubscriptionRegistry::new();
-    let sub_u = registry.subscribe(&plan_u.conditions, &params).unwrap();
-    let sub_o = registry.subscribe(&plan_o.conditions, &params).unwrap();
+    let sub_u = registry.subscribe(&plan_u.conditions, &plan_u.sources, &params).unwrap();
+    let sub_o = registry.subscribe(&plan_o.conditions, &plan_o.sources, &params).unwrap();
 
     // ZSet with entries from both tables
     let mut zset = sql_engine::storage::ZSet::new();
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("New".into()), CellValue::I64(1)]);
     zset.insert("orders".into(), vec![CellValue::I64(99), CellValue::I64(1), CellValue::I64(999)]);
 
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.contains_key(&sub_u));
     assert!(affected.contains_key(&sub_o));
+    assert_reactive_trace(&trace, "
+OnZSet entries=2
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+  CheckMutation table=orders weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(orders.user_id = 1) matched=true
+  conditions: evaluated=2 O(1)=2 O(s)=0 matched=2
+");
 }
 
 // ── Tests: Table-level subscriptions (no predicate) ─────────────────────
@@ -584,8 +661,8 @@ fn reactive_unsubscribe_one_of_many() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub1 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
-    let sub2 = registry.subscribe(&plan.conditions,&HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
+    let sub2 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
 
     // Unsubscribe sub1, sub2 should still work
     registry.unsubscribe(sub1);
@@ -663,7 +740,7 @@ fn reactive_with_join_monitors_single_table() {
     assert_eq!(plan.conditions[0].table, "orders");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // Insert on orders for user_id=1 → triggers
     let affected = sql_engine::reactive::execute::on_insert(&registry, "orders", &[CellValue::I64(99), CellValue::I64(1), CellValue::I64(500)]);
@@ -816,7 +893,7 @@ fn reactive_two_conditions_different_tables() {
     assert_eq!(plan.conditions[1].table, "orders");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // Insert on users for id=1 → triggers (condition 0)
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -841,29 +918,45 @@ fn reactive_two_conditions_triggered_indices() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // Insert id=1, age=35 → both conditions match → indices {0, 1}
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &{
-        let mut z = sql_engine::storage::ZSet::new();
-        z.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(35)]);
-        z
-    });
+    let mut zset1 = sql_engine::storage::ZSet::new();
+    zset1.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(35)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset1);
     assert!(affected.contains_key(&sub_id));
     let indices = &affected[&sub_id];
     assert!(indices.contains(&0), "condition 0 (id=1) should trigger");
     assert!(indices.contains(&1), "condition 1 (age>30) should trigger");
+    // condition 0 is IndexLookup, condition 1 is TableScan → both index and table_level hits
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=1 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+      Condition[1] O(s) filter=(users.age > 30) matched=true
+  conditions: evaluated=2 O(1)=1 O(s)=1 matched=2
+");
 
     // Insert id=1, age=25 → only condition 0 matches (id=1, but age not >30)
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &{
-        let mut z = sql_engine::storage::ZSet::new();
-        z.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Y".into()), CellValue::I64(25)]);
-        z
-    });
+    let mut zset2 = sql_engine::storage::ZSet::new();
+    zset2.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("Y".into()), CellValue::I64(25)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset2);
     assert!(affected.contains_key(&sub_id));
     let indices = &affected[&sub_id];
     assert!(indices.contains(&0), "condition 0 (id=1) should trigger");
     assert!(!indices.contains(&1), "condition 1 (age>30) should NOT trigger");
+    // Same candidates, condition 0 passes but condition 1 fails
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=1 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+      Condition[1] O(s) filter=(users.age > 30) matched=false
+  conditions: evaluated=2 O(1)=1 O(s)=1 matched=1
+");
 }
 
 #[test]
@@ -935,7 +1028,7 @@ fn reactive_with_in_subquery_subscription() {
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // Insert on users with id=1 → triggers (reactive watches users.id = :uid)
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -985,7 +1078,7 @@ fn reactive_with_left_join() {
     assert_eq!(plan.conditions[0].table, "orders");
 
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // Insert on orders for user_id=1 → triggers
     let affected = sql_engine::reactive::execute::on_insert(&registry, "orders", &[CellValue::I64(99), CellValue::I64(1), CellValue::I64(500)]);
@@ -1043,14 +1136,22 @@ fn reactive_e2e_single_condition_triggered() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // 2. Simulate mutation → on_zset → get triggered indices
     let mut zset = sql_engine::storage::ZSet::new();
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("NewAlice".into()), CellValue::I64(31)]);
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     let triggered = affected.get(&sub_id).expect("sub should be triggered");
     assert!(triggered.contains(&0));
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+  conditions: evaluated=1 O(1)=1 O(s)=0 matched=1
+");
 
     // 3. Re-query with triggered conditions → REACTIVE column should be 1
     let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
@@ -1068,13 +1169,20 @@ fn reactive_e2e_single_condition_not_triggered() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
-    let _sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let _sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // 2. Mutation on unrelated row → not triggered
     let mut zset = sql_engine::storage::ZSet::new();
     zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("Nobody".into()), CellValue::I64(20)]);
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     assert!(affected.is_empty());
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=0 by_table=0 total=0
+    Verify candidates=0 triggered=0
+  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+");
 
     // 3. Query without triggered conditions → REACTIVE column should be 0
     let result = db.run_with_params(sql, params);
@@ -1091,15 +1199,26 @@ fn reactive_e2e_two_conditions_partial_trigger() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // 2. Mutation: id=1, age=25 → condition 0 (id match) triggers, condition 1 (age>30) does NOT
     let mut zset = sql_engine::storage::ZSet::new();
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(25)]);
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     let triggered = affected.get(&sub_id).unwrap();
     assert!(triggered.contains(&0), "condition 0 should trigger");
     assert!(!triggered.contains(&1), "condition 1 should NOT trigger");
+    // condition 0 is IndexLookup (id=1), condition 1 is TableScan (age>30)
+    // sub found via both paths, but only condition 0 passes verify
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=1 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+      Condition[1] O(s) filter=(users.age > 30) matched=false
+  conditions: evaluated=2 O(1)=1 O(s)=1 matched=1
+");
 
     // 3. Re-query with triggered {0} → inv_id=1, inv_age=0
     let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
@@ -1118,15 +1237,24 @@ fn reactive_e2e_two_conditions_both_trigger() {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = sql_engine::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
-    let sub_id = registry.subscribe(&plan.conditions,&params).unwrap();
+    let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
     // 2. Mutation: id=1, age=35 → both conditions trigger
     let mut zset = sql_engine::storage::ZSet::new();
     zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(35)]);
-    let affected = sql_engine::reactive::execute::on_zset(&registry, &zset);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
     let triggered = affected.get(&sub_id).unwrap();
     assert!(triggered.contains(&0));
     assert!(triggered.contains(&1));
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=1 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(1) filter=(users.id = 1) matched=true
+      Condition[1] O(s) filter=(users.age > 30) matched=true
+  conditions: evaluated=2 O(1)=1 O(s)=1 matched=2
+");
 
     // 3. Re-query with triggered {0, 1} → inv_id=1, inv_age=1
     let result = db.run_with_triggered(sql, params.clone(), triggered.clone());
@@ -1151,4 +1279,85 @@ fn reactive_e2e_condition_idx_correctness() {
     let result = db.run_with_triggered(sql, params, triggered);
     assert_eq!(result[0], vec![CellValue::I64(0)], "inv_id should be 0 (condition 0 NOT in triggered set)");
     assert_eq!(result[1], vec![CellValue::I64(1)], "inv_age should be 1 (condition 1 IS in triggered set)");
+}
+
+// ── Reactive execution trace snapshots ─────────────────────────────────
+
+fn assert_reactive_trace(actual: &str, expected: &str) {
+    let actual = actual.trim_end();
+    let expected = expected.trim();
+    assert_eq!(actual, expected, "\n\n--- ACTUAL ---\n{actual}\n\n--- EXPECTED ---\n{expected}\n");
+}
+
+fn traced_on_zset(
+    registry: &SubscriptionRegistry,
+    zset: &sql_engine::storage::ZSet,
+) -> (HashMap<sql_engine::reactive::registry::SubId, HashSet<usize>>, String) {
+    let mut ctx = sql_engine::reactive::execute::ReactiveContext::new();
+    let affected = sql_engine::reactive::execute::on_zset_ctx(&mut ctx, registry, zset);
+    (affected, ctx.pretty_print())
+}
+
+#[test]
+fn reactive_trace_table_level() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id) AS inv FROM users";
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &HashMap::new());
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(99), CellValue::Str("X".into()), CellValue::I64(20)]);
+    let (_affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=0 by_table=1 total=1
+    Verify candidates=1 triggered=1
+      Condition[0] O(s) filter=(None) matched=true
+  conditions: evaluated=1 O(1)=0 O(s)=1 matched=1
+");
+}
+
+#[test]
+fn reactive_trace_wrong_table() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
+    let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &params);
+
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("orders".into(), vec![CellValue::I64(1), CellValue::I64(1), CellValue::I64(100)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert!(affected.is_empty());
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=orders weight=1
+    Candidates by_value=0 by_table=0 total=0
+    Verify candidates=0 triggered=0
+  conditions: evaluated=0 O(1)=0 O(s)=0 matched=0
+");
+}
+
+#[test]
+fn reactive_trace_verify_filter_rejects() {
+    let db = make_db();
+    let sql = "SELECT REACTIVE(users.id = :uid AND users.age > 50) AS inv FROM users WHERE users.id = :uid";
+    let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
+    let (registry, _sub_id) = plan_and_subscribe(&db, sql, &params);
+
+    // id=1 matches index lookup → candidate found, but age=30 fails verify (age > 50)
+    let mut zset = sql_engine::storage::ZSet::new();
+    zset.insert("users".into(), vec![CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(30)]);
+    let (affected, trace) = traced_on_zset(&registry, &zset);
+
+    assert!(affected.is_empty());
+    assert_reactive_trace(&trace, "
+OnZSet entries=1
+  CheckMutation table=users weight=1
+    Candidates by_value=1 by_table=0 total=1
+    Verify candidates=1 triggered=0
+      Condition[0] O(1) filter=((users.id = 1 AND users.age > 50)) matched=false
+  conditions: evaluated=1 O(1)=1 O(s)=0 matched=0
+");
 }

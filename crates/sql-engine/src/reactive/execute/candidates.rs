@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
 use crate::reactive::registry::{MaterializedLookupKey, SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
 
@@ -16,28 +17,40 @@ use crate::storage::CellValue;
 /// 2. **Reverse-index**: O(1) lookup per column value — finds subscriptions whose
 ///    lookup keys match a column in the mutated row.
 pub(crate) fn collect(
+    ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
     table: &str,
     row: &[CellValue],
 ) -> HashSet<SubId> {
-    let mut candidates = HashSet::new();
+    ctx.span_with(|_ctx| {
+        let mut candidates = HashSet::new();
+        let mut table_level_hits = 0usize;
+        let mut index_hits = 0usize;
 
-    // 1. Table-level subscriptions — any mutation on this table is a candidate.
-    if let Some(subs) = registry.table_level_subs(table) {
-        candidates.extend(subs);
-    }
-
-    // 2. Reverse-index lookup per column.
-    for (col_idx, cell) in row.iter().enumerate() {
-        let key = MaterializedLookupKey {
-            table: table.to_string(),
-            col: col_idx,
-            value: cell.clone(),
-        };
-        if let Some(subs) = registry.index_lookup(&key) {
+        // 1. Table-level subscriptions — any mutation on this table is a candidate.
+        if let Some(subs) = registry.table_level_subs(table) {
+            table_level_hits = subs.len();
             candidates.extend(subs);
         }
-    }
 
-    candidates
+        // 2. Reverse-index lookup per column.
+        for (col_idx, cell) in row.iter().enumerate() {
+            let key = MaterializedLookupKey {
+                table: table.to_string(),
+                col: col_idx,
+                value: cell.clone(),
+            };
+            if let Some(subs) = registry.index_lookup(&key) {
+                index_hits += subs.len();
+                candidates.extend(subs);
+            }
+        }
+
+        let op = ReactiveSpanOperation::Candidates {
+            by_value: index_hits,
+            by_table: table_level_hits,
+            total: candidates.len(),
+        };
+        (op, candidates)
+    })
 }

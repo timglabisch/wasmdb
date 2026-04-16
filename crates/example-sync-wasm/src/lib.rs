@@ -660,7 +660,7 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
 
         let tables: Vec<String> = select.sources.iter().map(|s| s.table.clone()).collect();
 
-        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&plan.conditions, &std::collections::HashMap::new()).unwrap());
+        let sub_id = REGISTRY.with(|r| r.borrow_mut().subscribe(&plan.conditions, &plan.sources, &std::collections::HashMap::new()).unwrap());
         (sub_id, tables)
     });
 

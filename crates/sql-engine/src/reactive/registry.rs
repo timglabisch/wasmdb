@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use crate::execute::bind::{resolve_filter, resolve_value};
 use crate::execute::value_to_cell;
 use crate::execute::{ExecuteError, Params};
+use crate::planner::plan::PlanSourceEntry;
 use crate::reactive::plan::{OptimizedReactiveCondition, ReactiveLookupStrategy};
 use crate::storage::CellValue;
 
@@ -32,6 +33,7 @@ pub(crate) struct MaterializedLookupKey {
 /// A registered subscription.
 struct Subscription {
     conditions: Vec<OptimizedReactiveCondition>,
+    sources: Vec<PlanSourceEntry>,
     /// For deregistration: which keys belong to this subscription.
     reverse_keys: Vec<MaterializedLookupKey>,
 }
@@ -71,6 +73,7 @@ impl SubscriptionRegistry {
     pub fn subscribe(
         &mut self,
         conditions: &[OptimizedReactiveCondition],
+        sources: &[PlanSourceEntry],
         params: &Params,
     ) -> Result<SubId, ExecuteError> {
         let resolved = resolve_conditions(conditions, params)?;
@@ -106,6 +109,7 @@ impl SubscriptionRegistry {
             id,
             Subscription {
                 conditions: resolved,
+                sources: sources.to_vec(),
                 reverse_keys,
             },
         );
@@ -145,6 +149,13 @@ impl SubscriptionRegistry {
         self.subscriptions
             .get(&id)
             .map(|s| s.conditions.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub(crate) fn sources(&self, id: SubId) -> &[PlanSourceEntry] {
+        self.subscriptions
+            .get(&id)
+            .map(|s| s.sources.as_slice())
             .unwrap_or(&[])
     }
 }
@@ -209,7 +220,7 @@ mod tests {
     #[test]
     fn test_subscribe_and_accessors() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &empty_params()).unwrap();
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &[], &empty_params()).unwrap();
         assert_eq!(reg.subscription_count(), 1);
         assert_eq!(reg.conditions(sub_id).len(), 1);
     }
@@ -217,7 +228,7 @@ mod tests {
     #[test]
     fn test_subscribe_table_level() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[cond_table("users")], &empty_params()).unwrap();
+        let sub_id = reg.subscribe(&[cond_table("users")], &[], &empty_params()).unwrap();
         assert!(reg.table_level_subs("users").unwrap().contains(&sub_id));
         assert!(reg.table_level_subs("orders").is_none());
     }
@@ -225,7 +236,7 @@ mod tests {
     #[test]
     fn test_subscribe_index_lookup() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &empty_params()).unwrap();
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &[], &empty_params()).unwrap();
         let key = MaterializedLookupKey {
             table: "users".into(),
             col: 0,
@@ -237,7 +248,7 @@ mod tests {
     #[test]
     fn test_unsubscribe_cleans_reverse_index() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &empty_params()).unwrap();
+        let sub_id = reg.subscribe(&[cond_eq("users", 0, Value::Int(42))], &[], &empty_params()).unwrap();
         reg.unsubscribe(sub_id);
         assert_eq!(reg.subscription_count(), 0);
         assert_eq!(reg.reverse_index_size(), 0);
@@ -246,7 +257,7 @@ mod tests {
     #[test]
     fn test_unsubscribe_cleans_table_subs() {
         let mut reg = SubscriptionRegistry::new();
-        let sub_id = reg.subscribe(&[cond_table("users")], &empty_params()).unwrap();
+        let sub_id = reg.subscribe(&[cond_table("users")], &[], &empty_params()).unwrap();
         reg.unsubscribe(sub_id);
         assert!(reg.table_level_subs("users").is_none());
     }
@@ -270,7 +281,7 @@ mod tests {
             },
         };
         let params = HashMap::from([("uid".into(), ParamValue::Int(7))]);
-        let sub_id = reg.subscribe(&[cond], &params).unwrap();
+        let sub_id = reg.subscribe(&[cond], &[], &params).unwrap();
         // Lookup key should be resolved to 7
         let key = MaterializedLookupKey {
             table: "users".into(),

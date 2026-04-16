@@ -6,47 +6,83 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::execute::filter_row::eval_predicate;
-use crate::planner::plan::ColumnRef;
+use crate::planner::plan::{ColumnRef, PlanFilterPredicate};
+use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
+use crate::reactive::plan::ReactiveLookupStrategy;
 use crate::reactive::registry::{SubId, SubscriptionRegistry};
 use crate::storage::CellValue;
 
 /// Verify which candidates are actually affected by evaluating verify_filter.
 ///
 /// For each candidate, iterates over its conditions for the given table and
-/// evaluates the full predicate against the row. Returns a map of SubId →
-/// set of triggered condition indices.
+/// evaluates the full predicate against the row. Emits a `ConditionEval` child
+/// span per evaluated condition showing strategy, filter, and match result.
 pub(crate) fn check(
+    ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
     candidates: HashSet<SubId>,
     table: &str,
     row: &[CellValue],
 ) -> HashMap<SubId, HashSet<usize>> {
-    let mut result: HashMap<SubId, HashSet<usize>> = HashMap::new();
+    ctx.span_with(|ctx| {
+        let num_candidates = candidates.len();
+        let mut result: HashMap<SubId, HashSet<usize>> = HashMap::new();
 
-    for sub_id in candidates {
-        let conditions = registry.conditions(sub_id);
-        if conditions.is_empty() {
-            result.insert(sub_id, HashSet::new());
-            continue;
-        }
-
-        let mut triggered = HashSet::new();
-        for (idx, cond) in conditions.iter().enumerate() {
-            if cond.table != table {
+        for sub_id in candidates {
+            let conditions = registry.conditions(sub_id);
+            let sources = registry.sources(sub_id);
+            if conditions.is_empty() {
+                result.insert(sub_id, HashSet::new());
                 continue;
             }
-            let matches = eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
-                row.get(col.col).cloned().unwrap_or(CellValue::Null)
-            });
-            if matches {
-                triggered.insert(idx);
+
+            let mut triggered = HashSet::new();
+            for (idx, cond) in conditions.iter().enumerate() {
+                if cond.table != table {
+                    continue;
+                }
+                let matches = eval_predicate(&cond.verify_filter, &|col: ColumnRef| {
+                    row.get(col.col).cloned().unwrap_or(CellValue::Null)
+                });
+                let cost = match &cond.strategy {
+                    ReactiveLookupStrategy::IndexLookup { .. } => "O(1)",
+                    ReactiveLookupStrategy::TableScan => "O(s)",
+                };
+                let filter = pretty_print_filter(&cond.verify_filter, sources);
+                ctx.record_condition(idx, matches);
+                ctx.span(ReactiveSpanOperation::ConditionEval {
+                    idx,
+                    cost,
+                    filter,
+                    matched: matches,
+                }, |_| {});
+                if matches {
+                    triggered.insert(idx);
+                }
+            }
+
+            if !triggered.is_empty() {
+                result.insert(sub_id, triggered);
             }
         }
 
-        if !triggered.is_empty() {
-            result.insert(sub_id, triggered);
-        }
-    }
+        let num_triggered = result.len();
+        let op = ReactiveSpanOperation::Verify {
+            candidates: num_candidates,
+            triggered: num_triggered,
+        };
+        (op, result)
+    })
+}
 
-    result
+fn pretty_print_filter(
+    filter: &PlanFilterPredicate,
+    sources: &[crate::planner::plan::PlanSourceEntry],
+) -> String {
+    if matches!(filter, PlanFilterPredicate::None) {
+        return "None".to_string();
+    }
+    let mut out = String::new();
+    filter.pretty_print_to(&mut out, sources);
+    out
 }
