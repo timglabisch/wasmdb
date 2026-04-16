@@ -1,5 +1,5 @@
-use database::{Database, MutationResult};
-use sql_engine::storage::CellValue;
+use database::{Database, MutResult};
+use sql_engine::storage::{CellValue, ZSet};
 
 fn make_db() -> Database {
     let mut db = Database::new();

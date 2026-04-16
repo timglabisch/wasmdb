@@ -6,5 +6,5 @@ mod insert;
 mod select;
 mod update;
 
-pub use database::{Database, MutationResult};
+pub use database::{Database, MutResult};
 pub use error::DbError;

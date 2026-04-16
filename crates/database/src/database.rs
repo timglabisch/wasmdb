@@ -2,17 +2,15 @@ use std::collections::HashMap;
 
 use sql_engine::execute::{Columns, ExecuteError, Params, Span};
 use sql_engine::schema::TableSchema;
-use sql_engine::storage::{CellValue, Table};
+use sql_engine::storage::{CellValue, Table, ZSet};
 use sql_parser::ast::Statement;
 
 use crate::error::DbError;
 
 #[derive(Debug, Clone)]
-pub enum MutationResult {
+pub enum MutResult {
+    Mutation(ZSet),
     Rows(Columns),
-    Inserted { table: String, rows: Vec<Vec<CellValue>> },
-    Deleted { table: String, rows: Vec<Vec<CellValue>> },
-    Updated { table: String, old_new: Vec<(Vec<CellValue>, Vec<CellValue>)> },
     Ddl,
 }
 
@@ -117,28 +115,54 @@ impl Database {
         }
     }
 
-    pub fn execute_mut(&mut self, sql: &str) -> Result<MutationResult, DbError> {
+    pub fn execute_mut(&mut self, sql: &str) -> Result<MutResult, DbError> {
         self.execute_mut_with_params(sql, HashMap::new())
     }
 
-    pub fn execute_mut_with_params(&mut self, sql: &str, params: Params) -> Result<MutationResult, DbError> {
+    pub fn execute_mut_with_params(&mut self, sql: &str, params: Params) -> Result<MutResult, DbError> {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
         self.execute_statement_mut(stmt, params)
     }
 
+    /// Apply a ZSet to the database: inserts for weight > 0, deletes for weight < 0.
+    pub fn apply_zset(&mut self, zset: &ZSet) -> Result<(), DbError> {
+        for entry in &zset.entries {
+            if entry.weight > 0 {
+                self.insert(&entry.table, &entry.row)?;
+            } else if entry.weight < 0 {
+                self.delete_by_row(&entry.table, &entry.row)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete a row by matching all column values.
+    fn delete_by_row(&mut self, table_name: &str, row: &[CellValue]) -> Result<(), DbError> {
+        let table = self.tables.get(table_name)
+            .ok_or_else(|| DbError::TableNotFound(table_name.into()))?;
+        let col_count = row.len();
+        let row_idx = table.row_ids()
+            .find(|&r| (0..col_count).all(|c| table.get(r, c) == row[c]));
+        if let Some(idx) = row_idx {
+            let t = self.tables.get_mut(table_name).unwrap();
+            t.delete(idx).map_err(|e| DbError::Execute(ExecuteError::TableNotFound(format!("{e}"))))?;
+        }
+        Ok(())
+    }
+
     fn execute_statement(&mut self, stmt: Statement, params: Params) -> Result<Columns, DbError> {
         match self.execute_statement_mut(stmt, params)? {
-            MutationResult::Rows(cols) => Ok(cols),
+            MutResult::Rows(cols) => Ok(cols),
             _ => Ok(vec![]),
         }
     }
 
-    fn execute_statement_mut(&mut self, stmt: Statement, params: Params) -> Result<MutationResult, DbError> {
+    fn execute_statement_mut(&mut self, stmt: Statement, params: Params) -> Result<MutResult, DbError> {
         match stmt {
             Statement::Select(select) => {
                 let cols = crate::select::execute_select(&self.tables, &select, params)?;
-                Ok(MutationResult::Rows(cols))
+                Ok(MutResult::Rows(cols))
             }
             Statement::Insert(ref insert) => {
                 let col_count = {
@@ -146,31 +170,39 @@ impl Database {
                         .ok_or_else(|| DbError::TableNotFound(insert.table.clone()))?;
                     table.schema.columns.len()
                 };
-                // Collect inserted row data by reading the table before/after
                 let before_count = self.tables.get(&insert.table).map(|t| t.physical_len()).unwrap_or(0);
                 crate::insert::execute_insert(&mut self.tables, insert, &params)?;
                 let table = self.tables.get(&insert.table).unwrap();
                 let after_count = table.physical_len();
-                let mut rows = Vec::new();
+                let mut zset = ZSet::new();
                 for idx in before_count..after_count {
                     let row: Vec<CellValue> = (0..col_count).map(|c| table.get(idx, c)).collect();
-                    rows.push(row);
+                    zset.insert(insert.table.clone(), row);
                 }
-                Ok(MutationResult::Inserted { table: insert.table.clone(), rows })
+                Ok(MutResult::Mutation(zset))
             }
             Statement::Delete(ref delete) => {
                 let deleted = crate::delete::execute_delete(&mut self.tables, delete, &params)?;
-                Ok(MutationResult::Deleted { table: delete.table.clone(), rows: deleted })
+                let mut zset = ZSet::new();
+                for row in deleted {
+                    zset.delete(delete.table.clone(), row);
+                }
+                Ok(MutResult::Mutation(zset))
             }
             Statement::Update(ref update) => {
                 let pairs = crate::update::execute_update(&mut self.tables, update, &params)?;
-                Ok(MutationResult::Updated { table: update.table.clone(), old_new: pairs })
+                let mut zset = ZSet::new();
+                for (old, new) in pairs {
+                    zset.delete(update.table.clone(), old);
+                    zset.insert(update.table.clone(), new);
+                }
+                Ok(MutResult::Mutation(zset))
             }
             Statement::CreateTable(ct) => {
                 let schema = sql_engine::schema::resolve(&ct)
                     .map_err(|e| DbError::Parse(format!("{e:?}")))?;
                 self.create_table(schema)?;
-                Ok(MutationResult::Ddl)
+                Ok(MutResult::Ddl)
             }
         }
     }
