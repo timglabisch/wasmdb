@@ -1,4 +1,25 @@
-//! Reactive subscription system: planning, optimization, registry, and parameter binding.
+//! Reactive subscription system.
+//!
+//! ## Flow
+//!
+//! ```text
+//! 1. Plan (once per query)
+//!    let plan = reactive::plan_reactive(ast, &schemas)?;
+//!        └─ plan::extract  — AST → logical conditions
+//!        └─ plan::optimize — logical → optimized (lookup keys + verify filter)
+//!
+//! 2. Subscribe (once per client)
+//!    let sub_id = registry.subscribe(&plan, &params)?;
+//!        └─ binds parameters, inserts into reverse index
+//!
+//! 3. Execute (on every mutation — hot path)
+//!    let affected = reactive::execute::on_insert(&registry, table, &row);
+//!        └─ execute::candidates::collect — O(1) reverse-index lookup
+//!        └─ execute::verify::check       — evaluate verify_filter per candidate
+//!
+//! 4. Cleanup
+//!    registry.unsubscribe(sub_id);
+//! ```
 
 pub mod plan;
 pub mod execute;
