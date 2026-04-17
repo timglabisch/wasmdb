@@ -10,16 +10,14 @@ use wasm_bindgen::prelude::*;
 
 use crate::debug::{log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
 use crate::reactive::wrap_js_callback;
-use crate::state::{make_db, with_client, DEFAULT_STREAM_ID, ID_COUNTER};
+use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID, ID_COUNTER};
 use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle, STREAM_HANDLES};
 
 #[wasm_bindgen]
 pub fn init() {
     let mut client = SyncClient::new(make_db());
-    let stream_id = client.create_stream();
-    let stream_id_val = stream_id.0;
-
-    crate::state::CLIENT.with(|c| *c.borrow_mut() = Some(client));
+    let stream_id_val = client.create_stream().0;
+    install_client(client);
     STREAM_HANDLES.with(|sh| {
         sh.borrow_mut().insert(stream_id_val, StreamHandle::new(1, 0, 0));
     });

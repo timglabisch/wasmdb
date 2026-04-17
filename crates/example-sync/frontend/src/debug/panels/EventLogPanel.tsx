@@ -34,7 +34,7 @@ function eventSummary(event: DebugEvent): string {
     case 'Rejected':
       return `stream#${event.stream_id} ${event.reason}`;
     case 'Notification':
-      return `${event.affected_sub_ids.length}/${event.total_subs} subs [${event.affected_sub_ids.join(',')}]`;
+      return `#${event.sub_id} triggered=${event.triggered_count}`;
     case 'SubscriptionCreated':
       return `#${event.sub_id} ${event.sql.slice(0, 50)} [${event.tables.join(',')}]`;
     case 'SubscriptionRemoved':

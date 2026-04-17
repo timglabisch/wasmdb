@@ -48,8 +48,7 @@ thread_local! {
 
 enum DrainAction {
     FlushNow,
-    ScheduleTimer,
-    ScheduleMicrotask,
+    Schedule,
 }
 
 pub(crate) fn try_drain_queue(stream_id_val: u64) {
@@ -60,68 +59,53 @@ pub(crate) fn try_drain_queue(stream_id_val: u64) {
         if handle.in_flight || handle.queue.is_empty() {
             return None;
         }
-
         if handle.queue.len() >= handle.batch_count || handle.batch_count == 1 {
             return Some(DrainAction::FlushNow);
         }
-
         if handle.microtask_scheduled {
             return None;
         }
-        Some(if handle.batch_wait_ms > 0 {
-            DrainAction::ScheduleTimer
-        } else {
-            DrainAction::ScheduleMicrotask
-        })
+        Some(DrainAction::Schedule)
     });
 
     match action {
         Some(DrainAction::FlushNow) => do_flush_stream(stream_id_val, false),
-        Some(DrainAction::ScheduleTimer) => schedule_timer_flush(stream_id_val),
-        Some(DrainAction::ScheduleMicrotask) => schedule_microtask_flush(stream_id_val),
+        Some(DrainAction::Schedule) => schedule_flush(stream_id_val),
         None => {}
     }
 }
 
-fn schedule_timer_flush(stream_id_val: u64) {
-    STREAM_HANDLES.with(|sh| {
-        if let Some(handle) = sh.borrow_mut().get_mut(&stream_id_val) {
-            handle.microtask_scheduled = true;
-        }
-    });
+/// Schedule a deferred flush — via `setTimeout` if `batch_wait_ms > 0`, otherwise
+/// as a microtask. In both cases the scheduled callback clears `microtask_scheduled`
+/// and triggers a partial-batch flush.
+fn schedule_flush(stream_id_val: u64) {
     let wait_ms = STREAM_HANDLES.with(|sh| {
-        sh.borrow().get(&stream_id_val).map_or(0, |h| h.batch_wait_ms)
+        let mut sh = sh.borrow_mut();
+        let Some(h) = sh.get_mut(&stream_id_val) else { return 0 };
+        h.microtask_scheduled = true;
+        h.batch_wait_ms
     });
-    let cb = wasm_bindgen::closure::Closure::once_into_js(move || {
-        STREAM_HANDLES.with(|sh| {
-            if let Some(handle) = sh.borrow_mut().get_mut(&stream_id_val) {
-                handle.microtask_scheduled = false;
-            }
-        });
-        do_flush_stream(stream_id_val, false);
-    });
-    if let Some(window) = web_sys::window() {
-        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-            cb.unchecked_ref(),
-            wait_ms as i32,
-        );
-    }
-}
 
-fn schedule_microtask_flush(stream_id_val: u64) {
-    STREAM_HANDLES.with(|sh| {
-        if let Some(handle) = sh.borrow_mut().get_mut(&stream_id_val) {
-            handle.microtask_scheduled = true;
-        }
-    });
-    wasm_bindgen_futures::spawn_local(async move {
+    let run = move || {
         STREAM_HANDLES.with(|sh| {
-            if let Some(handle) = sh.borrow_mut().get_mut(&stream_id_val) {
-                handle.microtask_scheduled = false;
+            if let Some(h) = sh.borrow_mut().get_mut(&stream_id_val) {
+                h.microtask_scheduled = false;
             }
         });
         do_flush_stream(stream_id_val, false);
-    });
+    };
+
+    if wait_ms > 0 {
+        let cb = wasm_bindgen::closure::Closure::once_into_js(run);
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                cb.unchecked_ref(),
+                wait_ms as i32,
+            );
+        }
+    } else {
+        wasm_bindgen_futures::spawn_local(async move { run() });
+    }
 }
 
 pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
@@ -215,36 +199,37 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
         }
     };
 
-    let mut any_rejected = false;
-    let mut reject_reason = String::new();
-
-    for response in batch_response.responses {
-        if let Verdict::Rejected { ref reason } = response.verdict {
-            if !any_rejected {
-                any_rejected = true;
-                reject_reason = reason.clone();
+    let first_reject = with_client(|client| {
+        let mut first_reject: Option<String> = None;
+        for response in batch_response.responses {
+            if let Verdict::Rejected { ref reason } = response.verdict {
+                if first_reject.is_none() {
+                    first_reject = Some(reason.clone());
+                }
             }
-        }
-        with_client(|client| {
             let _ = client.receive_response(response);
-        });
-    }
+        }
+        first_reject
+    });
 
     let result = js_sys::Object::new();
-    if any_rejected {
-        log_event(DebugEvent::Rejected {
-            timestamp_ms: now_ms(),
-            stream_id: stream_id_val,
-            reason: reject_reason.clone(),
-        });
-        let _ = js_sys::Reflect::set(&result, &"status".into(), &"rejected".into());
-        let _ = js_sys::Reflect::set(&result, &"reason".into(), &reject_reason.into());
-    } else {
-        log_event(DebugEvent::Confirmed {
-            timestamp_ms: now_ms(),
-            stream_id: stream_id_val,
-        });
-        let _ = js_sys::Reflect::set(&result, &"status".into(), &"confirmed".into());
+    match &first_reject {
+        Some(reason) => {
+            log_event(DebugEvent::Rejected {
+                timestamp_ms: now_ms(),
+                stream_id: stream_id_val,
+                reason: reason.clone(),
+            });
+            let _ = js_sys::Reflect::set(&result, &"status".into(), &"rejected".into());
+            let _ = js_sys::Reflect::set(&result, &"reason".into(), &reason.clone().into());
+        }
+        None => {
+            log_event(DebugEvent::Confirmed {
+                timestamp_ms: now_ms(),
+                stream_id: stream_id_val,
+            });
+            let _ = js_sys::Reflect::set(&result, &"status".into(), &"confirmed".into());
+        }
     }
     let result_val: JsValue = result.into();
     for item in items {
@@ -253,18 +238,20 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
 }
 
 fn finish_flush(stream_id_val: u64) {
-    STREAM_HANDLES.with(|sh| {
+    // Drain waiters out of the borrow so JS callbacks can't re-enter STREAM_HANDLES.
+    let waiters = STREAM_HANDLES.with(|sh| {
         let mut sh = sh.borrow_mut();
-        if let Some(handle) = sh.get_mut(&stream_id_val) {
-            handle.in_flight = false;
-            if handle.queue.is_empty() {
-                let waiters: Vec<js_sys::Function> = handle.flush_waiters.drain(..).collect();
-                for waiter in &waiters {
-                    let _ = waiter.call0(&JsValue::NULL);
-                }
-            }
+        let Some(handle) = sh.get_mut(&stream_id_val) else { return Vec::new() };
+        handle.in_flight = false;
+        if handle.queue.is_empty() {
+            handle.flush_waiters.drain(..).collect()
+        } else {
+            Vec::new()
         }
     });
+    for waiter in waiters {
+        let _ = waiter.call0(&JsValue::NULL);
+    }
     try_drain_queue(stream_id_val);
 }
 

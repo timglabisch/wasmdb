@@ -4,7 +4,7 @@ export type DebugEvent =
   | { kind: 'FetchEnd'; timestamp_ms: number; stream_id: number; response_bytes: number; latency_ms: number }
   | { kind: 'Confirmed'; timestamp_ms: number; stream_id: number }
   | { kind: 'Rejected'; timestamp_ms: number; stream_id: number; reason: string }
-  | { kind: 'Notification'; timestamp_ms: number; affected_sub_ids: number[]; total_subs: number }
+  | { kind: 'Notification'; timestamp_ms: number; sub_id: number; triggered_count: number }
   | { kind: 'SubscriptionCreated'; timestamp_ms: number; sub_id: number; sql: string; tables: string[] }
   | { kind: 'SubscriptionRemoved'; timestamp_ms: number; sub_id: number }
   | { kind: 'QueryExecuted'; timestamp_ms: number; sql: string; duration_us: number; row_count: number; source: string }
