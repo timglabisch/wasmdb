@@ -1,10 +1,7 @@
 mod database;
-mod delete;
 mod error;
-mod filter;
-mod insert;
-mod select;
-mod update;
+mod execute;
 
-pub use database::{Database, MutResult};
+pub use database::Database;
 pub use error::DbError;
+pub use execute::MutResult;

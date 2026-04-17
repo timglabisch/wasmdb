@@ -12,7 +12,7 @@ use sql_parser::schema::{ColumnDef, Schema};
 
 use crate::error::DbError;
 
-pub fn build_predicate(
+pub(crate) fn build_predicate(
     table_name: &str,
     schema: &TableSchema,
     filter: &Option<AstExpr>,
@@ -60,7 +60,7 @@ pub fn build_predicate(
     }
 }
 
-pub fn find_matching_rows(
+pub(crate) fn find_matching_rows(
     table: &Table,
     predicate: &PlanFilterPredicate,
 ) -> Vec<usize> {

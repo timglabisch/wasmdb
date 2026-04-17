@@ -18,7 +18,7 @@ fn plan_select(
     Ok(planner::sql::plan(select, &table_schemas)?)
 }
 
-pub fn execute_select(
+pub(crate) fn execute_select(
     tables: &HashMap<String, Table>,
     select: &sql_parser::ast::AstSelect,
     params: Params,
@@ -27,7 +27,7 @@ pub fn execute_select(
     Ok(columns)
 }
 
-pub fn execute_select_traced(
+pub(crate) fn execute_select_traced(
     tables: &HashMap<String, Table>,
     select: &sql_parser::ast::AstSelect,
     params: Params,

@@ -6,7 +6,7 @@ use sql_parser::ast::{AstExpr, AstInsert, Value};
 
 use crate::error::DbError;
 
-pub fn execute_insert(
+pub(crate) fn execute_insert(
     tables: &mut HashMap<String, Table>,
     insert: &AstInsert,
     params: &Params,

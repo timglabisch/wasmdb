@@ -5,10 +5,10 @@ use sql_engine::storage::{CellValue, Table};
 use sql_parser::ast::{AstUpdate, AstExpr, Value};
 
 use crate::error::DbError;
-use crate::filter;
+use super::filter;
 
 /// Returns (old_row, new_row) pairs for each updated row.
-pub fn execute_update(
+pub(crate) fn execute_update(
     tables: &mut HashMap<String, Table>,
     update: &AstUpdate,
     params: &Params,
@@ -18,7 +18,6 @@ pub fn execute_update(
 
     let col_count = table.schema.columns.len();
 
-    // Resolve assignment column indices
     let assignment_cols: Vec<(usize, &AstExpr)> = update.assignments.iter()
         .map(|(col_name, expr)| {
             let col_idx = table.schema.columns.iter()
@@ -31,7 +30,6 @@ pub fn execute_update(
     let predicate = filter::build_predicate(&update.table, &table.schema, &update.filter, tables, params)?;
     let matching = filter::find_matching_rows(table, &predicate);
 
-    // Collect old rows and compute new rows
     let mut pairs = Vec::with_capacity(matching.len());
     for &row_idx in &matching {
         let old_row: Vec<CellValue> = (0..col_count).map(|c| table.get(row_idx, c)).collect();
@@ -42,7 +40,6 @@ pub fn execute_update(
         pairs.push((old_row, new_row));
     }
 
-    // Apply: delete old, insert new
     let table = tables.get_mut(&update.table).unwrap();
     for &row_idx in &matching {
         table.delete(row_idx)
