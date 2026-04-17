@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
+use dirty_set::{DirtySet, DirtySlotId};
 use fnv::{FnvHashMap, FnvHashSet};
 
 use database::{Database, DbError, MutResult};
@@ -11,16 +12,23 @@ use sql_engine::schema::TableSchema;
 use sql_engine::storage::ZSet;
 use sql_parser::ast::Statement;
 
+use crate::dirty_notification::DirtyNotification;
 use crate::error::SubscribeError;
-use crate::subscription::{Callback, Subscription};
+use crate::subscription::Subscription;
 
-/// Database wrapped with a subscription registry and callback dispatch.
+/// Capacity of the inline fast-path list in the internal `DirtySet`. Marks
+/// beyond this spill to the heap bitmap. Sized so typical ticks stay on the
+/// fast path without being wasteful at rest.
+const DIRTY_LIST_CAP: usize = 128;
+
+/// Database wrapped with a subscription registry and a dirty-set based
+/// pull API.
 ///
-/// Mutating methods (`execute_mut`, `apply_zset`) automatically notify any
-/// subscriptions affected by the emitted ZSet. Read methods (`execute`) do not
-/// notify. Use `db_mut_raw()` when you need to mutate without firing callbacks
-/// (e.g. for sync-client replay where `notify` is called explicitly once per
-/// batch).
+/// Mutating methods (`execute_mut`, `apply_zset`) call `notify(&zset)` which
+/// marks affected subscriptions dirty and fires a single edge-triggered wake
+/// signal. Consumers drain via [`Self::next_dirty`] when they're ready —
+/// perfect for JS hosts that want to process notifications across
+/// `requestIdleCallback` frames rather than blocking the UI thread.
 ///
 /// # Identity layers
 ///
@@ -39,12 +47,31 @@ pub struct ReactiveDatabase {
     /// Deduped subscriptions keyed by runtime id.
     subscriptions: FnvHashMap<SubscriptionId, Subscription>,
     /// Content-dedup: SQL → runtime id. A new subscribe with matching SQL
-    /// reuses the existing id and only attaches an additional callback.
+    /// reuses the existing id and only bumps its refcount.
     by_key: FnvHashMap<SubscriptionKey, SubscriptionId>,
     /// Per-caller handle → its deduped subscription. Handle is the only
     /// identity callers need for `unsubscribe`.
     handles: FnvHashMap<SubscriptionHandle, SubscriptionId>,
     next_handle: u64,
+
+    /// Dirty-set of u32 slots corresponding to live subscriptions. Writer
+    /// side of the pull API; `next_dirty` drains.
+    dirty: DirtySet<DIRTY_LIST_CAP>,
+    /// SubscriptionId → slot in the dirty-set.
+    sub_to_slot: FnvHashMap<SubscriptionId, u32>,
+    /// Slot → SubscriptionId. `None` means the slot is free and awaiting reuse.
+    slot_to_sub: Vec<Option<SubscriptionId>>,
+    /// Free-list of released slots — reused on the next `alloc_slot` so the
+    /// u32 namespace doesn't grow unbounded over subscribe/unsubscribe churn.
+    free_slots: Vec<u32>,
+    /// Snapshot of the current drain cycle. Populated lazily by `next_dirty`
+    /// when empty and the dirty-set has marks, then popped one-by-one until
+    /// exhausted.
+    drain_buffer: VecDeque<DirtyNotification>,
+    /// Edge-triggered wake signal. Fires once when `dirty` transitions from
+    /// empty → non-empty; stays silent while marks pile up before the next
+    /// drain.
+    wake: Option<Box<dyn Fn()>>,
 }
 
 impl ReactiveDatabase {
@@ -60,6 +87,12 @@ impl ReactiveDatabase {
             by_key: FnvHashMap::default(),
             handles: FnvHashMap::default(),
             next_handle: 0,
+            dirty: DirtySet::new(0),
+            sub_to_slot: FnvHashMap::default(),
+            slot_to_sub: Vec::new(),
+            free_slots: Vec::new(),
+            drain_buffer: VecDeque::new(),
+            wake: None,
         }
     }
 
@@ -136,20 +169,21 @@ impl ReactiveDatabase {
     /// query exactly once across all callers. The returned
     /// [`SubscriptionHandle`] is per-caller and is the only identity needed
     /// for [`Self::unsubscribe`]. The returned [`SubscriptionId`] is the
-    /// shared runtime id used by `notify` callbacks and the debug APIs; many
+    /// shared runtime id used by the pull-API drain and the debug APIs; many
     /// handles may map to the same id.
     pub fn subscribe(
         &mut self,
         sql: &str,
-        callback: Callback,
     ) -> Result<(SubscriptionHandle, SubscriptionId), SubscribeError> {
         let key = SubscriptionKey::from_sql(sql);
 
         let sub_id = if let Some(&id) = self.by_key.get(&key) {
+            let sub = self.subscriptions.get_mut(&id)
+                .expect("invariant: by_key id must have a matching subscription");
+            sub.refcount += 1;
             id
         } else {
-            let stmt = sql_parser::parser::parse_statement(sql)
-                .map_err(|e| SubscribeError::Parse(format!("{e:?}")))?;
+            let stmt = sql_parser::parser::parse_statement(sql)?;
             let select = match stmt {
                 Statement::Select(s) => s,
                 _ => return Err(SubscribeError::NotSelect),
@@ -161,19 +195,17 @@ impl ReactiveDatabase {
 
             self.subscriptions.insert(sub_id, Subscription {
                 sql: sql.to_string(),
-                callbacks: FnvHashMap::default(),
-                last_triggered: FnvHashSet::default(),
+                key: key.clone(),
+                pending_triggered: FnvHashSet::default(),
+                refcount: 1,
             });
             self.by_key.insert(key, sub_id);
+            self.alloc_slot(sub_id);
             sub_id
         };
 
         let handle = SubscriptionHandle(self.next_handle);
         self.next_handle += 1;
-
-        let sub = self.subscriptions.get_mut(&sub_id)
-            .expect("sub must exist at this point");
-        sub.callbacks.insert(handle, callback);
         self.handles.insert(handle, sub_id);
 
         Ok((handle, sub_id))
@@ -192,79 +224,138 @@ impl ReactiveDatabase {
         let Some(sub) = self.subscriptions.get_mut(&sub_id) else {
             return true;
         };
-        sub.callbacks.remove(&handle);
-        if sub.callbacks.is_empty() {
+        sub.refcount = sub.refcount.saturating_sub(1);
+        if sub.refcount == 0 {
             let sub = self.subscriptions.remove(&sub_id).expect("just checked");
             self.by_key.remove(&SubscriptionKey::from_sql(&sub.sql));
+            self.free_slot(sub_id);
             self.registry.unsubscribe(sub_id);
         }
         true
     }
 
-    // ── Reactive query helpers ───────────────────────────────────────
+    // ── Slot allocator (dirty-set u32 slots) ─────────────────────────
 
-    /// Query with this subscription's last-triggered conditions. Consumes
-    /// (clears) the triggered set after reading — next call returns empty until
-    /// the next mutation triggers again.
-    pub fn execute_for_sub(&mut self, sub_id: SubscriptionId, sql: &str) -> Result<(Columns, Vec<Span>), DbError> {
-        let triggered = self.subscriptions.get_mut(&sub_id)
-            .map(|s| std::mem::take(&mut s.last_triggered))
-            .unwrap_or_default();
-        let triggered_std: std::collections::HashSet<usize> = triggered.into_iter().collect();
-        self.db.execute_traced_with_triggered(sql, Some(triggered_std))
+    fn alloc_slot(&mut self, sub_id: SubscriptionId) -> u32 {
+        let slot = if let Some(s) = self.free_slots.pop() {
+            self.slot_to_sub[s as usize] = Some(sub_id);
+            s
+        } else {
+            let s = self.slot_to_sub.len() as u32;
+            self.slot_to_sub.push(Some(sub_id));
+            s
+        };
+        self.sub_to_slot.insert(sub_id, slot);
+        slot
     }
 
-    /// Query looking up the subscription by matching SQL. Used when the caller
-    /// (e.g. JS) only has the SQL string, not the SubscriptionId. Consumes
-    /// triggered.
-    pub fn execute_for_sql(&mut self, sql: &str) -> Result<(Columns, Vec<Span>), DbError> {
-        let triggered = self.take_triggered_for_sql(sql);
-        self.db.execute_traced_with_triggered(sql, triggered)
-    }
-
-    /// Peek & clear the triggered condition set for the subscription matching
-    /// `sql` (there is at most one after dedup). Returned as std HashSet for
-    /// interop with `execute_traced_with_triggered`.
-    pub fn take_triggered_for_sql(&mut self, sql: &str) -> Option<std::collections::HashSet<usize>> {
-        let key = SubscriptionKey::from_sql(sql);
-        let sub_id = *self.by_key.get(&key)?;
-        let sub = self.subscriptions.get_mut(&sub_id)?;
-        if sub.last_triggered.is_empty() {
-            return None;
+    fn free_slot(&mut self, sub_id: SubscriptionId) {
+        if let Some(slot) = self.sub_to_slot.remove(&sub_id) {
+            if let Some(cell) = self.slot_to_sub.get_mut(slot as usize) {
+                *cell = None;
+            }
+            self.free_slots.push(slot);
         }
-        let triggered = std::mem::take(&mut sub.last_triggered);
-        Some(triggered.into_iter().collect())
     }
 
     // ── Notify ───────────────────────────────────────────────────────
 
-    /// Dispatch a ZSet to subscribers: runs `on_zset` to get affected SubIds +
-    /// triggered conditions, updates each subscription's `last_triggered`, and
-    /// fires every callback registered against each affected subscription.
+    /// Dispatch a ZSet to subscribers. Marks affected subscriptions dirty,
+    /// accumulates their triggered-condition indices, and fires the
+    /// edge-triggered wake signal if the dirty-set transitions from empty
+    /// to non-empty.
+    ///
+    /// Consumers drain via [`Self::next_dirty`] when ready.
     pub fn notify(&mut self, zset: &ZSet) {
         if self.subscriptions.is_empty() {
             return;
         }
+        let was_empty = self.dirty.is_empty();
         let affected = on_zset(&self.registry, zset);
         for (sub_id, triggered) in affected {
             let Some(sub) = self.subscriptions.get_mut(&sub_id) else { continue };
-            sub.last_triggered = triggered;
-            let indices: Vec<usize> = sub.last_triggered.iter().copied().collect();
-            for cb in sub.callbacks.values() {
-                (cb)(sub_id, &indices);
+            sub.pending_triggered.extend(triggered);
+            if let Some(&slot) = self.sub_to_slot.get(&sub_id) {
+                self.dirty.mark_dirty(DirtySlotId(slot));
+            }
+        }
+
+        if was_empty && !self.dirty.is_empty() {
+            if let Some(w) = &self.wake {
+                w();
             }
         }
     }
 
-    /// Fire every registered callback with an empty triggered set. Used after
-    /// bulk state changes (e.g. SyncClient rebuild) where we can't compute a
-    /// precise diff.
-    pub fn notify_all(&self) {
-        for (sub_id, sub) in &self.subscriptions {
-            for cb in sub.callbacks.values() {
-                (cb)(*sub_id, &[]);
+    /// Mark every live subscription dirty (with no triggered-condition
+    /// precision — `DirtyNotification.triggered` will be empty for these
+    /// marks). Used after bulk state changes (e.g. SyncClient rebuild)
+    /// where a precise diff isn't available.
+    pub fn notify_all(&mut self) {
+        if self.subscriptions.is_empty() {
+            return;
+        }
+        let was_empty = self.dirty.is_empty();
+        let sub_ids: Vec<SubscriptionId> = self.subscriptions.keys().copied().collect();
+        for sub_id in sub_ids {
+            if let Some(&slot) = self.sub_to_slot.get(&sub_id) {
+                self.dirty.mark_dirty(DirtySlotId(slot));
             }
         }
+        if was_empty && !self.dirty.is_empty() {
+            if let Some(w) = &self.wake {
+                w();
+            }
+        }
+    }
+
+    // ── Pull API ─────────────────────────────────────────────────────
+
+    /// Register the edge-triggered wake callback. Fires exactly once when the
+    /// internal dirty-set transitions from empty to non-empty — subsequent
+    /// marks in the same drain cycle do not re-fire. Intended as a signal for
+    /// the consumer to schedule a drain (e.g. via `requestIdleCallback`).
+    ///
+    /// Only one wake callback is supported; subsequent calls replace it.
+    pub fn on_dirty(&mut self, wake: Box<dyn Fn()>) {
+        self.wake = Some(wake);
+    }
+
+    /// Pull the next dirty notification, or `None` when there's nothing to
+    /// drain. The first call of a drain cycle snapshots the dirty-set into
+    /// an internal buffer (atomically: iter + clear in one Rust call) so
+    /// marks arriving between subsequent `next_dirty` calls land in the now
+    /// empty dirty-set and will be surfaced in the *next* cycle — never
+    /// dropped, never double-surfaced.
+    pub fn next_dirty(&mut self) -> Option<DirtyNotification> {
+        if self.drain_buffer.is_empty() && !self.dirty.is_empty() {
+            // DirtySet's list path does not dedupe; a sub marked multiple times
+            // on the fast path shows up multiple times in `iter()`. Dedup at
+            // drain-build time so a sub surfaces exactly once per cycle.
+            let mut seen: FnvHashSet<SubscriptionId> = FnvHashSet::default();
+            for slot in self.dirty.iter() {
+                let Some(sub_id) = self.slot_to_sub
+                    .get(slot.0 as usize)
+                    .copied()
+                    .flatten()
+                else { continue };
+                if !seen.insert(sub_id) { continue; }
+                let triggered: Vec<usize> = self.subscriptions
+                    .get_mut(&sub_id)
+                    .map(|s| std::mem::take(&mut s.pending_triggered).into_iter().collect())
+                    .unwrap_or_default();
+                self.drain_buffer.push_back(DirtyNotification { sub_id, triggered });
+            }
+            self.dirty.clear();
+        }
+
+        // Skip stale entries (subscription unsubscribed since snapshot).
+        while let Some(n) = self.drain_buffer.pop_front() {
+            if self.subscriptions.contains_key(&n.sub_id) {
+                return Some(n);
+            }
+        }
+        None
     }
 
     /// Replace the inner table data with a clone of `other`. Keeps the registry
@@ -282,8 +373,7 @@ impl ReactiveDatabase {
         self.subscriptions.len()
     }
 
-    /// Number of outstanding caller handles across all subscriptions. Sums the
-    /// callback count of every live subscription.
+    /// Number of outstanding caller handles across all subscriptions.
     pub fn handle_count(&self) -> usize {
         self.handles.len()
     }

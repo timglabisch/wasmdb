@@ -7,6 +7,7 @@ edition = "2021"
 database = { path = "../database" }
 sql-engine = { path = "../sql-engine" }
 sql-parser = { path = "../sql-parser" }
+dirty-set = { path = "../dirty-set" }
 fnv = "1"
 
 [features]

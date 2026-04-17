@@ -7,6 +7,13 @@ export interface Execution {
   confirmed: Promise<{ status: 'confirmed' | 'rejected'; reason?: string }>;
 }
 
+/** One drain item from `next_dirty()`. */
+export interface DirtyNotification {
+  subId: number;
+  /** Triggered reactive condition indices, accumulated since the last drain. */
+  triggered: number[];
+}
+
 /** Surface of the wasm-bindgen module needed by this client library. */
 export interface WasmSyncApi {
   execute(cmdJson: string): Execution;
@@ -14,7 +21,11 @@ export interface WasmSyncApi {
   create_stream(batchCount: number, batchWaitMs: number, retryCount: number): number;
   flush_stream(streamId: number): Promise<void>;
   query(sql: string): any[][];
-  query_confirmed(sql: string): any[][];
+  /**
+   * `triggered` is a `number[]` (e.g. from `DirtyNotification.triggered`).
+   * Pass `undefined` or `[]` for a cold read without REACTIVE(...) highlighting.
+   */
+  query_confirmed(sql: string, triggered?: number[]): any[][];
   /**
    * Register a reactive subscription. Returns `{handle, subId}`:
    * - `handle` is unique per call and is what you pass back to `unsubscribe`.
@@ -22,9 +33,20 @@ export interface WasmSyncApi {
    *   resolve to the same `subId`. Useful as a cache key for stores that want
    *   to dedupe per-query state across components.
    */
-  subscribe(sql: string, callback: Function): { handle: number; subId: number };
+  subscribe(sql: string): { handle: number; subId: number };
   /** Release a caller handle. Unknown handles log a console warning. */
   unsubscribe(handle: number): void;
+  /**
+   * Register a single edge-triggered wake callback. Fires once when the
+   * internal dirty-set transitions from empty to non-empty. Use this to
+   * schedule a drain (e.g. via `queueMicrotask`).
+   */
+  on_dirty(wake: () => void): void;
+  /**
+   * Pull the next dirty notification, or `null` when this drain cycle is
+   * exhausted. Call in a loop until it returns `null` to finish the cycle.
+   */
+  next_dirty(): DirtyNotification | null;
   next_id(): number;
 }
 
@@ -38,6 +60,7 @@ let bootstrapping = false;
 /** Inject the wasm module. Call once after the bootstrap (wasm init) resolves. */
 export function provideWasm(wasm: WasmSyncApi): void {
   wasmRef = wasm;
+  installDrainPump(wasm);
 }
 
 /** Mark the wasm boot as finished and wake `useWasm` subscribers. */
@@ -54,6 +77,64 @@ export function isReady(): boolean {
 function wasm(): WasmSyncApi {
   if (!wasmRef) throw new Error('@wasmdb/client: call provideWasm(wasm) before use');
   return wasmRef;
+}
+
+// ── Drain pump: wasm `on_dirty` → scheduled drain → per-sub listeners ──
+
+/** Per-subscription refresh handlers, keyed by shared runtime subId. */
+const listenersBySubId = new Map<number, Set<() => void>>();
+/** handle → (subId, refreshFn) so we can remove from listenersBySubId on unsubscribe. */
+const handleIndex = new Map<number, { subId: number; fn: () => void }>();
+/** Most recent triggered indices per subId — read by `useReactiveQuery` when
+ *  querying the confirmed side with REACTIVE(...) columns. */
+const lastTriggeredBySubId = new Map<number, number[]>();
+
+let drainScheduled = false;
+
+function installDrainPump(w: WasmSyncApi): void {
+  w.on_dirty(() => {
+    if (drainScheduled) return;
+    drainScheduled = true;
+    queueMicrotask(() => {
+      drainScheduled = false;
+      drainPending();
+    });
+  });
+}
+
+function drainPending(): void {
+  if (!wasmRef) return;
+  while (true) {
+    const n = wasmRef.next_dirty();
+    if (n === null) break;
+    lastTriggeredBySubId.set(n.subId, n.triggered);
+    const listeners = listenersBySubId.get(n.subId);
+    if (!listeners) continue;
+    listeners.forEach(fn => fn());
+  }
+}
+
+function addListener(subId: number, handle: number, fn: () => void): void {
+  let set = listenersBySubId.get(subId);
+  if (!set) {
+    set = new Set();
+    listenersBySubId.set(subId, set);
+  }
+  set.add(fn);
+  handleIndex.set(handle, { subId, fn });
+}
+
+function removeListener(handle: number): void {
+  const entry = handleIndex.get(handle);
+  if (!entry) return;
+  handleIndex.delete(handle);
+  const set = listenersBySubId.get(entry.subId);
+  if (!set) return;
+  set.delete(entry.fn);
+  if (set.size === 0) {
+    listenersBySubId.delete(entry.subId);
+    lastTriggeredBySubId.delete(entry.subId);
+  }
 }
 
 // ── Standalone wrappers ───────────────────────────────────────────
@@ -119,17 +200,28 @@ function useReactiveQuery<T>(
   useEffect(() => {
     if (!wasmReady) return;
     const w = wasm();
-    const read = () => dbKind === 'confirmed' ? w.query_confirmed(sql) : w.query(sql);
+    const { handle, subId } = w.subscribe(sql);
+
+    const read = () => {
+      if (dbKind === 'confirmed') {
+        const triggered = lastTriggeredBySubId.get(subId);
+        return w.query_confirmed(sql, triggered);
+      }
+      return w.query(sql);
+    };
 
     const refresh = () => {
       const rows = read();
       setData(mapRef.current ? rows.map(mapRef.current) : (rows as T[]));
     };
 
-    const { handle } = w.subscribe(sql, refresh);
+    addListener(subId, handle, refresh);
     refresh();
 
-    return () => { w.unsubscribe(handle); };
+    return () => {
+      removeListener(handle);
+      w.unsubscribe(handle);
+    };
   }, [sql, dbKind]);
 
   return data;

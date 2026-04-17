@@ -1,10 +1,11 @@
 use database::DbError;
 use sql_engine::execute::ExecuteError;
 use sql_engine::planner::PlanError;
+use sql_parser::parser::ParseError;
 
 #[derive(Debug)]
 pub enum SubscribeError {
-    Parse(String),
+    Parse(ParseError),
     NotSelect,
     Plan(PlanError),
     Execute(ExecuteError),
@@ -14,7 +15,7 @@ pub enum SubscribeError {
 impl std::fmt::Display for SubscribeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SubscribeError::Parse(msg) => write!(f, "parse error: {msg}"),
+            SubscribeError::Parse(e) => write!(f, "parse error: {e}"),
             SubscribeError::NotSelect => write!(f, "subscribe only supports SELECT"),
             SubscribeError::Plan(e) => write!(f, "plan error: {e}"),
             SubscribeError::Execute(e) => write!(f, "execute error: {e}"),
@@ -33,4 +34,7 @@ impl From<PlanError> for SubscribeError {
 }
 impl From<ExecuteError> for SubscribeError {
     fn from(e: ExecuteError) -> Self { SubscribeError::Execute(e) }
+}
+impl From<ParseError> for SubscribeError {
+    fn from(e: ParseError) -> Self { SubscribeError::Parse(e) }
 }

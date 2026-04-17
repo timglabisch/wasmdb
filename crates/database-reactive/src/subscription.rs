@@ -1,27 +1,19 @@
-use fnv::{FnvHashMap, FnvHashSet};
-
-use sql_engine::reactive::{SubscriptionHandle, SubscriptionId};
-
-/// Callback fired when a mutation affects a subscription.
-///
-/// Arguments:
-/// - `SubscriptionId`: the subscription's runtime identifier. Multiple callers
-///   subscribing to the same SQL share one id — all their callbacks fire with
-///   that id.
-/// - `&[usize]`: indices of triggered reactive conditions (empty for
-///   table-level notifies).
-pub type Callback = Box<dyn Fn(SubscriptionId, &[usize])>;
+use fnv::FnvHashSet;
+use sql_engine::reactive::SubscriptionKey;
 
 pub(crate) struct Subscription {
     pub sql: String,
-    /// Per-caller callbacks, keyed by the handle returned to the caller.
-    /// Multiple `subscribe(sql, cb)` calls with equivalent SQL share one
-    /// `Subscription`; each call gets its own entry in this map. Removing a
-    /// handle removes only that caller's callback — the subscription is torn
-    /// down from the registry only once this map becomes empty.
-    pub callbacks: FnvHashMap<SubscriptionHandle, Callback>,
-    /// Condition indices triggered by the most recent notification.
-    /// Read by `execute_for_sub` / `execute_for_sql` so reactive(...) columns
-    /// reflect which predicates fired. Consumed (cleared) on read.
-    pub last_triggered: FnvHashSet<usize>,
+    /// Dedup key, computed once on subscribe and kept so teardown doesn't
+    /// have to recompute it from `sql`. Also the right level of indirection
+    /// if the key representation ever diverges from SQL (see
+    /// [`SubscriptionKey`] docs).
+    pub key: SubscriptionKey,
+    /// Triggered condition indices accumulated since the last consumption
+    /// (either via `next_dirty` drain or via a reactive query helper).
+    /// Multiple `notify` calls between consumptions merge into this set.
+    pub pending_triggered: FnvHashSet<usize>,
+    /// Handle refcount — number of outstanding caller handles pointing at
+    /// this subscription. Incremented on every `subscribe`, decremented on
+    /// `unsubscribe`; the registry entry is torn down when it hits zero.
+    pub refcount: u32,
 }

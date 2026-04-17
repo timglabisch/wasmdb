@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use database_reactive::SubscriptionHandle;
@@ -8,8 +9,7 @@ use sync::protocol::StreamId;
 use sync_client::client::SyncClient;
 use wasm_bindgen::prelude::*;
 
-use crate::debug::{log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
-use crate::reactive::wrap_js_callback;
+use crate::debug::{bump_notification_count, log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
 use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID, ID_COUNTER};
 use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle, STREAM_HANDLES};
 
@@ -57,11 +57,14 @@ pub fn create_stream(batch_count: u32, batch_wait_ms: u32, retry_count: u32) -> 
 /// - `subId` is the shared runtime id. Multiple callers subscribing with the
 ///   same SQL see the same `subId` — JS stores can key by it to avoid
 ///   duplicating per-query state.
+///
+/// Subscriptions produce dirty notifications via [`on_dirty`] + [`next_dirty`].
+/// No callback is registered here — dispatching to per-sub JS handlers is the
+/// JS host's job so it can defer work to `requestIdleCallback` etc.
 #[wasm_bindgen]
-pub fn subscribe(sql: &str, callback: js_sys::Function) -> Result<JsValue, JsError> {
-    let cb = wrap_js_callback(callback);
+pub fn subscribe(sql: &str) -> Result<JsValue, JsError> {
     let (handle, sub_id, tables) = with_client(|client| {
-        let (handle, sub_id) = client.subscribe(sql, cb)
+        let (handle, sub_id) = client.db_mut().subscribe(sql)
             .unwrap_or_else(|e| panic!("subscribe: {e}"));
         let tables: Vec<String> = client
             .db()
@@ -98,7 +101,7 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> Result<JsValue, JsErr
 #[wasm_bindgen]
 pub fn unsubscribe(handle: f64) {
     let h = SubscriptionHandle(handle as u64);
-    let released = with_client(|client| client.unsubscribe(h));
+    let released = with_client(|client| client.db_mut().unsubscribe(h));
     if !released {
         web_sys::console::warn_1(
             &format!("wasmdb: unsubscribe on unknown or already-released handle {}", h.0).into(),
@@ -109,6 +112,57 @@ pub fn unsubscribe(handle: f64) {
         timestamp_ms: now_ms(),
         sub_id: h.0,
     });
+}
+
+/// Register the edge-triggered wake signal. Fires once when the internal
+/// dirty-set transitions from empty to non-empty. The JS host is expected to
+/// schedule a drain (e.g. `queueMicrotask(drain)` or `requestIdleCallback`)
+/// that pulls [`next_dirty`] in a loop until it returns null.
+///
+/// Only one wake function is supported; subsequent calls replace it.
+#[wasm_bindgen]
+pub fn on_dirty(wake: js_sys::Function) {
+    with_client(|client| {
+        let wake = wake.clone();
+        client.db_mut().on_dirty(Box::new(move || {
+            if let Err(e) = wake.call0(&JsValue::NULL) {
+                web_sys::console::error_2(&"wasmdb: on_dirty wake call failed".into(), &e);
+            }
+        }));
+    });
+}
+
+/// Pull the next dirty notification, or `null` when the drain cycle is empty.
+/// Returns `{ subId, triggered: number[] }`.
+///
+/// The JS host loops over this until it returns null to finish a drain cycle.
+/// Marks arriving between calls (or during the drain) land in the *next*
+/// cycle — never dropped, never double-surfaced.
+#[wasm_bindgen]
+pub fn next_dirty() -> Result<JsValue, JsError> {
+    with_client(|client| {
+        match client.db_mut().next_dirty() {
+            Some(n) => {
+                bump_notification_count(n.sub_id.0);
+                log_event(DebugEvent::Notification {
+                    timestamp_ms: now_ms(),
+                    sub_id: n.sub_id.0,
+                    triggered_count: n.triggered.len(),
+                });
+                let obj = js_sys::Object::new();
+                js_sys::Reflect::set(&obj, &"subId".into(), &JsValue::from_f64(n.sub_id.0 as f64))
+                    .map_err(|e| JsError::new(&format!("{e:?}")))?;
+                let arr = js_sys::Array::new_with_length(n.triggered.len() as u32);
+                for (i, t) in n.triggered.iter().enumerate() {
+                    arr.set(i as u32, JsValue::from_f64(*t as f64));
+                }
+                js_sys::Reflect::set(&obj, &"triggered".into(), &arr)
+                    .map_err(|e| JsError::new(&format!("{e:?}")))?;
+                Ok(obj.into())
+            }
+            None => Ok(JsValue::NULL),
+        }
+    })
 }
 
 /// Execute a command on a specific stream. Returns `{ zset, confirmed: Promise }`.
@@ -201,7 +255,7 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
     with_client(|client| {
         let (columns, spans) = client
             .db_mut()
-            .execute_for_sql(sql)
+            .execute_traced(sql)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         record_query(sql, "optimistic", spans, rows.len());
@@ -210,15 +264,19 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
 }
 
 /// Execute a SQL query against the confirmed (server-acknowledged) database.
-/// The triggered-conditions set is pulled from the reactive optimistic side so
-/// `REACTIVE(...)` columns still reflect the last fire.
+/// `triggered` is a `number[]` of condition indices (typically the `triggered`
+/// field from a `next_dirty` notification) used to light up `REACTIVE(...)`
+/// columns. Pass an empty array (or nothing) for a cold read.
 #[wasm_bindgen]
-pub fn query_confirmed(sql: &str) -> Result<JsValue, JsError> {
+pub fn query_confirmed(sql: &str, triggered: Option<Vec<u32>>) -> Result<JsValue, JsError> {
+    let triggered_set: Option<HashSet<usize>> = triggered
+        .filter(|t| !t.is_empty())
+        .map(|t| t.into_iter().map(|i| i as usize).collect());
+
     with_client(|client| {
-        let triggered = client.db_mut().take_triggered_for_sql(sql);
         let (columns, spans) = client
             .confirmed_db_mut()
-            .execute_traced_with_triggered(sql, triggered)
+            .execute_traced_with_triggered(sql, triggered_set)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         record_query(sql, "confirmed", spans, rows.len());
