@@ -987,17 +987,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-runtime"
-version = "0.1.0"
-dependencies = [
- "fnv",
- "js-sys",
- "serde",
- "serde-wasm-bindgen",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "wasmdb-debug"
 version = "0.1.0"
 dependencies = [

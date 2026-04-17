@@ -1,20 +1,7 @@
-.PHONY: all wasm frontend clean dev sync sync-types sync-install sync-dev install
-
-all: wasm frontend
-
-wasm:
-	wasm-pack build crates/wasm-runtime --target web --out-dir ../../frontend/node_modules/wasm-runtime
-
-frontend: wasm
-	cd frontend && npm run build
-
-dev: wasm
-	cd frontend && npm run dev
+.PHONY: clean sync sync-types sync-install sync-dev install
 
 clean:
 	cargo clean
-	rm -rf frontend/node_modules/wasm-runtime
-	rm -rf frontend/dist
 	rm -rf examples/sync-demo/frontend/dist
 	rm -rf examples/sync-demo/frontend/wasm-pkg
 
