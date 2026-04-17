@@ -15,6 +15,9 @@ pub struct Iter<'a, const LIST_CAP: usize> {
     list_len: usize,
     list_pos: usize,
     overflowed: bool,
+    /// Index of the bitmap word we're currently consuming bits from.
+    /// Invariant: `word_bits` is a local copy of `set.bitmap[bitmap_word]`
+    /// with already-yielded bits cleared.
     bitmap_word: usize,
     word_bits: u32,
 }
@@ -23,13 +26,20 @@ impl<'a, const LIST_CAP: usize> Iter<'a, LIST_CAP> {
     pub(crate) fn new(set: &'a DirtySet<LIST_CAP>) -> Self {
         let list_len = set.list_len();
         let overflowed = set.overflowed();
+        // Pre-load word 0 so `bitmap_word` always points at the word
+        // `word_bits` came from.
+        let word_bits = if overflowed && set.bitmap_word_count() > 0 {
+            set.bitmap_word(0)
+        } else {
+            0
+        };
         Self {
             set,
             list_len,
             list_pos: 0,
             overflowed,
             bitmap_word: 0,
-            word_bits: 0,
+            word_bits,
         }
     }
 }
@@ -45,26 +55,42 @@ impl<const LIST_CAP: usize> Iterator for Iter<'_, LIST_CAP> {
             return Some(DirtySlotId(id));
         }
 
-        // Phase 2: bitmap, only if the batch overflowed. `word_bits` is a
-        // local copy; the set's bitmap is never mutated by iteration.
+        // Phase 2: bitmap, only if the batch overflowed.
         if !self.overflowed {
             return None;
         }
 
+        // Yield one set bit per call, in ascending id order. `word_bits`
+        // is a local copy of the current word — the bitmap itself is
+        // never mutated.
         loop {
-            if self.word_bits == 0 {
-                if self.bitmap_word >= self.set.bitmap_word_count() {
-                    return None;
-                }
-                self.word_bits = self.set.bitmap_word(self.bitmap_word);
-                self.bitmap_word += 1;
-            }
             if self.word_bits != 0 {
+                // Position of the lowest set bit in the word (0..32).
+                // Example: 0b1010100 -> 2.
+                // Compiles to `tzcnt` (x86_64-BMI) / `rbit+clz` (arm64).
                 let bit = self.word_bits.trailing_zeros();
+
+                // Clear that lowest set bit. The subtraction rolls a
+                // borrow through the trailing zeros, so `x - 1` flips
+                // the lowest 1-bit to 0 (and the zeros below it to 1);
+                // the AND then keeps only the higher bits.
+                //   0b1010100 & 0b1010011  ==  0b1010000
+                // Compiles to `blsr` (x86_64-BMI).
                 self.word_bits &= self.word_bits - 1;
-                let id = ((self.bitmap_word - 1) as u32) * 32 + bit;
+
+                // Each word holds 32 ids, so the id is simply
+                // `word_index * 32 + bit_position`.
+                let id = (self.bitmap_word as u32) * 32 + bit;
                 return Some(DirtySlotId(id));
             }
+
+            // Current word exhausted — advance. Loop allows skipping
+            // runs of zero-words inside a single `next()` call.
+            self.bitmap_word += 1;
+            if self.bitmap_word >= self.set.bitmap_word_count() {
+                return None;
+            }
+            self.word_bits = self.set.bitmap_word(self.bitmap_word);
         }
     }
 }
