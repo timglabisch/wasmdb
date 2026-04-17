@@ -177,6 +177,7 @@ dependencies = [
 name = "dirty-set"
 version = "0.1.0"
 dependencies = [
+ "fnv",
  "proptest",
 ]
 

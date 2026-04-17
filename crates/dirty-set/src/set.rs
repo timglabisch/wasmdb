@@ -16,6 +16,12 @@ use crate::iter::Iter;
 ///   bitmap. Bitmap writes are idempotent: marking the same id twice in the
 ///   bitmap path is a no-op.
 ///
+/// # Capacity growth
+///
+/// `new(initial_n_subs)` only sets the starting capacity. Marking an id
+/// `>= n_subs` grows the bitmap by doubling (Vec-style). Callers that know
+/// the final size up-front should pass it in to avoid incremental reallocs.
+///
 /// # Read / clear separation
 ///
 /// `iter()` only borrows `&self` and does not touch internal state. The
@@ -34,56 +40,78 @@ pub struct DirtySet<const LIST_CAP: usize> {
     /// `list[..head as usize]` is valid.
     list: [u32; LIST_CAP],
     /// Overflow bitmap. Length is `ceil(n_subs / 32)`; bit `id` lives in
-    /// `bitmap[id / 32] & (1 << (id % 32))`.
-    bitmap: Box<[u32]>,
+    /// `bitmap[id / 32] & (1 << (id % 32))`. Grows by doubling on capacity
+    /// overflow.
+    bitmap: Vec<u32>,
     /// Set the first time a mark in the current batch falls through to the
     /// bitmap. Reader consults this to decide whether to scan the bitmap.
     overflowed: bool,
-    /// Maximum valid DirtySlotId (exclusive). Used only for debug_asserts.
+    /// Current bitmap capacity in ids (exclusive upper bound for the
+    /// current backing store). Grows via [`Self::grow_for`] when a mark
+    /// exceeds it.
     n_subs: u32,
 }
 
 impl<const LIST_CAP: usize> DirtySet<LIST_CAP> {
-    /// Build an empty set sized for `n_subs` possible DirtySlotIds.
+    /// Build an empty set with initial capacity for `initial_n_subs`
+    /// DirtySlotIds.
     ///
-    /// Allocates a bitmap of `ceil(n_subs / 32)` `u32` words on the heap.
-    /// The list lives inline in the struct.
-    pub fn new(n_subs: u32) -> Self {
-        let word_count = ((n_subs as usize) + 31) / 32;
+    /// Allocates a bitmap of `ceil(initial_n_subs / 32)` `u32` words on the
+    /// heap. The list lives inline in the struct. The bitmap grows by
+    /// doubling once a mark exceeds the current capacity — callers that
+    /// know the final size should pass it in here to avoid later reallocs.
+    pub fn new(initial_n_subs: u32) -> Self {
+        let word_count = ((initial_n_subs as usize) + 31) / 32;
         Self {
             head: 0,
             list: [0u32; LIST_CAP],
-            bitmap: vec![0u32; word_count].into_boxed_slice(),
+            bitmap: vec![0u32; word_count],
             overflowed: false,
-            n_subs,
+            n_subs: initial_n_subs,
         }
     }
 
-    /// Record that `id` is dirty. O(1).
+    /// Record that `id` is dirty. O(1) amortised (growth is amortised O(1)
+    /// via doubling, like `Vec::push`).
     ///
     /// - If the list still has room, appends `id` without any dedup check.
     /// - Once the list is full, sets `overflowed` and ORs the bit into the
     ///   bitmap; that path is idempotent.
-    ///
-    /// Panics in debug builds if `id.0 >= n_subs`.
+    /// - If `id >= n_subs`, the bitmap grows before the write.
     pub fn mark_dirty(&mut self, id: DirtySlotId) {
-        debug_assert!(
-            id.0 < self.n_subs,
-            "DirtySlotId({}) >= n_subs ({})",
-            id.0,
-            self.n_subs
-        );
-
         if !self.overflowed && (self.head as usize) < LIST_CAP {
             self.list[self.head as usize] = id.0;
             self.head += 1;
             return;
         }
 
+        // Bitmap path: ensure capacity before the write. Small-batch
+        // workloads never reach here; keeping the check out of the list
+        // path means the tight hot path costs one load+branch, not two.
+        if id.0 >= self.n_subs {
+            self.grow_for(id.0);
+        }
+
         self.overflowed = true;
         let word = (id.0 / 32) as usize;
         let bit = id.0 % 32;
         self.bitmap[word] |= 1u32 << bit;
+    }
+
+    /// Grow the bitmap to fit `id`. Called only when `id >= n_subs`.
+    /// Doubles capacity starting from `max(n_subs, 32)` until `id` fits,
+    /// so the amortised cost over a sequence of growing marks is O(1).
+    #[cold]
+    #[inline(never)]
+    fn grow_for(&mut self, id: u32) {
+        let needed = id.saturating_add(1);
+        let mut new_n = self.n_subs.max(32);
+        while new_n < needed {
+            new_n = new_n.saturating_mul(2);
+        }
+        let words = ((new_n as usize) + 31) / 32;
+        self.bitmap.resize(words, 0);
+        self.n_subs = new_n;
     }
 
     /// Walk every currently-dirty id. Does not mutate the set — call

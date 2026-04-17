@@ -195,9 +195,50 @@ mod unit_tests {
     }
 
     #[test]
-    #[should_panic]
-    fn mark_beyond_n_subs_debug_panics() {
+    fn list_accepts_ids_beyond_initial_capacity_without_growing() {
+        // Only the bitmap path needs capacity; list stores raw u32s, so
+        // marking ids > initial n_subs is fine as long as the list has room.
         let mut set = DirtySet::<4>::new(32);
-        set.mark_dirty(DirtySlotId(32));
+        set.mark_dirty(DirtySlotId(1000));
+        assert_eq!(set.n_subs(), 32);
+        assert!(!set.overflowed());
+        let batch: Vec<_> = set.iter().collect();
+        assert_eq!(batch, vec![DirtySlotId(1000)]);
+    }
+
+    #[test]
+    fn bitmap_path_grows_by_doubling() {
+        // CAP=1: second mark forces bitmap. id=40 > initial n_subs=32 -> grow
+        // doubles to 64.
+        let mut set = DirtySet::<1>::new(32);
+        set.mark_dirty(DirtySlotId(0));   // list
+        set.mark_dirty(DirtySlotId(40));  // bitmap path -> grow to 64
+        assert_eq!(set.n_subs(), 64);
+        let batch: Vec<_> = set.iter().collect();
+        assert_eq!(batch, vec![DirtySlotId(0), DirtySlotId(40)]);
+    }
+
+    #[test]
+    fn bitmap_path_from_zero_capacity_starts_at_min_32() {
+        // CAP=1 + new(0): second mark forces bitmap on empty capacity.
+        let mut set = DirtySet::<1>::new(0);
+        set.mark_dirty(DirtySlotId(0));
+        set.mark_dirty(DirtySlotId(5));
+        assert_eq!(set.n_subs(), 32);
+        let batch: Vec<_> = set.iter().collect();
+        assert_eq!(batch, vec![DirtySlotId(0), DirtySlotId(5)]);
+    }
+
+    #[test]
+    fn bitmap_path_grows_multiple_times() {
+        // Each out-of-range mark doubles until it fits.
+        let mut set = DirtySet::<1>::new(32);
+        set.mark_dirty(DirtySlotId(0));
+        set.mark_dirty(DirtySlotId(500));  // grow 32 -> 64 -> 128 -> 256 -> 512
+        assert_eq!(set.n_subs(), 512);
+        set.mark_dirty(DirtySlotId(2000)); // grow 512 -> 1024 -> 2048
+        assert_eq!(set.n_subs(), 2048);
+        let batch: Vec<_> = set.iter().collect();
+        assert_eq!(batch, vec![DirtySlotId(0), DirtySlotId(500), DirtySlotId(2000)]);
     }
 }
