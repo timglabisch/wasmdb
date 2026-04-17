@@ -92,7 +92,7 @@ fn plan_and_subscribe(
     db: &TestDb,
     sql: &str,
     params: &execute::Params,
-) -> (SubscriptionRegistry, sql_engine::reactive::registry::SubId) {
+) -> (SubscriptionRegistry, sql_engine::reactive::SubscriptionId) {
     let ast = parser::parse(sql).expect("parse failed");
     let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect("plan_reactive failed");
@@ -674,7 +674,7 @@ fn reactive_unsubscribe_nonexistent_is_noop() {
     let (mut registry, sub_id) = plan_and_subscribe(&db, sql, &params);
 
     // Unsubscribe a non-existent ID — should not panic
-    registry.unsubscribe(sql_engine::reactive::registry::SubId(999));
+    registry.unsubscribe(sql_engine::reactive::SubscriptionId(999));
 
     // Original sub still works
     let affected = sql_engine::reactive::execute::on_insert(&registry, "users", &[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]);
@@ -1326,7 +1326,7 @@ fn assert_reactive_trace(actual: &str, expected: &str) {
 fn traced_on_zset(
     registry: &SubscriptionRegistry,
     zset: &sql_engine::storage::ZSet,
-) -> (fnv::FnvHashMap<sql_engine::reactive::registry::SubId, fnv::FnvHashSet<usize>>, String) {
+) -> (fnv::FnvHashMap<sql_engine::reactive::SubscriptionId, fnv::FnvHashSet<usize>>, String) {
     let mut ctx = sql_engine::reactive::execute::ReactiveContext::new();
     let affected = sql_engine::reactive::execute::on_zset_ctx(&mut ctx, registry, zset);
     (affected, ctx.pretty_print())

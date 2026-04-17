@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use database::Database;
-use database_reactive::SubId;
+use database_reactive::SubscriptionId;
 use serde::Serialize;
 use sql_engine::execute::Span;
 use sql_engine::storage::{CellValue, TypedColumn};
@@ -168,7 +168,7 @@ pub fn debug_subscriptions() -> Result<JsValue, JsError> {
             count,
             subscriptions: sub_tables.iter().map(|(id, tables)| SubInfo {
                 id: *id,
-                sql: rdb.subscription_sql(SubId(*id)).unwrap_or("").to_string(),
+                sql: rdb.subscription_sql(SubscriptionId(*id)).unwrap_or("").to_string(),
                 tables: tables.clone(),
                 notification_count: notification_counts.get(id).copied().unwrap_or(0),
             }).collect(),

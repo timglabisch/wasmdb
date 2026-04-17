@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use database_reactive::SubId;
+use database_reactive::SubscriptionHandle;
 use sync_demo_commands::UserCommand;
 use sql_engine::storage::CellValue;
 use sync::protocol::StreamId;
@@ -50,11 +50,18 @@ pub fn create_stream(batch_count: u32, batch_wait_ms: u32, retry_count: u32) -> 
 }
 
 /// Register a reactive query subscription on the optimistic database.
+///
+/// Returns `{ handle, subId }`:
+/// - `handle` is per-caller and is passed back to [`unsubscribe`]. Each
+///   `subscribe` call gets a fresh handle.
+/// - `subId` is the shared runtime id. Multiple callers subscribing with the
+///   same SQL see the same `subId` — JS stores can key by it to avoid
+///   duplicating per-query state.
 #[wasm_bindgen]
-pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
+pub fn subscribe(sql: &str, callback: js_sys::Function) -> Result<JsValue, JsError> {
     let cb = wrap_js_callback(callback);
-    let (sub_id, tables) = with_client(|client| {
-        let sub_id = client.subscribe(sql, cb)
+    let (handle, sub_id, tables) = with_client(|client| {
+        let (handle, sub_id) = client.subscribe(sql, cb)
             .unwrap_or_else(|e| panic!("subscribe: {e}"));
         let tables: Vec<String> = client
             .db()
@@ -64,7 +71,7 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
             .filter(|(_, subs)| subs.contains(&sub_id))
             .map(|(t, _)| t.clone())
             .collect();
-        (sub_id, tables)
+        (handle, sub_id, tables)
     });
 
     log_event(DebugEvent::SubscriptionCreated {
@@ -73,17 +80,34 @@ pub fn subscribe(sql: &str, callback: js_sys::Function) -> f64 {
         sql: sql.to_string(),
         tables,
     });
-    sub_id.0 as f64
+
+    let result = js_sys::Object::new();
+    js_sys::Reflect::set(&result, &"handle".into(), &JsValue::from_f64(handle.0 as f64))
+        .map_err(|e| JsError::new(&format!("{e:?}")))?;
+    js_sys::Reflect::set(&result, &"subId".into(), &JsValue::from_f64(sub_id.0 as f64))
+        .map_err(|e| JsError::new(&format!("{e:?}")))?;
+    Ok(result.into())
 }
 
-/// Remove a reactive query subscription.
+/// Remove a reactive query subscription by the per-caller handle.
+///
+/// Unknown or already-released handles are a no-op — a warning is logged to
+/// the JS console. Other callers sharing the same underlying subscription
+/// remain active; the subscription is only torn down when the last handle
+/// referencing it is released.
 #[wasm_bindgen]
-pub fn unsubscribe(sub_id: f64) {
-    let id = SubId(sub_id as u64);
-    with_client(|client| client.unsubscribe(id));
+pub fn unsubscribe(handle: f64) {
+    let h = SubscriptionHandle(handle as u64);
+    let released = with_client(|client| client.unsubscribe(h));
+    if !released {
+        web_sys::console::warn_1(
+            &format!("wasmdb: unsubscribe on unknown or already-released handle {}", h.0).into(),
+        );
+        return;
+    }
     log_event(DebugEvent::SubscriptionRemoved {
         timestamp_ms: now_ms(),
-        sub_id: sub_id as u64,
+        sub_id: h.0,
     });
 }
 

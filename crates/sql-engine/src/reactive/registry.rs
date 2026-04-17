@@ -4,6 +4,11 @@
 //! subscribe/unsubscribe manage the data structures, the execution logic
 //! (checking which subscriptions are affected by a mutation) lives in
 //! `reactive::execute`.
+//!
+//! The registry does not deduplicate: every `subscribe()` call allocates a
+//! fresh [`SubscriptionId`]. Dedup (merging equivalent queries onto one
+//! runtime id) is the responsibility of the layer above (`database-reactive`)
+//! — see [`crate::reactive::identity`].
 
 use fnv::{FnvHashMap, FnvHashSet};
 
@@ -12,11 +17,9 @@ use crate::execute::value_to_cell;
 use crate::execute::{ExecuteError, Params};
 use crate::planner::shared::plan::PlanSourceEntry;
 use crate::planner::reactive::{OptimizedReactiveCondition, ReactiveLookupStrategy};
+use crate::reactive::identity::SubscriptionId;
 use crate::storage::CellValue;
 
-/// Unique subscription identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SubId(pub u64);
 
 /// Bookkeeping entry on a `Subscription`: records which (table, cols) tuples
 /// this sub registered so `unsubscribe` can walk them. Not used as a HashMap
@@ -46,13 +49,13 @@ struct Subscription {
 /// Manages subscriptions and the reverse index.
 pub struct SubscriptionRegistry {
     next_id: u64,
-    subscriptions: FnvHashMap<SubId, Subscription>,
+    subscriptions: FnvHashMap<SubscriptionId, Subscription>,
     /// Nested composite reverse index: `table → cols → subscriptions`.
     /// The split lets the mutation hot path look up without building an owned
     /// composite key: the outer `get` uses `String: Borrow<str>`, the inner
     /// `get` uses `Vec<T>: Borrow<[T]>`, so no `String` / `Vec` allocation is
     /// needed just to hash.
-    reverse_index: FnvHashMap<String, FnvHashMap<Vec<(usize, CellValue)>, FnvHashSet<SubId>>>,
+    reverse_index: FnvHashMap<String, FnvHashMap<Vec<(usize, CellValue)>, FnvHashSet<SubscriptionId>>>,
     /// Per-table, which sorted column index sets are registered and how often.
     /// The inner map is `sorted column indices → refcount`. Refcount tracks the
     /// number of composite-key registrations using this column-set; when it
@@ -60,7 +63,7 @@ pub struct SubscriptionRegistry {
     /// on unsubscribe to check whether a column-set is still in use.
     column_sets: FnvHashMap<String, FnvHashMap<Vec<usize>, usize>>,
     /// Table-level subscriptions: any mutation on the table triggers the subscription.
-    table_subs: FnvHashMap<String, FnvHashSet<SubId>>,
+    table_subs: FnvHashMap<String, FnvHashSet<SubscriptionId>>,
 }
 
 impl SubscriptionRegistry {
@@ -78,7 +81,7 @@ impl SubscriptionRegistry {
         self.subscriptions.len()
     }
 
-    pub fn table_subscriptions(&self) -> &FnvHashMap<String, FnvHashSet<SubId>> {
+    pub fn table_subscriptions(&self) -> &FnvHashMap<String, FnvHashSet<SubscriptionId>> {
         &self.table_subs
     }
 
@@ -92,10 +95,10 @@ impl SubscriptionRegistry {
         conditions: &[OptimizedReactiveCondition],
         sources: &[PlanSourceEntry],
         params: &Params,
-    ) -> Result<SubId, ExecuteError> {
+    ) -> Result<SubscriptionId, ExecuteError> {
         let resolved = resolve_conditions(conditions, params)?;
 
-        let id = SubId(self.next_id);
+        let id = SubscriptionId(self.next_id);
         self.next_id += 1;
 
         let mut composite_keys = Vec::new();
@@ -166,7 +169,7 @@ impl SubscriptionRegistry {
     /// reverse-index removal uses `HashSet::remove`, column-set refcount is
     /// decremented via map access (no full index scan), and table-level cleanup
     /// iterates only the tables the sub actually watched.
-    pub fn unsubscribe(&mut self, id: SubId) {
+    pub fn unsubscribe(&mut self, id: SubscriptionId) {
         let Some(sub) = self.subscriptions.remove(&id) else { return };
 
         for ck in &sub.composite_keys {
@@ -208,7 +211,7 @@ impl SubscriptionRegistry {
 
     // ── Accessors for reactive::execute ────────────────────────────────
 
-    pub(crate) fn table_level_subs(&self, table: &str) -> Option<&FnvHashSet<SubId>> {
+    pub(crate) fn table_level_subs(&self, table: &str) -> Option<&FnvHashSet<SubscriptionId>> {
         self.table_subs.get(table)
     }
 
@@ -218,7 +221,7 @@ impl SubscriptionRegistry {
         &self,
         table: &str,
         cols: &[(usize, CellValue)],
-    ) -> Option<&FnvHashSet<SubId>> {
+    ) -> Option<&FnvHashSet<SubscriptionId>> {
         self.reverse_index.get(table).and_then(|inner| inner.get(cols))
     }
 
@@ -228,14 +231,14 @@ impl SubscriptionRegistry {
         self.column_sets.get(table).map(|m| m.keys())
     }
 
-    pub(crate) fn conditions(&self, id: SubId) -> &[OptimizedReactiveCondition] {
+    pub(crate) fn conditions(&self, id: SubscriptionId) -> &[OptimizedReactiveCondition] {
         self.subscriptions
             .get(&id)
             .map(|s| s.conditions.as_slice())
             .unwrap_or(&[])
     }
 
-    pub(crate) fn sources(&self, id: SubId) -> &[PlanSourceEntry] {
+    pub(crate) fn sources(&self, id: SubscriptionId) -> &[PlanSourceEntry] {
         self.subscriptions
             .get(&id)
             .map(|s| s.sources.as_slice())
@@ -330,9 +333,9 @@ mod tests {
         reg: &SubscriptionRegistry,
         table: &str,
         cols: &[(usize, CellValue)],
-    ) -> Option<Vec<SubId>> {
+    ) -> Option<Vec<SubscriptionId>> {
         reg.composite_lookup(table, cols).map(|s| {
-            let mut v: Vec<SubId> = s.iter().copied().collect();
+            let mut v: Vec<SubscriptionId> = s.iter().copied().collect();
             v.sort_by_key(|s| s.0);
             v
         })
@@ -344,7 +347,7 @@ mod tests {
     ///
     /// Invariants (numbered to match panic messages):
     /// 1. Every reverse_index entry has a non-empty HashSet.
-    /// 2. Every SubId in the reverse_index refers to a live subscription whose
+    /// 2. Every SubscriptionId in the reverse_index refers to a live subscription whose
     ///    composite_keys list contains that CompositeKey.
     /// 3. Every column_sets table entry has a non-empty inner map; every
     ///    (cols → refcount) pair has refcount > 0.
@@ -821,7 +824,7 @@ mod tests {
         };
 
         let mut reg = SubscriptionRegistry::new();
-        let mut alive: Vec<SubId> = Vec::new();
+        let mut alive: Vec<SubscriptionId> = Vec::new();
 
         for _ in 0..500 {
             let prob = rand() % 100;
@@ -878,11 +881,11 @@ mod tests {
         check_invariants(&reg);
 
         // Composite key (users, [(0, 7)]) is registered by a, b, d (IN-list), e.
-        let subs_at_7: FnvHashSet<SubId> = reg
+        let subs_at_7: FnvHashSet<SubscriptionId> = reg
             .composite_lookup("users", &[(0, CellValue::I64(7))])
             .unwrap()
             .clone();
-        let expected: FnvHashSet<SubId> = [a, b, d, e].into_iter().collect();
+        let expected: FnvHashSet<SubscriptionId> = [a, b, d, e].into_iter().collect();
         assert_eq!(subs_at_7, expected);
         // Shape [0] has refcount 6: a, b, c, e contribute 1 each, d contributes 3.
         let cols: Vec<Vec<usize>> = reg.column_sets_for_table("users").unwrap().cloned().collect();
@@ -909,8 +912,8 @@ mod tests {
         let a = reg.subscribe(&[cond_eq("users", 0, Value::Int(1))], &[], &empty_params()).unwrap();
         check_invariants(&reg);
 
-        // Unsubscribe a non-existent SubId — must not touch anything.
-        reg.unsubscribe(SubId(9999));
+        // Unsubscribe a non-existent SubscriptionId — must not touch anything.
+        reg.unsubscribe(SubscriptionId(9999));
         check_invariants(&reg);
 
         // Unsubscribing the same sub twice — second call is a no-op.

@@ -3,6 +3,22 @@
 //! The planning side lives in [`crate::planner::reactive`]; this module owns
 //! the runtime-only pieces (subscription registry + per-mutation execution).
 //!
+//! ## Identity model
+//!
+//! Three types sit next to each other — their relationship is documented in
+//! [`identity`]. In brief:
+//!
+//! - [`identity::SubscriptionKey`] — content identity, used for dedup.
+//! - [`identity::SubscriptionId`] — runtime identity, stored in the reverse
+//!   index and dirty-notification structures.
+//! - [`identity::SubscriptionHandle`] — per-caller token, lives at FFI
+//!   boundaries where safe double-unsubscribe matters.
+//!
+//! The registry in this module speaks `SubscriptionId` only. Dedup
+//! (`SubscriptionKey` → `SubscriptionId`) and caller safety (`SubscriptionHandle`)
+//! are handled one layer up by `database-reactive` and the wasm binding,
+//! respectively.
+//!
 //! ## Flow
 //!
 //! ```text
@@ -26,4 +42,7 @@
 //! ```
 
 pub mod execute;
+pub mod identity;
 pub mod registry;
+
+pub use identity::{HandleRegistry, SubscriptionHandle, SubscriptionId, SubscriptionKey};

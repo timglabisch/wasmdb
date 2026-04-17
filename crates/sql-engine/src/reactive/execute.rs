@@ -13,7 +13,8 @@ pub mod verify;
 
 use fnv::{FnvHashMap, FnvHashSet};
 
-use crate::reactive::registry::{SubId, SubscriptionRegistry};
+use crate::reactive::identity::SubscriptionId;
+use crate::reactive::registry::SubscriptionRegistry;
 use crate::storage::{CellValue, ZSet};
 
 // ── Reactive tracing ─────────────────────────────────────────────────────
@@ -24,12 +25,12 @@ pub enum ReactiveSpanOperation {
     OnZSet { entries: usize },
     CheckMutation { table: String, row: Vec<CellValue>, weight: i32 },
     /// Individual hash-index lookup: composite key values → which subs matched.
-    HashLookup { key_values: Vec<CellValue>, hit_subs: Vec<SubId> },
+    HashLookup { key_values: Vec<CellValue>, hit_subs: Vec<SubscriptionId> },
     /// Table-level scan: subs watching the entire table.
-    ScanLookup { hit_subs: Vec<SubId> },
+    ScanLookup { hit_subs: Vec<SubscriptionId> },
     Verify { candidates: usize, triggered: usize },
     /// Per-condition evaluation result — child of Verify.
-    ConditionEval { sub_id: SubId, idx: usize, filter: String, matched: bool },
+    ConditionEval { sub_id: SubscriptionId, idx: usize, filter: String, matched: bool },
 }
 
 /// A completed reactive span: operation + children.
@@ -205,11 +206,11 @@ fn format_row(row: &[CellValue]) -> String {
 /// Process a ZSet against the registry — the primary integration point.
 ///
 /// Iterates all entries in the ZSet and determines which subscriptions are
-/// affected. Returns a map of SubId → set of triggered condition indices.
+/// affected. Returns a map of SubscriptionId → set of triggered condition indices.
 pub fn on_zset(
     registry: &SubscriptionRegistry,
     zset: &ZSet,
-) -> FnvHashMap<SubId, FnvHashSet<usize>> {
+) -> FnvHashMap<SubscriptionId, FnvHashSet<usize>> {
     let mut ctx = ReactiveContext::new();
     on_zset_ctx(&mut ctx, registry, zset)
 }
@@ -219,10 +220,10 @@ pub fn on_zset_ctx(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
     zset: &ZSet,
-) -> FnvHashMap<SubId, FnvHashSet<usize>> {
+) -> FnvHashMap<SubscriptionId, FnvHashSet<usize>> {
     ctx.run_stats.clear();
     ctx.span_with(|ctx| {
-        let mut affected: FnvHashMap<SubId, FnvHashSet<usize>> = FnvHashMap::default();
+        let mut affected: FnvHashMap<SubscriptionId, FnvHashSet<usize>> = FnvHashMap::default();
         for entry in &zset.entries {
             let mutations = check_mutation_ctx(ctx, registry, &entry.table, &entry.row, entry.weight);
             for (sub_id, indices) in mutations {
@@ -239,7 +240,7 @@ fn check_mutation_ctx(
     table: &str,
     row: &[CellValue],
     weight: i32,
-) -> FnvHashMap<SubId, FnvHashSet<usize>> {
+) -> FnvHashMap<SubscriptionId, FnvHashSet<usize>> {
     ctx.span(ReactiveSpanOperation::CheckMutation { table: table.to_string(), row: row.to_vec(), weight }, |ctx| {
         let candidate_set = candidates::collect(ctx, registry, table, row);
         verify::check(ctx, registry, candidate_set, table, row)
@@ -247,13 +248,13 @@ fn check_mutation_ctx(
 }
 
 /// Check which subscriptions are affected by an INSERT.
-pub fn on_insert(registry: &SubscriptionRegistry, table: &str, new_row: &[CellValue]) -> Vec<SubId> {
+pub fn on_insert(registry: &SubscriptionRegistry, table: &str, new_row: &[CellValue]) -> Vec<SubscriptionId> {
     let mut ctx = ReactiveContext::new();
     check_mutation_ctx(&mut ctx, registry, table, new_row, 1).into_keys().collect()
 }
 
 /// Check which subscriptions are affected by a DELETE.
-pub fn on_delete(registry: &SubscriptionRegistry, table: &str, old_row: &[CellValue]) -> Vec<SubId> {
+pub fn on_delete(registry: &SubscriptionRegistry, table: &str, old_row: &[CellValue]) -> Vec<SubscriptionId> {
     let mut ctx = ReactiveContext::new();
     check_mutation_ctx(&mut ctx, registry, table, old_row, -1).into_keys().collect()
 }

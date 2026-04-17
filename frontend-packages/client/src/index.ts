@@ -15,8 +15,16 @@ export interface WasmSyncApi {
   flush_stream(streamId: number): Promise<void>;
   query(sql: string): any[][];
   query_confirmed(sql: string): any[][];
-  subscribe(sql: string, callback: Function): number;
-  unsubscribe(subId: number): void;
+  /**
+   * Register a reactive subscription. Returns `{handle, subId}`:
+   * - `handle` is unique per call and is what you pass back to `unsubscribe`.
+   * - `subId` is the shared runtime id — multiple calls with equivalent SQL
+   *   resolve to the same `subId`. Useful as a cache key for stores that want
+   *   to dedupe per-query state across components.
+   */
+  subscribe(sql: string, callback: Function): { handle: number; subId: number };
+  /** Release a caller handle. Unknown handles log a console warning. */
+  unsubscribe(handle: number): void;
   next_id(): number;
 }
 
@@ -118,10 +126,10 @@ function useReactiveQuery<T>(
       setData(mapRef.current ? rows.map(mapRef.current) : (rows as T[]));
     };
 
-    const subId = w.subscribe(sql, refresh);
+    const { handle } = w.subscribe(sql, refresh);
     refresh();
 
-    return () => { w.unsubscribe(subId); };
+    return () => { w.unsubscribe(handle); };
   }, [sql, dbKind]);
 
   return data;

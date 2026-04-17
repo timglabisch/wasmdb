@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use database::Database;
-use database_reactive::{Callback, ReactiveDatabase, SubId, SubscribeError};
+use database_reactive::{Callback, ReactiveDatabase, SubscribeError, SubscriptionHandle, SubscriptionId};
 use sync::command::{Command, CommandError};
 use sync::protocol::{CommandRequest, CommandResponse, StreamId};
 use sync::zset::ZSet;
@@ -68,12 +68,22 @@ impl<C: Command> SyncClient<C> {
 
     // ── Subscription pass-through ────────────────────────────────────
 
-    pub fn subscribe(&mut self, sql: &str, callback: Callback) -> Result<SubId, SyncClientError> {
+    /// Subscribe to `sql`. Returns a caller-specific [`SubscriptionHandle`]
+    /// (for `unsubscribe`) and the shared runtime [`SubscriptionId`] that
+    /// notify callbacks are fired with — multiple callers subscribing to the
+    /// same SQL share one id but get distinct handles.
+    pub fn subscribe(
+        &mut self,
+        sql: &str,
+        callback: Callback,
+    ) -> Result<(SubscriptionHandle, SubscriptionId), SyncClientError> {
         self.optimistic_db.subscribe(sql, callback).map_err(SyncClientError::Subscribe)
     }
 
-    pub fn unsubscribe(&mut self, sub_id: SubId) {
-        self.optimistic_db.unsubscribe(sub_id);
+    /// Release a caller's handle. Returns `false` for unknown/already-released
+    /// handles so callers can log a warning.
+    pub fn unsubscribe(&mut self, handle: SubscriptionHandle) -> bool {
+        self.optimistic_db.unsubscribe(handle)
     }
 
     pub fn stream_count(&self) -> usize {

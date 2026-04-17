@@ -7,7 +7,8 @@
 use fnv::FnvHashSet;
 
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
-use crate::reactive::registry::{SubId, SubscriptionRegistry};
+use crate::reactive::identity::SubscriptionId;
+use crate::reactive::registry::SubscriptionRegistry;
 use crate::storage::CellValue;
 
 /// Collect all candidate subscriptions for a mutation on `table` with `row`.
@@ -23,7 +24,7 @@ pub(crate) fn collect(
     registry: &SubscriptionRegistry,
     table: &str,
     row: &[CellValue],
-) -> FnvHashSet<SubId> {
+) -> FnvHashSet<SubscriptionId> {
     let mut candidates = FnvHashSet::default();
 
     // 1. Composite reverse-index: iterate registered column-sets for this table.
@@ -35,7 +36,7 @@ pub(crate) fn collect(
                 .collect();
             // Only look up if we could extract all columns.
             if cols.len() == col_indices.len() {
-                let hit_subs: Vec<SubId> = registry.composite_lookup(table, &cols)
+                let hit_subs: Vec<SubscriptionId> = registry.composite_lookup(table, &cols)
                     .map(|s| s.iter().copied().collect())
                     .unwrap_or_default();
                 candidates.extend(hit_subs.iter().copied());
@@ -48,7 +49,7 @@ pub(crate) fn collect(
 
     // 2. Table-level subscriptions — any mutation on this table is a candidate.
     if let Some(subs) = registry.table_level_subs(table) {
-        let hit_subs: Vec<SubId> = subs.iter().copied().collect();
+        let hit_subs: Vec<SubscriptionId> = subs.iter().copied().collect();
         candidates.extend(&hit_subs);
         ctx.span(ReactiveSpanOperation::ScanLookup { hit_subs }, |_| {});
     }

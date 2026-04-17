@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use database_reactive::{Callback, SubId};
+use database_reactive::{Callback, SubscriptionId};
 
 use crate::debug::{bump_notification_count, log_event, now_ms, DebugEvent};
 
@@ -10,7 +10,7 @@ use crate::debug::{bump_notification_count, log_event, now_ms, DebugEvent};
 /// dispatch to JS via `spawn_local` to avoid JS-side code re-entering WASM
 /// while the `CLIENT` `RefCell` is still held mutably.
 pub(crate) fn wrap_js_callback(js_callback: js_sys::Function) -> Callback {
-    Box::new(move |sub_id: SubId, triggered: &[usize]| {
+    Box::new(move |sub_id: SubscriptionId, triggered: &[usize]| {
         bump_notification_count(sub_id.0);
         log_event(DebugEvent::Notification {
             timestamp_ms: now_ms(),

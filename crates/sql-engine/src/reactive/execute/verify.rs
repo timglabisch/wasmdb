@@ -8,7 +8,8 @@ use fnv::{FnvHashMap, FnvHashSet};
 use crate::execute::filter_row::eval_predicate;
 use crate::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
 use crate::reactive::execute::{ReactiveContext, ReactiveSpanOperation};
-use crate::reactive::registry::{SubId, SubscriptionRegistry};
+use crate::reactive::identity::SubscriptionId;
+use crate::reactive::registry::SubscriptionRegistry;
 use crate::storage::CellValue;
 
 /// Verify which candidates are actually affected by evaluating verify_filter.
@@ -19,13 +20,13 @@ use crate::storage::CellValue;
 pub(crate) fn check(
     ctx: &mut ReactiveContext,
     registry: &SubscriptionRegistry,
-    candidates: FnvHashSet<SubId>,
+    candidates: FnvHashSet<SubscriptionId>,
     table: &str,
     row: &[CellValue],
-) -> FnvHashMap<SubId, FnvHashSet<usize>> {
+) -> FnvHashMap<SubscriptionId, FnvHashSet<usize>> {
     ctx.span_with(|ctx| {
         let num_candidates = candidates.len();
-        let mut result: FnvHashMap<SubId, FnvHashSet<usize>> = FnvHashMap::default();
+        let mut result: FnvHashMap<SubscriptionId, FnvHashSet<usize>> = FnvHashMap::default();
 
         for sub_id in candidates {
             let conditions = registry.conditions(sub_id);
