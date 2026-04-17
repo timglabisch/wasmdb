@@ -8,9 +8,9 @@
   z-index: 9999;
   font-family: ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
   font-size: 12px;
-  color: #ccc;
-  background: #0a0a0f;
-  border-top: 1px solid #2a2a3a;
+  color: #333;
+  background: #f5f5f7;
+  border-top: 1px solid #d4d4d8;
 }
 
 .debug-toolbar-tab {
@@ -20,20 +20,20 @@
   padding: 6px 16px;
   cursor: pointer;
   user-select: none;
-  color: #888;
+  color: #666;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.debug-toolbar-tab:hover { color: #bbb; }
+.debug-toolbar-tab:hover { color: #333; }
 
 .debug-toolbar-tab-badge {
-  color: #facc15;
+  color: #ca8a04;
   font-size: 11px;
 }
 
 .debug-toolbar-content {
-  border-top: 1px solid #1a1a2a;
+  border-top: 1px solid #e5e5e5;
   display: flex;
   flex-direction: column;
 }
@@ -52,7 +52,7 @@
 .debug-toolbar-tabs {
   display: flex;
   gap: 0;
-  border-bottom: 1px solid #1a1a2a;
+  border-bottom: 1px solid #e5e5e5;
   padding: 0 8px;
 }
 
@@ -60,16 +60,16 @@
   padding: 6px 12px;
   border: none;
   background: none;
-  color: #666;
+  color: #888;
   cursor: pointer;
   font-family: inherit;
   font-size: 11px;
   border-bottom: 2px solid transparent;
   transition: color 0.15s;
 }
-.debug-toolbar-tab-btn:hover { color: #aaa; }
+.debug-toolbar-tab-btn:hover { color: #333; }
 .debug-toolbar-tab-btn.active {
-  color: #eee;
+  color: #111;
   border-bottom-color: #2563eb;
 }
 
@@ -78,8 +78,8 @@
   margin-left: 4px;
   padding: 0 5px;
   border-radius: 8px;
-  background: #1e293b;
-  color: #94a3b8;
+  background: #e2e8f0;
+  color: #475569;
   font-size: 10px;
   line-height: 16px;
 }
@@ -87,6 +87,7 @@
 .debug-toolbar-panel {
   overflow-y: auto;
   padding: 8px 12px;
+  background: #fff;
 }
 
 /* Metrics row */
@@ -101,17 +102,17 @@
   gap: 2px;
 }
 .debug-metric-label {
-  color: #555;
+  color: #888;
   font-size: 10px;
   text-transform: uppercase;
 }
 .debug-metric-value {
-  color: #eee;
+  color: #111;
   font-size: 16px;
   font-weight: 600;
 }
 .debug-metric-value[data-highlight="warn"] {
-  color: #facc15;
+  color: #ca8a04;
 }
 
 /* Tables */
@@ -120,34 +121,34 @@
   border-collapse: collapse;
 }
 .debug-table th {
-  color: #555;
+  color: #888;
   font-weight: 500;
   font-size: 10px;
   text-transform: uppercase;
   text-align: left;
   padding: 4px 8px;
-  border-bottom: 1px solid #1a1a2a;
+  border-bottom: 1px solid #e5e5e5;
 }
 .debug-table td {
   padding: 4px 8px;
-  border-bottom: 1px solid #111118;
+  border-bottom: 1px solid #f0f0f0;
 }
-.debug-table tr:hover td { background: #111120; }
+.debug-table tr:hover td { background: #f5f7ff; }
 
 .debug-clickable { cursor: pointer; }
-.debug-clickable:hover { background: #111120; }
+.debug-clickable:hover { background: #f5f7ff; }
 
 .debug-detail-cell {
   padding: 4px 8px 4px 24px !important;
-  background: #0d0d15;
+  background: #f8f8fb;
 }
 .debug-detail-row {
-  color: #888;
+  color: #666;
   padding: 1px 0;
 }
 
 .debug-empty {
-  color: #444;
+  color: #aaa;
   padding: 12px;
   text-align: center;
   font-style: italic;
@@ -164,15 +165,15 @@
 }
 .debug-btn-small {
   padding: 2px 8px;
-  border: 1px solid #333;
+  border: 1px solid #d4d4d4;
   border-radius: 3px;
-  background: #1a1a2a;
-  color: #888;
+  background: #f3f4f6;
+  color: #555;
   cursor: pointer;
   font-family: inherit;
   font-size: 10px;
 }
-.debug-btn-small:hover { background: #222; color: #ccc; }
+.debug-btn-small:hover { background: #e5e7eb; color: #222; }
 
 .debug-event-list {
   flex: 1;
@@ -187,7 +188,7 @@
   white-space: nowrap;
 }
 .debug-event-time {
-  color: #444;
+  color: #aaa;
   min-width: 60px;
   text-align: right;
 }
@@ -196,7 +197,7 @@
   font-weight: 500;
 }
 .debug-event-summary {
-  color: #888;
+  color: #555;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -213,12 +214,12 @@
   overflow-y: auto;
 }
 .debug-db-label {
-  color: #555;
+  color: #888;
   font-size: 10px;
   text-transform: uppercase;
   margin-bottom: 6px;
   padding-bottom: 4px;
-  border-bottom: 1px solid #1a1a2a;
+  border-bottom: 1px solid #e5e5e5;
 }
 
 .debug-table-entry {
@@ -232,15 +233,15 @@
   border-radius: 3px;
 }
 .debug-table-name {
-  color: #eee;
+  color: #111;
   font-weight: 500;
 }
 .debug-table-count {
-  color: #60a5fa;
+  color: #2563eb;
   font-size: 11px;
 }
 .debug-table-meta {
-  color: #444;
+  color: #aaa;
   font-size: 10px;
 }
 .debug-table-detail {
@@ -255,13 +256,13 @@
 .debug-col-tag {
   padding: 1px 6px;
   border-radius: 3px;
-  background: #1a1a2a;
-  color: #aaa;
+  background: #e5e7eb;
+  color: #475569;
   font-size: 10px;
 }
 .debug-col-meta {
-  background: #1a1520;
-  color: #666;
+  background: #fef3c7;
+  color: #92400e;
 }
 .debug-rows-table td,
 .debug-rows-table th {
@@ -284,7 +285,7 @@
   gap: 4px;
 }
 .debug-chart-label {
-  color: #555;
+  color: #888;
   font-size: 10px;
   text-transform: uppercase;
 }
@@ -292,17 +293,17 @@
   display: flex;
   align-items: flex-end;
   gap: 1px;
-  background: #111118;
+  background: #f3f4f6;
   border-radius: 3px;
   padding: 2px;
 }
 .debug-spark-bar {
   min-height: 1px;
   border-radius: 1px;
-  opacity: 0.7;
+  opacity: 0.8;
 }
 .debug-spark-empty {
-  color: #444;
+  color: #aaa;
 }
 
 /* Query Panel */
@@ -316,24 +317,24 @@
   line-height: 18px;
   white-space: nowrap;
 }
-.debug-query-row:hover { background: #111120; }
-.debug-query-row.slow { color: #f87171; }
+.debug-query-row:hover { background: #f5f7ff; }
+.debug-query-row.slow { color: #dc2626; }
 .debug-query-sql {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 300px;
-  color: #aaa;
+  color: #555;
 }
 .debug-query-duration {
   min-width: 60px;
   text-align: right;
-  color: #eee;
+  color: #111;
   font-weight: 500;
 }
 .debug-span-tree {
   padding: 4px 0 8px 16px;
-  border-left: 1px solid #1a1a2a;
+  border-left: 1px solid #e5e5e5;
   margin-left: 8px;
   margin-bottom: 4px;
 }
@@ -343,7 +344,7 @@
   font-size: 11px;
 }
 .debug-selectivity {
-  color: #60a5fa;
+  color: #2563eb;
   font-size: 10px;
 }
 
@@ -357,12 +358,12 @@
   vertical-align: middle;
   margin-left: 4px;
 }
-.debug-frag-live { background: #4ade80; }
-.debug-frag-dead { background: #f87171; }
+.debug-frag-live { background: #16a34a; }
+.debug-frag-dead { background: #dc2626; }
 
 /* Memory tag */
 .debug-memory-tag {
-  color: #94a3b8;
+  color: #64748b;
   font-size: 10px;
   margin-left: auto;
 }
@@ -381,12 +382,12 @@
 .debug-bar-fill {
   height: 8px;
   border-radius: 2px;
-  background: #c084fc;
+  background: #9333ea;
   min-width: 2px;
 }
 .debug-bar-label {
   font-size: 10px;
-  color: #888;
+  color: #666;
   min-width: 60px;
 }
 
@@ -399,16 +400,16 @@
 }
 .debug-btn-scenario {
   padding: 4px 10px;
-  border: 1px solid #333;
+  border: 1px solid #d4d4d4;
   border-radius: 3px;
-  background: #1a1a2a;
-  color: #ccc;
+  background: #f3f4f6;
+  color: #333;
   cursor: pointer;
   font-family: inherit;
   font-size: 11px;
 }
-.debug-btn-scenario:hover { background: #252540; color: #eee; }
-.debug-btn-scenario:active { background: #2563eb; }
+.debug-btn-scenario:hover { background: #e5e7eb; color: #111; }
+.debug-btn-scenario:active { background: #2563eb; color: #fff; }
 
 .debug-scenario-log {
   display: flex;
@@ -423,9 +424,9 @@
   font-size: 11px;
   line-height: 18px;
 }
-.debug-scenario-name { color: #eee; min-width: 140px; }
+.debug-scenario-name { color: #111; min-width: 140px; }
 .debug-scenario-status { min-width: 60px; font-weight: 500; }
-.debug-scenario-msg { color: #888; }
-.debug-scenario-running .debug-scenario-status { color: #facc15; }
-.debug-scenario-done .debug-scenario-status { color: #4ade80; }
-.debug-scenario-error .debug-scenario-status { color: #f87171; }
+.debug-scenario-msg { color: #555; }
+.debug-scenario-running .debug-scenario-status { color: #ca8a04; }
+.debug-scenario-done .debug-scenario-status { color: #16a34a; }
+.debug-scenario-error .debug-scenario-status { color: #dc2626; }

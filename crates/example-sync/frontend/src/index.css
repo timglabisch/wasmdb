@@ -4,18 +4,18 @@ body {
   max-width: 1200px;
   margin: 40px auto;
   padding: 0 20px;
-  background: #111;
-  color: #eee;
+  background: #fafafa;
+  color: #222;
 }
 h1 { margin-bottom: 8px; font-size: 1.4em; }
-.subtitle { color: #888; margin-bottom: 24px; font-size: 0.9em; }
+.subtitle { color: #666; margin-bottom: 24px; font-size: 0.9em; }
 .form { display: flex; gap: 8px; margin-bottom: 16px; }
 input {
   padding: 8px 12px;
-  border: 1px solid #333;
+  border: 1px solid #ccc;
   border-radius: 4px;
-  background: #222;
-  color: #eee;
+  background: #fff;
+  color: #222;
   font-size: 14px;
 }
 input[type=text] { flex: 1; }
@@ -31,14 +31,14 @@ button {
 }
 button:hover { background: #1d4ed8; }
 table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #222; }
-th { color: #888; font-weight: 500; font-size: 0.85em; text-transform: uppercase; }
-tr:hover td { background: #1a1a2e; }
-.empty { color: #555; padding: 20px; text-align: center; }
-.sync-pending { color: #facc15; }
-.sync-confirmed { color: #4ade80; }
-.sync-error { color: #f87171; }
-.loading { color: #60a5fa; padding: 40px; text-align: center; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e5e5; }
+th { color: #666; font-weight: 500; font-size: 0.85em; text-transform: uppercase; }
+tr:hover td { background: #f0f4ff; }
+.empty { color: #999; padding: 20px; text-align: center; }
+.sync-pending { color: #ca8a04; }
+.sync-confirmed { color: #16a34a; }
+.sync-error { color: #dc2626; }
+.loading { color: #2563eb; padding: 40px; text-align: center; }
 
 /* Dashboard layout */
 .dashboard-grid {
@@ -49,15 +49,15 @@ tr:hover td { background: #1a1a2e; }
 }
 
 .panel {
-  border: 1px solid #222;
+  border: 1px solid #e5e5e5;
   border-radius: 6px;
   padding: 12px;
-  background: #0d0d15;
+  background: #fff;
 }
 .panel h2 {
   font-size: 1em;
   margin-bottom: 12px;
-  color: #aaa;
+  color: #555;
   text-transform: uppercase;
   font-weight: 500;
   letter-spacing: 0.5px;
@@ -69,13 +69,13 @@ tr:hover td { background: #1a1a2e; }
   gap: 24px;
   margin-bottom: 16px;
   padding: 12px 16px;
-  background: #0d0d15;
-  border: 1px solid #222;
+  background: #fff;
+  border: 1px solid #e5e5e5;
   border-radius: 6px;
 }
 .stat { display: flex; flex-direction: column; gap: 2px; }
-.stat-label { color: #666; font-size: 0.75em; text-transform: uppercase; }
-.stat-value { color: #eee; font-size: 1.4em; font-weight: 600; }
+.stat-label { color: #888; font-size: 0.75em; text-transform: uppercase; }
+.stat-value { color: #111; font-size: 1.4em; font-weight: 600; }
 
 /* Inline edit */
 .inline-edit {
@@ -91,42 +91,42 @@ tr:hover td { background: #1a1a2e; }
   padding: 2px 8px;
   font-size: 11px;
   border-radius: 3px;
-  border: 1px solid #333;
+  border: 1px solid #d4d4d4;
   cursor: pointer;
-  background: #1e293b;
-  color: #94a3b8;
+  background: #f3f4f6;
+  color: #475569;
 }
 .btn-sm:hover { opacity: 0.8; }
-.btn-edit { color: #60a5fa; }
-.btn-save { color: #4ade80; }
-.btn-delete { background: #1e1520; color: #f87171; }
+.btn-edit { color: #2563eb; }
+.btn-save { color: #16a34a; }
+.btn-delete { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
 
 /* Bulk actions */
 .bulk-actions {
   margin-bottom: 16px;
   padding: 12px 16px;
-  background: #0d0d15;
-  border: 1px solid #222;
+  background: #fff;
+  border: 1px solid #e5e5e5;
   border-radius: 6px;
 }
 .bulk-actions h3 {
   font-size: 0.85em;
-  color: #666;
+  color: #888;
   text-transform: uppercase;
   margin-bottom: 8px;
 }
 .bulk-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-.btn-warn { background: #92400e; }
-.btn-warn:hover { background: #78350f; }
-.btn-danger { background: #991b1b; }
-.btn-danger:hover { background: #7f1d1d; }
+.btn-warn { background: #d97706; }
+.btn-warn:hover { background: #b45309; }
+.btn-danger { background: #dc2626; }
+.btn-danger:hover { background: #b91c1c; }
 
 /* Select inputs */
 .select-input {
   padding: 8px 12px;
-  border: 1px solid #333;
+  border: 1px solid #ccc;
   border-radius: 4px;
-  background: #222;
-  color: #eee;
+  background: #fff;
+  color: #222;
   font-size: 14px;
 }

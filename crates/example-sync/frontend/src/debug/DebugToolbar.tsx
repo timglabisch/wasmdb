@@ -21,8 +21,24 @@ export function DebugToolbar() {
   const dragging = useRef(false);
   const startY = useRef(0);
   const startHeight = useRef(0);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const snapshot = useDebugSnapshot(open ? 500 : 2000);
   const history = useDebugHistory(snapshot);
+
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const applyPadding = () => {
+      document.body.style.paddingBottom = `${el.offsetHeight}px`;
+    };
+    applyPadding();
+    const ro = new ResizeObserver(applyPadding);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.body.style.paddingBottom = '';
+    };
+  }, [open, panelHeight]);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -67,7 +83,7 @@ export function DebugToolbar() {
   ];
 
   return (
-    <div className="debug-toolbar" data-open={open}>
+    <div className="debug-toolbar" data-open={open} ref={toolbarRef}>
       <div className="debug-toolbar-tab" onClick={() => setOpen(!open)}>
         Debug
         {snapshot.syncStatus.total_pending > 0 && (
