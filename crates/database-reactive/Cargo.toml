@@ -1,0 +1,15 @@
+[package]
+name = "database-reactive"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+database = { path = "../database" }
+sql-engine = { path = "../sql-engine" }
+sql-parser = { path = "../sql-parser" }
+fnv = "1"
+
+[features]
+default = []
+borsh = ["database/borsh", "sql-engine/borsh"]
+serde = ["database/serde", "sql-engine/serde"]

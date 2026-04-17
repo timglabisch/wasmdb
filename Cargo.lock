@@ -137,6 +137,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "database-reactive"
+version = "0.1.0"
+dependencies = [
+ "database",
+ "fnv",
+ "sql-engine",
+ "sql-parser",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -185,6 +195,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-reactive",
  "example-sync-commands",
  "js-sys",
  "serde",
@@ -677,6 +688,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-reactive",
  "sql-engine",
  "sync",
 ]

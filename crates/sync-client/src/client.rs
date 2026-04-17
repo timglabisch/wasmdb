@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 use database::Database;
+use database_reactive::{Callback, ReactiveDatabase, SubId, SubscribeError};
 use sync::command::{Command, CommandError};
 use sync::protocol::{CommandRequest, CommandResponse, StreamId};
 use sync::zset::ZSet;
 use crate::stream::{Stream, StreamAction};
 
 pub struct SyncClient<C: Command> {
-    /// Confirmed database state (only server-confirmed operations).
+    /// Confirmed database state (only server-confirmed operations). Passive —
+    /// no subscriptions fire from mutations applied here.
     confirmed_db: Database,
     /// Optimistic database state (confirmed + all pending commands).
-    /// Rebuilt from confirmed_db on reject.
-    optimistic_db: Database,
+    /// Owns the subscription registry + callbacks. Rebuilt from confirmed_db
+    /// on reject.
+    optimistic_db: ReactiveDatabase,
     streams: HashMap<StreamId, Stream<C>>,
     next_stream_id: u64,
 }
@@ -19,6 +22,7 @@ pub struct SyncClient<C: Command> {
 pub enum SyncClientError {
     UnknownStream(StreamId),
     CommandError(CommandError),
+    Subscribe(SubscribeError),
 }
 
 impl std::fmt::Display for SyncClientError {
@@ -26,6 +30,7 @@ impl std::fmt::Display for SyncClientError {
         match self {
             SyncClientError::UnknownStream(id) => write!(f, "unknown stream: {:?}", id),
             SyncClientError::CommandError(e) => write!(f, "command error: {e}"),
+            SyncClientError::Subscribe(e) => write!(f, "subscribe error: {e}"),
         }
     }
 }
@@ -34,7 +39,7 @@ impl std::error::Error for SyncClientError {}
 
 impl<C: Command> SyncClient<C> {
     pub fn new(db: Database) -> Self {
-        let optimistic_db = db.clone();
+        let optimistic_db = ReactiveDatabase::from_database(db.clone());
         Self {
             confirmed_db: db,
             optimistic_db,
@@ -43,24 +48,32 @@ impl<C: Command> SyncClient<C> {
         }
     }
 
-    /// The optimistic database — this is what the UI should display.
-    pub fn db(&self) -> &Database {
+    /// Optimistic database (what the UI should display) — full reactive API.
+    pub fn db(&self) -> &ReactiveDatabase {
         &self.optimistic_db
     }
 
-    /// Mutable access to the optimistic database (e.g. for queries that need &mut).
-    pub fn db_mut(&mut self) -> &mut Database {
+    pub fn db_mut(&mut self) -> &mut ReactiveDatabase {
         &mut self.optimistic_db
     }
 
-    /// The confirmed database — only contains server-confirmed state.
+    /// Confirmed database (server-acknowledged state only).
     pub fn confirmed_db(&self) -> &Database {
         &self.confirmed_db
     }
 
-    /// Mutable access to confirmed DB (for SELECT queries that need &mut).
     pub fn confirmed_db_mut(&mut self) -> &mut Database {
         &mut self.confirmed_db
+    }
+
+    // ── Subscription pass-through ────────────────────────────────────
+
+    pub fn subscribe(&mut self, sql: &str, callback: Callback) -> Result<SubId, SyncClientError> {
+        self.optimistic_db.subscribe(sql, callback).map_err(SyncClientError::Subscribe)
+    }
+
+    pub fn unsubscribe(&mut self, sub_id: SubId) {
+        self.optimistic_db.unsubscribe(sub_id);
     }
 
     pub fn stream_count(&self) -> usize {
@@ -84,7 +97,7 @@ impl<C: Command> SyncClient<C> {
     }
 
     /// Execute a command optimistically on a specific stream.
-    /// Returns the request to send to the server.
+    /// Fires subscription callbacks for the resulting ZSet.
     pub fn execute(
         &mut self,
         stream_id: StreamId,
@@ -92,13 +105,13 @@ impl<C: Command> SyncClient<C> {
     ) -> Result<CommandRequest<C>, SyncClientError> {
         let stream = self.streams.get_mut(&stream_id)
             .ok_or(SyncClientError::UnknownStream(stream_id))?;
-        let request = stream.push_command(command, &mut self.optimistic_db)
+        let request = stream.push_command(command, self.optimistic_db.db_mut_raw())
             .map_err(SyncClientError::CommandError)?;
+        self.optimistic_db.notify(&request.client_zset);
         Ok(request)
     }
 
     /// Execute a blocking command: creates a temporary stream with a single command.
-    /// The caller must send the request, wait for the response, and call receive_response.
     pub fn execute_blocking(
         &mut self,
         command: C,
@@ -120,16 +133,12 @@ impl<C: Command> SyncClient<C> {
 
         match &action {
             StreamAction::AllConfirmed { confirmed_zsets } => {
-                // Apply confirmed ZSets to the confirmed database
                 for zset in confirmed_zsets {
                     self.apply_zset_to_confirmed(zset);
                 }
-                // Rebuild optimistic from confirmed + all remaining pending
                 self.rebuild_optimistic();
             }
             StreamAction::Rejected { .. } => {
-                // Optimistic state is invalid for this stream.
-                // Rebuild from confirmed + pending commands of other streams.
                 self.rebuild_optimistic();
             }
             StreamAction::Idle | StreamAction::WaitingForResponse => {}
@@ -138,18 +147,20 @@ impl<C: Command> SyncClient<C> {
         Ok(action)
     }
 
-    /// Apply a ZSet to the confirmed database.
     fn apply_zset_to_confirmed(&mut self, zset: &ZSet) {
         let _ = self.confirmed_db.apply_zset(zset);
     }
 
     /// Rebuild optimistic_db from confirmed_db + re-executing all pending commands.
+    /// Subscriptions are preserved (only the inner table data is replaced).
+    /// Fires a brute-force `notify_all()` afterwards.
     fn rebuild_optimistic(&mut self) {
-        self.optimistic_db = self.confirmed_db.clone();
+        self.optimistic_db.replace_data(&self.confirmed_db);
         for stream in self.streams.values() {
             for cmd in stream.pending_commands() {
-                let _ = cmd.execute(&mut self.optimistic_db);
+                let _ = cmd.execute(self.optimistic_db.db_mut_raw());
             }
         }
+        self.optimistic_db.notify_all();
     }
 }

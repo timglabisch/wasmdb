@@ -4,6 +4,7 @@ members = [
     "crates/sql-parser",
     "crates/sql-engine",
     "crates/database",
+    "crates/database-reactive",
     "crates/sync",
     "crates/sync-client",
     "crates/sync-server",
