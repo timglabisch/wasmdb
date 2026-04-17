@@ -107,7 +107,10 @@ export default function UsersPanel() {
         <input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder="Age" />
         <button type="submit">Add</button>
       </form>
-      <table>
+      <table className="table-users">
+        <colgroup>
+          <col /><col /><col /><col /><col /><col />
+        </colgroup>
         <thead>
           <tr><th>ID</th><th>Name</th><th>Age</th><th>Orders</th><th>Sync</th><th></th></tr>
         </thead>

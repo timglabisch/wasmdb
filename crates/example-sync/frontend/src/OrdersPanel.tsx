@@ -96,7 +96,10 @@ export default function OrdersPanel() {
         </select>
         <button type="submit">Add Order</button>
       </form>
-      <table>
+      <table className="table-orders">
+        <colgroup>
+          <col /><col /><col /><col /><col /><col />
+        </colgroup>
         <thead>
           <tr><th>ID</th><th>User</th><th>Amount</th><th>Status</th><th>Sync</th><th></th></tr>
         </thead>

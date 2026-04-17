@@ -18,11 +18,11 @@ export default function App() {
         optimistic client (WASM) + authoritative server (Axum) — borsh protocol
       </p>
       <StatsBar />
+      <BulkActions />
       <div className="dashboard-grid">
         <UsersPanel />
         <OrdersPanel />
       </div>
-      <BulkActions />
       {import.meta.env.DEV && <DebugToolbar />}
     </div>
   );

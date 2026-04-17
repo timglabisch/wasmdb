@@ -87,17 +87,20 @@ function QueryRow({ trace }: { trace: QueryTrace }) {
         <span className="debug-query-duration">{formatDuration(trace.duration_us)}</span>
         <span style={{ color: '#888', minWidth: 32 }}>{trace.row_count}r</span>
         <span style={{ color: '#555', minWidth: 24 }}>{trace.source === 'confirmed' ? 'C' : 'O'}</span>
-        <span className="debug-query-sql">{trace.sql}</span>
+        <span className="debug-query-sql" title={trace.sql}>{trace.sql}</span>
       </div>
       {expanded && (
-        <div className="debug-span-tree">
-          {trace.spans.map((span, i) => (
-            <SpanNode key={i} span={span} depth={0} />
-          ))}
-          {trace.spans.length === 0 && (
-            <div className="debug-empty">No execution spans (non-SELECT)</div>
-          )}
-        </div>
+        <>
+          <div className="debug-query-sql-full">{trace.sql}</div>
+          <div className="debug-span-tree">
+            {trace.spans.map((span, i) => (
+              <SpanNode key={i} span={span} depth={0} />
+            ))}
+            {trace.spans.length === 0 && (
+              <div className="debug-empty">No execution spans (non-SELECT)</div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

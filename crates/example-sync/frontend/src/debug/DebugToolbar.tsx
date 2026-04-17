@@ -11,8 +11,8 @@ import './DebugToolbar.css';
 type PanelId = 'sync' | 'subs' | 'events' | 'db' | 'query' | 'perf';
 
 const MIN_HEIGHT = 100;
-const MAX_HEIGHT_RATIO = 0.8;
-const DEFAULT_HEIGHT = 280;
+const MAX_HEIGHT_RATIO = 0.85;
+const DEFAULT_HEIGHT = 420;
 
 export function DebugToolbar() {
   const [open, setOpen] = useState(false);

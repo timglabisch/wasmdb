@@ -24,7 +24,7 @@ function formatTime(ms: number, refMs: number): string {
 function eventSummary(event: DebugEvent): string {
   switch (event.kind) {
     case 'Execute':
-      return `stream#${event.stream_id} ${event.command_json.slice(0, 60)} (${event.zset_entry_count} entries)`;
+      return `stream#${event.stream_id} ${event.command_json} (${event.zset_entry_count} entries)`;
     case 'FetchStart':
       return `stream#${event.stream_id} ${event.request_bytes}B`;
     case 'FetchEnd':
@@ -36,16 +36,16 @@ function eventSummary(event: DebugEvent): string {
     case 'Notification':
       return `#${event.sub_id} triggered=${event.triggered_count}`;
     case 'SubscriptionCreated':
-      return `#${event.sub_id} ${event.sql.slice(0, 50)} [${event.tables.join(',')}]`;
+      return `#${event.sub_id} ${event.sql} [${event.tables.join(',')}]`;
     case 'SubscriptionRemoved':
       return `#${event.sub_id}`;
     case 'QueryExecuted': {
       const dur = event.duration_us < 1000 ? `${event.duration_us}us` : `${(event.duration_us / 1000).toFixed(1)}ms`;
-      return `[${event.source}] ${event.row_count}r ${dur} ${event.sql.slice(0, 50)}`;
+      return `[${event.source}] ${event.row_count}r ${dur} ${event.sql}`;
     }
     case 'SlowQuery': {
       const dur = event.duration_us < 1000 ? `${event.duration_us}us` : `${(event.duration_us / 1000).toFixed(1)}ms`;
-      return `SLOW ${dur} ${event.sql.slice(0, 60)}`;
+      return `SLOW ${dur} ${event.sql}`;
     }
   }
 }
@@ -76,7 +76,7 @@ export function EventLogPanel({ events }: { events: DebugEvent[] }) {
               <span className="debug-event-kind" style={{ color: EVENT_COLORS[event.kind] }}>
                 {event.kind}
               </span>
-              <span className="debug-event-summary">{eventSummary(event)}</span>
+              <span className="debug-event-summary" title={eventSummary(event)}>{eventSummary(event)}</span>
             </div>
           ))
         )}
