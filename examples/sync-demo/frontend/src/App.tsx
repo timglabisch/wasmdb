@@ -3,7 +3,7 @@ import StatsBar from './StatsBar.tsx';
 import UsersPanel from './UsersPanel.tsx';
 import OrdersPanel from './OrdersPanel.tsx';
 import BulkActions from './BulkActions.tsx';
-import { DebugToolbar } from './debug';
+import { DebugToolbar } from '@wasmdb/debug-toolbar';
 import './index.css';
 
 export default function App() {

@@ -163,54 +163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "example-sync"
-version = "0.1.0"
-dependencies = [
- "axum",
- "borsh",
- "database",
- "example-sync-commands",
- "sql-engine",
- "sync",
- "sync-server",
- "tokio",
- "tower-http",
-]
-
-[[package]]
-name = "example-sync-commands"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "database",
- "serde",
- "sql-engine",
- "sync",
- "ts-rs",
-]
-
-[[package]]
-name = "example-sync-wasm"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "database",
- "database-reactive",
- "example-sync-commands",
- "js-sys",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "sql-engine",
- "sql-parser",
- "sync",
- "sync-client",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -694,6 +646,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-demo-commands"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "serde",
+ "sql-engine",
+ "sync",
+ "ts-rs",
+]
+
+[[package]]
+name = "sync-demo-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "borsh",
+ "database",
+ "sql-engine",
+ "sync",
+ "sync-demo-commands",
+ "sync-server",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
+name = "sync-demo-wasm"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-reactive",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "sql-engine",
+ "sql-parser",
+ "sync",
+ "sync-client",
+ "sync-demo-commands",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasmdb-debug",
+ "web-sys",
+]
+
+[[package]]
 name = "sync-server"
 version = "0.1.0"
 dependencies = [
@@ -994,6 +995,15 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "wasmdb-debug"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sql-engine",
+ "sync",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
-use example_sync_commands::UserCommand;
+use sync_demo_commands::UserCommand;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandRequest, Verdict};
 
 use crate::debug::{log_event, now_ms, DebugEvent};

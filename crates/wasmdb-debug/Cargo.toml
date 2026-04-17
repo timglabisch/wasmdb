@@ -1,0 +1,9 @@
+[package]
+name = "wasmdb-debug"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync = { path = "../sync", features = ["serde"] }
+sql-engine = { path = "../sql-engine", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }

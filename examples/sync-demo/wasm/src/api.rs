@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use database_reactive::SubId;
-use example_sync_commands::UserCommand;
+use sync_demo_commands::UserCommand;
 use sql_engine::storage::CellValue;
 use sync::protocol::StreamId;
 use sync_client::client::SyncClient;

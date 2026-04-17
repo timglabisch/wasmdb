@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use database::Database;
-use example_sync_commands::UserCommand;
+use sync_demo_commands::UserCommand;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sync_client::client::SyncClient;
 

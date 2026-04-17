@@ -8,8 +8,9 @@ members = [
     "crates/sync",
     "crates/sync-client",
     "crates/sync-server",
-    "crates/example-sync",
-    "crates/example-sync-commands",
-    "crates/example-sync-wasm",
+    "crates/wasmdb-debug",
+    "examples/sync-demo/server",
+    "examples/sync-demo/commands",
+    "examples/sync-demo/wasm",
 ]
 resolver = "2"

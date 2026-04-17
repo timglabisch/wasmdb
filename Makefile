@@ -1,4 +1,4 @@
-.PHONY: all wasm frontend clean dev sync
+.PHONY: all wasm frontend clean dev sync sync-types sync-install sync-dev install
 
 all: wasm frontend
 
@@ -15,20 +15,22 @@ clean:
 	cargo clean
 	rm -rf frontend/node_modules/wasm-runtime
 	rm -rf frontend/dist
+	rm -rf examples/sync-demo/frontend/dist
+	rm -rf examples/sync-demo/frontend/wasm-pkg
 
 sync-types:
-	cargo test -p example-sync-commands -- --test-threads=1
-	mkdir -p crates/example-sync/frontend/src/generated
-	cp crates/example-sync-commands/bindings/UserCommand.ts crates/example-sync/frontend/src/generated/
+	cargo test -p sync-demo-commands -- --test-threads=1
+	mkdir -p examples/sync-demo/frontend/src/generated
+	cp examples/sync-demo/commands/bindings/UserCommand.ts examples/sync-demo/frontend/src/generated/
 
 sync: sync-types
-	wasm-pack build crates/example-sync-wasm --target web --out-dir ../../crates/example-sync/frontend/wasm-pkg && cd crates/example-sync/frontend && npm run build && cd ../../.. && cargo run -p example-sync --bin server
+	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run build && cd ../../.. && cargo run -p sync-demo-server --bin server
 
 sync-install:
-	cd crates/example-sync/frontend && npm install
+	npm install
 
 sync-dev: sync-types
-	wasm-pack build crates/example-sync-wasm --target web --out-dir ../../crates/example-sync/frontend/wasm-pkg && cd crates/example-sync/frontend && npm run dev
+	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run dev
 
 install:
-	cd frontend && npm install
+	npm install

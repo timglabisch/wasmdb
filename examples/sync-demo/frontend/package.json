@@ -1,5 +1,5 @@
 {
-  "name": "wasmdb-sync-example",
+  "name": "sync-demo-frontend",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,6 +7,7 @@
     "build": "tsc && vite build"
   },
   "dependencies": {
+    "@wasmdb/debug-toolbar": "*",
     "react": "^19",
     "react-dom": "^19"
   },

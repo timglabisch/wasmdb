@@ -1,0 +1,10 @@
+{
+  "name": "wasmdb-root",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "frontend-packages/*",
+    "examples/sync-demo/frontend"
+  ]
+}

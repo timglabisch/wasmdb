@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import initWasm, {
+import initWasm, * as wasm from '../wasm-pkg/sync_demo_wasm';
+import {
   init,
   execute as wasmExecute,
   execute_on_stream as wasmExecuteOnStream,
@@ -10,7 +11,8 @@ import initWasm, {
   subscribe as wasmSubscribe,
   unsubscribe as wasmUnsubscribe,
   next_id,
-} from '../wasm-pkg/example_sync_wasm';
+} from '../wasm-pkg/sync_demo_wasm';
+import { setDebugWasm } from '@wasmdb/debug-toolbar';
 import type { UserCommand } from './generated/UserCommand';
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ export function useWasm(): boolean {
 
     initWasm().then(() => {
       init();
+      setDebugWasm(wasm as any);
       wasmReady = true;
       readyListeners.forEach(fn => fn());
       readyListeners.clear();

@@ -10,7 +10,7 @@ use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSc
 use sync::command::Command;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server::state::ServerState;
-use example_sync_commands::UserCommand;
+use sync_demo_commands::UserCommand;
 use tower_http::services::ServeDir;
 
 fn make_db() -> Database {
@@ -90,7 +90,7 @@ async fn main() {
     let state = Arc::new(ServerState::<UserCommand>::new(make_db()));
 
     // Resolve frontend dist dir relative to the crate root
-    let static_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("frontend/dist");
+    let static_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist");
 
     let app = axum::Router::new()
         .route("/command", post(handle_command))
