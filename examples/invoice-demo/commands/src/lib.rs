@@ -68,7 +68,7 @@ pub enum InvoiceCommand {
         default_bic: String,
         notes: String,
     },
-    DeleteCustomer { id: i64 },
+    DeleteCustomer(#[ts(inline)] customer::delete::DeleteCustomer),
     /// Cascades through payments, recurring_positions, recurring_invoices,
     /// sepa_mandates, positions, invoices, contacts, customer — all atomic.
     DeleteCustomerCascade { id: i64 },
@@ -282,7 +282,7 @@ impl Command for InvoiceCommand {
                 shipping_street, shipping_zip, shipping_city, shipping_country,
                 default_iban, default_bic, notes,
             ),
-            DeleteCustomer { id } => customer::delete::run(db, *id),
+            DeleteCustomer(c) => c.execute(db),
             DeleteCustomerCascade { id } => customer::delete_cascade::run(db, *id),
 
             // ── Contact ─────────────────────────────────────────────────────
