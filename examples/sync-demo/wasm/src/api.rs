@@ -123,7 +123,6 @@ pub fn unsubscribe(handle: f64) {
 #[wasm_bindgen]
 pub fn on_dirty(wake: js_sys::Function) {
     with_client(|client| {
-        let wake = wake.clone();
         client.db_mut().on_dirty(Box::new(move || {
             if let Err(e) = wake.call0(&JsValue::NULL) {
                 web_sys::console::error_2(&"wasmdb: on_dirty wake call failed".into(), &e);

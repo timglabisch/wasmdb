@@ -221,13 +221,12 @@ impl ReactiveDatabase {
         let Some(sub_id) = self.handles.remove(&handle) else {
             return false;
         };
-        let Some(sub) = self.subscriptions.get_mut(&sub_id) else {
-            return true;
-        };
-        sub.refcount = sub.refcount.saturating_sub(1);
+        let sub = self.subscriptions.get_mut(&sub_id)
+            .expect("invariant: a live handle must point at a live subscription");
+        sub.refcount -= 1;
         if sub.refcount == 0 {
             let sub = self.subscriptions.remove(&sub_id).expect("just checked");
-            self.by_key.remove(&SubscriptionKey::from_sql(&sub.sql));
+            self.by_key.remove(&sub.key);
             self.free_slot(sub_id);
             self.registry.unsubscribe(sub_id);
         }
@@ -236,7 +235,7 @@ impl ReactiveDatabase {
 
     // ── Slot allocator (dirty-set u32 slots) ─────────────────────────
 
-    fn alloc_slot(&mut self, sub_id: SubscriptionId) -> u32 {
+    fn alloc_slot(&mut self, sub_id: SubscriptionId) {
         let slot = if let Some(s) = self.free_slots.pop() {
             self.slot_to_sub[s as usize] = Some(sub_id);
             s
@@ -246,7 +245,6 @@ impl ReactiveDatabase {
             s
         };
         self.sub_to_slot.insert(sub_id, slot);
-        slot
     }
 
     fn free_slot(&mut self, sub_id: SubscriptionId) {
@@ -255,6 +253,18 @@ impl ReactiveDatabase {
                 *cell = None;
             }
             self.free_slots.push(slot);
+        }
+    }
+
+    /// Fire the wake callback if the dirty-set just transitioned from empty
+    /// to non-empty. Edge-triggered: consecutive marks in the same drain
+    /// cycle don't re-fire. `was_empty` must be snapshotted *before* the
+    /// marks that may have caused the transition.
+    fn fire_wake_if_transitioned(&self, was_empty: bool) {
+        if was_empty && !self.dirty.is_empty() {
+            if let Some(w) = &self.wake {
+                w();
+            }
         }
     }
 
@@ -279,12 +289,7 @@ impl ReactiveDatabase {
                 self.dirty.mark_dirty(DirtySlotId(slot));
             }
         }
-
-        if was_empty && !self.dirty.is_empty() {
-            if let Some(w) = &self.wake {
-                w();
-            }
-        }
+        self.fire_wake_if_transitioned(was_empty);
     }
 
     /// Mark every live subscription dirty (with no triggered-condition
@@ -296,17 +301,10 @@ impl ReactiveDatabase {
             return;
         }
         let was_empty = self.dirty.is_empty();
-        let sub_ids: Vec<SubscriptionId> = self.subscriptions.keys().copied().collect();
-        for sub_id in sub_ids {
-            if let Some(&slot) = self.sub_to_slot.get(&sub_id) {
-                self.dirty.mark_dirty(DirtySlotId(slot));
-            }
+        for &slot in self.sub_to_slot.values() {
+            self.dirty.mark_dirty(DirtySlotId(slot));
         }
-        if was_empty && !self.dirty.is_empty() {
-            if let Some(w) = &self.wake {
-                w();
-            }
-        }
+        self.fire_wake_if_transitioned(was_empty);
     }
 
     // ── Pull API ─────────────────────────────────────────────────────
