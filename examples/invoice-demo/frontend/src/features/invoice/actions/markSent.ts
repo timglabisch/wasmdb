@@ -1,0 +1,17 @@
+import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
+import { updateInvoiceHeader } from '../../../commands/invoice/updateInvoiceHeader.ts';
+import { logActivity } from '../../../commands/activity/logActivity.ts';
+import { peekInvoice } from '../reads/peekInvoice.ts';
+
+/** Set an invoice's status to `sent` + log the status change, atomic. */
+export async function markSent(invoiceId: number): Promise<void> {
+  const inv = peekInvoice(invoiceId);
+  if (!inv) return;
+  const stream = createStream(8);
+  executeOnStream(stream, updateInvoiceHeader({ ...inv, id: invoiceId, status: 'sent' }));
+  executeOnStream(stream, logActivity({
+    entityType: 'invoice', entityId: invoiceId,
+    action: 'status_sent', detail: `"${inv.number}" als gesendet markiert`,
+  }));
+  await flushStream(stream);
+}

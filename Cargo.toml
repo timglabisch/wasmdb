@@ -12,5 +12,8 @@ members = [
     "examples/sync-demo/server",
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",
+    "examples/invoice-demo/server",
+    "examples/invoice-demo/commands",
+    "examples/invoice-demo/wasm",
 ]
 resolver = "2"

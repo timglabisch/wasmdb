@@ -1,0 +1,33 @@
+use database::Database;
+use sql_engine::schema::{IndexSchema, IndexType, TableSchema};
+use super::cols::{i64_col, str_col};
+
+pub fn create(db: &mut Database) {
+    db.create_table(TableSchema {
+        name: "customers".into(),
+        columns: vec![
+            i64_col("id"),
+            str_col("name"), str_col("email"), str_col("created_at"),
+            str_col("company_type"), str_col("tax_id"), str_col("vat_id"),
+            i64_col("payment_terms_days"), i64_col("default_discount_pct"),
+            str_col("billing_street"), str_col("billing_zip"), str_col("billing_city"), str_col("billing_country"),
+            str_col("shipping_street"), str_col("shipping_zip"), str_col("shipping_city"), str_col("shipping_country"),
+            str_col("default_iban"), str_col("default_bic"), str_col("notes"),
+        ],
+        primary_key: vec![0],
+        indexes: vec![],
+    }).unwrap();
+
+    db.create_table(TableSchema {
+        name: "contacts".into(),
+        columns: vec![
+            i64_col("id"), i64_col("customer_id"),
+            str_col("name"), str_col("email"), str_col("phone"), str_col("role"),
+            i64_col("is_primary"),
+        ],
+        primary_key: vec![0],
+        indexes: vec![
+            IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
+        ],
+    }).unwrap();
+}

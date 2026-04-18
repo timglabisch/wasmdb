@@ -1,0 +1,15 @@
+[package]
+name = "invoice-demo-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync = { path = "../../../crates/sync" }
+sync-server = { path = "../../../crates/sync-server" }
+invoice-demo-commands = { path = "../commands" }
+database = { path = "../../../crates/database", features = ["borsh"] }
+sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
+borsh = { version = "1", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }

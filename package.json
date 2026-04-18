@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": [
     "frontend-packages/*",
-    "examples/sync-demo/frontend"
+    "examples/sync-demo/frontend",
+    "examples/invoice-demo/frontend"
   ]
 }

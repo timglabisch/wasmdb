@@ -415,6 +415,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "invoice-demo-commands"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "serde",
+ "sql-engine",
+ "sync",
+ "ts-rs",
+]
+
+[[package]]
+name = "invoice-demo-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "borsh",
+ "database",
+ "invoice-demo-commands",
+ "sql-engine",
+ "sync",
+ "sync-server",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
+name = "invoice-demo-wasm"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-reactive",
+ "invoice-demo-commands",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "sql-engine",
+ "sql-parser",
+ "sync",
+ "sync-client",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasmdb-debug",
+ "web-sys",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
