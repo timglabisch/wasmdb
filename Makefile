@@ -30,9 +30,11 @@ sync-dev: sync-types
 invoice-types:
 	cargo test -p invoice-demo-commands -- --test-threads=1
 	mkdir -p examples/invoice-demo/frontend/src/generated
-	sed 's/: bigint/: number/g; s/Array<bigint>/Array<number>/g' \
-	  examples/invoice-demo/commands/bindings/InvoiceCommand.ts \
-	  > examples/invoice-demo/frontend/src/generated/InvoiceCommand.ts
+	rm -f examples/invoice-demo/frontend/src/generated/*.ts
+	for f in examples/invoice-demo/commands/bindings/*.ts; do \
+	  sed 's/: bigint/: number/g; s/Array<bigint>/Array<number>/g' "$$f" \
+	    > "examples/invoice-demo/frontend/src/generated/$$(basename $$f)"; \
+	done
 
 invoice: invoice-types kill-invoice
 	wasm-pack build examples/invoice-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server

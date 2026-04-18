@@ -1,32 +1,58 @@
+use borsh::{BorshSerialize, BorshDeserialize};
+use serde::{Serialize, Deserialize};
+use ts_rs::TS;
 use database::Database;
 use sync::command::CommandError;
 use sync::zset::ZSet;
 use crate::helpers::execute_sql;
 use super::params::invoice_params;
 
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    db: &mut Database,
-    id: i64, customer_id: i64,
-    number: &str, status: &str, date_issued: &str, date_due: &str, notes: &str,
-    doc_type: &str, parent_id: i64, service_date: &str,
-    cash_allowance_pct: i64, cash_allowance_days: i64, discount_pct: i64,
-    payment_method: &str, sepa_mandate_id: i64, currency: &str, language: &str,
-    project_ref: &str, external_id: &str,
-    billing_street: &str, billing_zip: &str, billing_city: &str, billing_country: &str,
-    shipping_street: &str, shipping_zip: &str, shipping_city: &str, shipping_country: &str,
-) -> Result<ZSet, CommandError> {
-    let params = invoice_params(
-        id, Some(customer_id), number, status, date_issued, date_due, notes,
-        doc_type, parent_id, service_date,
-        cash_allowance_pct, cash_allowance_days, discount_pct,
-        payment_method, sepa_mandate_id, currency, language,
-        project_ref, external_id,
-        billing_street, billing_zip, billing_city, billing_country,
-        shipping_street, shipping_zip, shipping_city, shipping_country,
-    );
-    execute_sql(db,
-        "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-         VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
-        params)
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+pub struct CreateInvoice {
+    pub id: i64,
+    pub customer_id: i64,
+    pub number: String,
+    pub status: String,
+    pub date_issued: String,
+    pub date_due: String,
+    pub notes: String,
+    pub doc_type: String,
+    pub parent_id: i64,
+    pub service_date: String,
+    pub cash_allowance_pct: i64,
+    pub cash_allowance_days: i64,
+    pub discount_pct: i64,
+    pub payment_method: String,
+    pub sepa_mandate_id: i64,
+    pub currency: String,
+    pub language: String,
+    pub project_ref: String,
+    pub external_id: String,
+    pub billing_street: String,
+    pub billing_zip: String,
+    pub billing_city: String,
+    pub billing_country: String,
+    pub shipping_street: String,
+    pub shipping_zip: String,
+    pub shipping_city: String,
+    pub shipping_country: String,
+}
+
+impl CreateInvoice {
+    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+        let params = invoice_params(
+            self.id, Some(self.customer_id),
+            &self.number, &self.status, &self.date_issued, &self.date_due, &self.notes,
+            &self.doc_type, self.parent_id, &self.service_date,
+            self.cash_allowance_pct, self.cash_allowance_days, self.discount_pct,
+            &self.payment_method, self.sepa_mandate_id, &self.currency, &self.language,
+            &self.project_ref, &self.external_id,
+            &self.billing_street, &self.billing_zip, &self.billing_city, &self.billing_country,
+            &self.shipping_street, &self.shipping_zip, &self.shipping_city, &self.shipping_country,
+        );
+        execute_sql(db,
+            "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+             VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
+            params)
+    }
 }

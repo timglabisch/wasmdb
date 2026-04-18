@@ -1,10 +1,20 @@
+use borsh::{BorshSerialize, BorshDeserialize};
+use serde::{Serialize, Deserialize};
+use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::CommandError;
 use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int};
 
-pub fn run(db: &mut Database, id: i64) -> Result<ZSet, CommandError> {
-    let params = Params::from([p_int("id", id)]);
-    execute_sql(db, "DELETE FROM sepa_mandates WHERE sepa_mandates.id = :id", params)
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+pub struct DeleteSepaMandate {
+    pub id: i64,
+}
+
+impl DeleteSepaMandate {
+    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+        let params = Params::from([p_int("id", self.id)]);
+        execute_sql(db, "DELETE FROM sepa_mandates WHERE sepa_mandates.id = :id", params)
+    }
 }

@@ -1,28 +1,41 @@
+use borsh::{BorshSerialize, BorshDeserialize};
+use serde::{Serialize, Deserialize};
+use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::CommandError;
 use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int, p_str};
 
-pub fn run(
-    db: &mut Database,
-    id: i64, customer_id: i64, template_name: &str,
-    interval_unit: &str, interval_value: i64, next_run: &str,
-    status_template: &str, notes_template: &str,
-) -> Result<ZSet, CommandError> {
-    let params = Params::from([
-        p_int("id", id), p_int("customer_id", customer_id),
-        p_str("template_name", template_name),
-        p_str("interval_unit", interval_unit),
-        p_int("interval_value", interval_value),
-        p_str("next_run", next_run),
-        p_str("last_run", ""),
-        p_int("enabled", 1),
-        p_str("status_template", status_template),
-        p_str("notes_template", notes_template),
-    ]);
-    execute_sql(db,
-        "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
-         VALUES (:id, :customer_id, :template_name, :interval_unit, :interval_value, :next_run, :last_run, :enabled, :status_template, :notes_template)",
-        params)
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+pub struct CreateRecurring {
+    pub id: i64,
+    pub customer_id: i64,
+    pub template_name: String,
+    pub interval_unit: String,
+    pub interval_value: i64,
+    pub next_run: String,
+    pub status_template: String,
+    pub notes_template: String,
+}
+
+impl CreateRecurring {
+    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+        let params = Params::from([
+            p_int("id", self.id),
+            p_int("customer_id", self.customer_id),
+            p_str("template_name", &self.template_name),
+            p_str("interval_unit", &self.interval_unit),
+            p_int("interval_value", self.interval_value),
+            p_str("next_run", &self.next_run),
+            p_str("last_run", ""),
+            p_int("enabled", 1),
+            p_str("status_template", &self.status_template),
+            p_str("notes_template", &self.notes_template),
+        ]);
+        execute_sql(db,
+            "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
+             VALUES (:id, :customer_id, :template_name, :interval_unit, :interval_value, :next_run, :last_run, :enabled, :status_template, :notes_template)",
+            params)
+    }
 }
