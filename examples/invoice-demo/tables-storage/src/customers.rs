@@ -1,40 +1,25 @@
-//! Storage-side `Customers`. Has its own marker struct (orphan rule)
-//! with the same `TableId` as the client-side marker, so Registry
-//! lookups match. Params/Row types are reused from the client crate.
+//! Storage-side fetchers for customer rows. Each `#[storage(Marker)]`
+//! generates a `pub fn register_{fn}` to wire into `Registry<AppCtx>`.
 
-use invoice_demo_tables_client::customers::{CustomersParams, CustomersRow};
-use tables::{Table, TableId};
-use tables_storage::{BoxFut, StorageError, StorageTable};
+use invoice_demo_tables_client::{ByOwner, Customer};
+use tables_storage::storage;
 
 use crate::AppCtx;
 
-pub struct Customers;
+#[storage]
+async fn by_owner(
+    params: ByOwner,
+    ctx: &AppCtx,
+) -> Result<Vec<Customer>, sqlx::Error> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, name FROM invoice_demo.customers WHERE owner_id = ?",
+    )
+    .bind(params.owner_id)
+    .fetch_all(&ctx.pool)
+    .await?;
 
-impl Table for Customers {
-    const ID: TableId = "invoice_demo::Customers";
-    type Params = CustomersParams;
-    type Row = CustomersRow;
-}
-
-impl StorageTable for Customers {
-    type Ext = AppCtx;
-    fn fetch(
-        params: CustomersParams,
-        ctx: &AppCtx,
-    ) -> BoxFut<'_, Result<Vec<CustomersRow>, StorageError>> {
-        Box::pin(async move {
-            let rows: Vec<(i64, String)> = sqlx::query_as(
-                "SELECT id, name FROM invoice_demo.customers WHERE owner_id = ?",
-            )
-            .bind(params.owner_id)
-            .fetch_all(&ctx.pool)
-            .await
-            .map_err(|e| StorageError::Storage(e.to_string()))?;
-
-            Ok(rows
-                .into_iter()
-                .map(|(id, name)| CustomersRow { id, name })
-                .collect())
-        })
-    }
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| Customer { id, name })
+        .collect())
 }

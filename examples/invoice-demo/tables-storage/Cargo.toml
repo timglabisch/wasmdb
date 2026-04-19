@@ -3,8 +3,8 @@ name = "invoice-demo-tables-storage"
 version = "0.1.0"
 edition = "2021"
 
-# Storage-side facade for invoice-demo tables. Native only. Owns the
-# `StorageTable` impls, `AppCtx`, and `register_all`.
+# Storage-side facade for invoice-demo tables. Native only. Owns
+# `AppCtx` and `register_all` (closure-based registrations).
 
 [dependencies]
 invoice-demo-tables-client = { path = "../tables-client" }

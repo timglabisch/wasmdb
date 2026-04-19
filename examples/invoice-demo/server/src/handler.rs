@@ -51,7 +51,7 @@ pub async fn handle_command(
 }
 
 /// POST /table-fetch — borsh `FetchRequest`, replies with borsh
-/// `Vec<T::Row>` (the row type is implicit in `table_id`).
+/// `Vec<F::Row>` (the row type is implicit in `fetcher_id`).
 pub async fn handle_table_fetch(
     State(state): State<Arc<AppState>>,
     body: Bytes,

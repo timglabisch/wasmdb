@@ -9,6 +9,7 @@ members = [
     "crates/sync-client",
     "crates/tables",
     "crates/tables-client",
+    "crates/tables-macros",
     "crates/tables-storage",
     "crates/sync-server",
     "crates/wasmdb-debug",

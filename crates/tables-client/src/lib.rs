@@ -1,13 +1,13 @@
-//! Client-side access to parameterized tables.
+//! Client-side access to fetchers.
 //!
-//! Two primitives:
-//! - `fetch::<T>(url, params)` — snapshot, one-shot HTTP POST, Borsh in
-//!   and out.
-//! - `Live<T>` / `subscribe` — placeholder for live subscriptions (not
-//!   wired yet).
+//! `fetch::<F>(url, params)` — snapshot, one-shot HTTP POST, Borsh in
+//! and out. `params` is just `F` itself (the user's `#[fetcher]` struct
+//! is its own params).
 
-use std::marker::PhantomData;
-use tables::Table;
+use tables::Fetcher;
+
+/// `#[row]` / `#[fetcher]` macros — see `tables-macros`.
+pub use tables_macros::{fetcher, row};
 
 #[derive(Debug)]
 pub enum FetchError {
@@ -29,12 +29,12 @@ impl std::fmt::Display for FetchError {
 impl std::error::Error for FetchError {}
 
 /// Snapshot fetch. POSTs a Borsh-encoded `FetchRequest` to `url`,
-/// deserializes the response body as `Vec<T::Row>`. Runs against the
+/// deserializes the response body as `Vec<F::Row>`. Runs against the
 /// browser's `fetch` API — wasm target only at runtime.
-pub async fn fetch<T: Table>(url: &str, params: T::Params) -> Result<Vec<T::Row>, FetchError> {
+pub async fn fetch<F: Fetcher>(url: &str, params: F::Params) -> Result<Vec<F::Row>, FetchError> {
     let params_bytes = borsh::to_vec(&params)
         .map_err(|e| FetchError::Encode(e.to_string()))?;
-    let request = tables::FetchRequest { table_id: T::ID.to_string(), params: params_bytes };
+    let request = tables::FetchRequest { fetcher_id: F::ID.to_string(), params: params_bytes };
     let body = borsh::to_vec(&request)
         .map_err(|e| FetchError::Encode(e.to_string()))?;
     let response = wasm_http::post_bytes(url, &body).await?;
@@ -76,26 +76,40 @@ mod wasm_http {
     }
 }
 
-/// RAII subscription handle. Placeholder for live subscriptions.
-pub struct Live<T: Table> {
-    _marker: PhantomData<T>,
+// Re-exports for the `wasm_fetch!` macro. Users only need `tables-client`
+// in their Cargo.toml; the macro reaches everything through here.
+#[doc(hidden)]
+pub mod __rt {
+    pub use ::serde_wasm_bindgen;
+    pub use ::tables;
+    pub use ::wasm_bindgen;
 }
 
-impl<T: Table> Live<T> {
-    pub fn rows(&self) -> Vec<T::Row> {
-        Vec::new()
-    }
+/// Generates a `#[wasm_bindgen]` async fn that fetches via `F` and
+/// returns rows as a JS value. JS calls it with a plain object for
+/// params; the macro takes care of serde/borsh conversion.
+///
+/// ```ignore
+/// tables_client::wasm_fetch!(fetch_customers_by_owner, ByOwner, "/table-fetch");
+/// ```
+#[macro_export]
+macro_rules! wasm_fetch {
+    ($fn_name:ident, $fetcher:ty, $url:expr) => {
+        #[$crate::__rt::wasm_bindgen::prelude::wasm_bindgen]
+        pub async fn $fn_name(
+            params: $crate::__rt::wasm_bindgen::JsValue,
+        ) -> ::core::result::Result<
+            $crate::__rt::wasm_bindgen::JsValue,
+            $crate::__rt::wasm_bindgen::JsError,
+        > {
+            let params: <$fetcher as $crate::__rt::tables::Fetcher>::Params =
+                $crate::__rt::serde_wasm_bindgen::from_value(params)
+                    .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))?;
+            let rows = $crate::fetch::<$fetcher>($url, params)
+                .await
+                .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))?;
+            $crate::__rt::serde_wasm_bindgen::to_value(&rows)
+                .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))
+        }
+    };
 }
-
-impl<T: Table> Drop for Live<T> {
-    fn drop(&mut self) {}
-}
-
-pub trait TableExt: Table {
-    fn subscribe(params: Self::Params) -> Live<Self> where Self: Sized {
-        let _ = params;
-        Live { _marker: PhantomData }
-    }
-}
-
-impl<T: Table> TableExt for T {}

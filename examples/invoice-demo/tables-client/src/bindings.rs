@@ -1,14 +1,6 @@
-//! JS entry points — one per table kind. wasm-bindgen can't cross the
-//! JS boundary with generics, so each table needs a concrete wrapper.
+//! JS entry points — generated via `tables_client::wasm_fetch!`.
+//! One macro invocation per fetcher; serde/borsh framing is handled inside.
 
-use crate::customers::{Customers, CustomersParams};
-use wasm_bindgen::prelude::*;
+use crate::{ByOwner, TABLE_FETCH_URL};
 
-#[wasm_bindgen]
-pub async fn fetch_customers(owner_id: f64) -> Result<JsValue, JsError> {
-    let params = CustomersParams { owner_id: owner_id as i64 };
-    let rows = crate::fetch::<Customers>(params)
-        .await
-        .map_err(|e| JsError::new(&e.to_string()))?;
-    serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
-}
+tables_client::wasm_fetch!(fetch_customers_by_owner, ByOwner, TABLE_FETCH_URL);

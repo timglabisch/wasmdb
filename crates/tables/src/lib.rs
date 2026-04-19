@@ -1,46 +1,49 @@
-//! Parameterized tables — the primary data-access primitive.
+//! Parameterized data access — rows and fetchers.
 //!
-//! A *table* is a named, parameterized dataset. Each parameter combination
-//! `(table_id, args)` is a distinct logical table instance. Base entities
-//! (`Customers`, `Invoices`, ...) and reports (`CustomerRevenue`) are both
-//! expressed as tables — only the backing differs.
+//! Two concepts, kept separate:
 //!
-//! Clients cannot write arbitrary SQL against tables — the parameters are
-//! the only knobs, fixed by the Rust definition.
+//! - A **Row** is a data shape. `Customer { id, name }`. Reusable; carries
+//!   no RPC identity of its own.
+//! - A **Fetcher** is a named query that returns rows of a given type.
+//!   Its params are the input to that query, and its `ID` is the wire-level
+//!   identity for RPC dispatch. Many fetchers can share a row type
+//!   (`customers::by_owner`, `customers::by_id`, …).
+//!
+//! Clients cannot write arbitrary SQL — the params of a fetcher are the
+//! only knobs, fixed by the Rust definition.
 //!
 //! # Layering
 //!
-//! - `tables` (this crate, shared wasm + native): `Table` trait.
-//! - `tables-client` (wasm-capable): client Registry, `subscribe()`, `Live`.
-//! - `tables-server` (native only): `ServerTable` trait, sqlx bridge.
+//! - `tables` (this crate, shared wasm + native): `Row`, `Params`, `Fetcher`.
+//! - `tables-client` (wasm-capable): generic `fetch::<F>()`, `wasm_fetch!`.
+//! - `tables-storage` (native only): `Registry`, `#[storage]`.
 
 use borsh::{BorshSerialize, BorshDeserialize};
 
-/// Stable identifier for a table kind (one per `#[table]` definition).
-pub type TableId = &'static str;
+/// Stable identifier for a fetcher (one per `#[fetcher]` definition).
+pub type FetcherId = &'static str;
 
-/// A parameter tuple for one table instance.
-pub trait Params: BorshSerialize + BorshDeserialize + Clone + 'static {}
-
-/// A row in the result set of a table. The PK projection lets the
+/// A row in the result set of a fetcher. The PK projection lets the
 /// reactive system match deletes/updates without consulting the server.
 pub trait Row: BorshSerialize + BorshDeserialize + Clone + 'static {
     type Pk: Clone + Eq + std::hash::Hash;
     fn pk(&self) -> Self::Pk;
 }
 
-/// Ties a table definition together. Shared between client and server.
-pub trait Table: 'static {
-    const ID: TableId;
-    type Params: Params;
+/// Ties a named query together. Shared between client and server.
+/// Params are Borsh-encoded on the wire; no separate `Params` trait —
+/// the bounds live here directly.
+pub trait Fetcher: 'static {
+    const ID: FetcherId;
+    type Params: BorshSerialize + BorshDeserialize + Clone + 'static;
     type Row: Row;
 }
 
 /// Wire-level fetch request. Body of `POST /table-fetch` (or whatever
-/// path the app picks). `params` is Borsh-encoded `T::Params` for the
-/// named table.
+/// path the app picks). `params` is Borsh-encoded `F::Params` for the
+/// named fetcher.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct FetchRequest {
-    pub table_id: String,
+    pub fetcher_id: String,
     pub params: Vec<u8>,
 }

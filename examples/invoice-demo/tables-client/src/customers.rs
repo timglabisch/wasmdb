@@ -1,29 +1,15 @@
-//! `Customers` — client-side marker + wire types.
+//! Customer row + fetchers. The `#[row]` macro derives Borsh/Serde and
+//! `impl Row`; `#[fetcher]` binds a params struct to that row + a wire id.
 
-use borsh::{BorshSerialize, BorshDeserialize};
-use serde::{Serialize, Deserialize};
-use tables::{Params, Row, Table, TableId};
+use tables_client::{fetcher, row};
 
-pub struct Customers;
-
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-pub struct CustomersParams {
-    pub owner_id: i64,
-}
-impl Params for CustomersParams {}
-
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-pub struct CustomersRow {
-    pub id: i64,
+#[row]
+pub struct Customer {
+    #[pk] pub id: i64,
     pub name: String,
 }
-impl Row for CustomersRow {
-    type Pk = i64;
-    fn pk(&self) -> i64 { self.id }
-}
 
-impl Table for Customers {
-    const ID: TableId = "invoice_demo::Customers";
-    type Params = CustomersParams;
-    type Row = CustomersRow;
+#[fetcher(row = Customer)]
+pub struct ByOwner {
+    pub owner_id: i64,
 }

@@ -1,12 +1,9 @@
 //! Storage-side facade for invoice-demo tables. Native only.
 //!
-//! Owns `AppCtx`, the storage-side `StorageTable` impls, and
-//! `register_all`. Param/row types are reused from
-//! `invoice-demo-tables-client`; this crate's markers are local (so the
-//! orphan rule permits the `StorageTable` impls).
+//! Owns `AppCtx` and `register_all`. Each fetcher lives in its own
+//! module; `#[storage]` generates a `register_{fn}` we call from here.
 
-pub mod customers;
-pub use customers::Customers;
+mod customers;
 
 use tables_storage::Registry;
 
@@ -18,5 +15,5 @@ pub struct AppCtx {
 
 /// Call once at server boot with a ready `Registry`.
 pub fn register_all(registry: &mut Registry<AppCtx>) {
-    registry.register::<Customers>();
+    customers::register_by_owner(registry);
 }

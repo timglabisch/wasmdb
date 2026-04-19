@@ -12,7 +12,8 @@ tables = { path = "../../../crates/tables" }
 tables-client = { path = "../../../crates/tables-client" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+# Required by the `tables_client::wasm_fetch!` macro — its `#[wasm_bindgen]`
+# attribute expansion emits direct `::wasm_bindgen` / `::wasm_bindgen_futures`
+# paths (these can't be routed through tables_client's re-exports).
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-serde-wasm-bindgen = "0.6"
