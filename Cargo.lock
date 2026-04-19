@@ -1927,7 +1927,6 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "js-sys",
- "serde-wasm-bindgen",
  "tables",
  "wasm-bindgen",
  "wasm-bindgen-futures",

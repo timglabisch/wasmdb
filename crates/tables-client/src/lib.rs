@@ -1,8 +1,8 @@
 //! Client-side access to fetchers.
 //!
 //! `fetch::<F>(url, params)` — snapshot, one-shot HTTP POST, Borsh in
-//! and out. `params` is just `F` itself (the user's `#[fetcher]` struct
-//! is its own params).
+//! and out. Typed wrappers and `#[wasm_bindgen]` bindings are emitted
+//! by `tables-codegen` from the storage crate's `#[query]` fns.
 
 use tables::Fetcher;
 
@@ -81,40 +81,3 @@ mod wasm_http {
     }
 }
 
-// Re-exports for the `wasm_fetch!` macro. Users only need `tables-client`
-// in their Cargo.toml; the macro reaches everything through here.
-#[doc(hidden)]
-pub mod __rt {
-    pub use ::serde_wasm_bindgen;
-    pub use ::tables;
-    pub use ::wasm_bindgen;
-}
-
-/// Generates a `#[wasm_bindgen]` async fn that fetches via `F` and
-/// returns rows as a JS value. JS calls it with a plain object for
-/// params; the macro takes care of serde/borsh conversion.
-///
-/// ```ignore
-/// tables_client::wasm_fetch!(fetch_customers_by_owner, ByOwner, "/table-fetch");
-/// ```
-#[macro_export]
-macro_rules! wasm_fetch {
-    ($fn_name:ident, $fetcher:ty, $url:expr) => {
-        #[$crate::__rt::wasm_bindgen::prelude::wasm_bindgen]
-        pub async fn $fn_name(
-            params: $crate::__rt::wasm_bindgen::JsValue,
-        ) -> ::core::result::Result<
-            $crate::__rt::wasm_bindgen::JsValue,
-            $crate::__rt::wasm_bindgen::JsError,
-        > {
-            let params: <$fetcher as $crate::__rt::tables::Fetcher>::Params =
-                $crate::__rt::serde_wasm_bindgen::from_value(params)
-                    .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))?;
-            let rows = $crate::fetch::<$fetcher>($url, params)
-                .await
-                .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))?;
-            $crate::__rt::serde_wasm_bindgen::to_value(&rows)
-                .map_err(|e| $crate::__rt::wasm_bindgen::JsError::new(&e.to_string()))
-        }
-    };
-}

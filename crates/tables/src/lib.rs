@@ -14,13 +14,17 @@
 //!
 //! # Layering
 //!
-//! - `tables` (this crate, shared wasm + native): `Row`, `Params`, `Fetcher`.
-//! - `tables-client` (wasm-capable): generic `fetch::<F>()`, `wasm_fetch!`.
-//! - `tables-storage` (native only): `Registry`, `#[storage]`.
+//! - `tables` (this crate, shared wasm + native): `Row`, `Fetcher`,
+//!   `FetchRequest`.
+//! - `tables-client` (wasm-capable): generic `fetch::<F>()`.
+//! - `tables-storage` (native only): `Registry`, `#[row]`, `#[query]`.
+//! - `tables-codegen` (build-time, used in `build.rs`): parses the
+//!   storage crate's source and emits Row/Fetcher/wasm-binding glue
+//!   for both sides.
 
 use borsh::{BorshSerialize, BorshDeserialize};
 
-/// Stable identifier for a fetcher (one per `#[fetcher]` definition).
+/// Stable identifier for a fetcher (one per `#[query]` definition).
 pub type FetcherId = &'static str;
 
 /// A row in the result set of a fetcher. The PK projection lets the
