@@ -62,14 +62,22 @@ mod wasm_http {
         let resp: web_sys::Response = resp_value.dyn_into()
             .map_err(|e| FetchError::Http(format!("{e:?}")))?;
 
-        if !resp.ok() {
-            return Err(FetchError::Http(format!("HTTP {}", resp.status())));
-        }
-
+        let status = resp.status();
         let buf = JsFuture::from(
             resp.array_buffer().map_err(|e| FetchError::Http(format!("{e:?}")))?
         ).await.map_err(|e| FetchError::Http(format!("{e:?}")))?;
-        Ok(Uint8Array::new(&buf).to_vec())
+        let bytes = Uint8Array::new(&buf).to_vec();
+
+        if !resp.ok() {
+            let body = String::from_utf8_lossy(&bytes);
+            let body = body.trim();
+            return Err(FetchError::Http(if body.is_empty() {
+                format!("HTTP {status}")
+            } else {
+                format!("HTTP {status}: {body}")
+            }));
+        }
+        Ok(bytes)
     }
 }
 
