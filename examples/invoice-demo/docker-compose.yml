@@ -1,0 +1,48 @@
+# TiDB standalone stack for invoice-demo.
+#
+# Bring up:  docker compose -f examples/invoice-demo/docker-compose.yml up -d
+# Connect:   mysql -h 127.0.0.1 -P 4000 -u root
+# Init:      mysql -h 127.0.0.1 -P 4000 -u root < examples/invoice-demo/sql/001_init.sql
+# Tear down: docker compose -f examples/invoice-demo/docker-compose.yml down -v
+
+services:
+  pd:
+    image: pingcap/pd:v7.5.0
+    container_name: invoice-demo-pd
+    ports:
+      - "2379:2379"
+    command:
+      - --name=pd
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+    restart: on-failure
+
+  tikv:
+    image: pingcap/tikv:v7.5.0
+    container_name: invoice-demo-tikv
+    depends_on:
+      - pd
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --data-dir=/data/tikv
+      - --pd=pd:2379
+    restart: on-failure
+
+  tidb:
+    image: pingcap/tidb:v7.5.0
+    container_name: invoice-demo-tidb
+    depends_on:
+      - tikv
+    ports:
+      - "4000:4000"   # MySQL wire protocol
+      - "10080:10080" # status/metrics
+    command:
+      - --store=tikv
+      - --path=pd:2379
+      - --advertise-address=tidb
+    restart: on-failure

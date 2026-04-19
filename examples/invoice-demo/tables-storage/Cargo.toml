@@ -9,6 +9,6 @@ edition = "2021"
 # background jobs.
 
 [dependencies]
-invoice-demo-tables = { path = "../tables" }
+invoice-demo-tables = { path = "../tables", features = ["storage"] }
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }

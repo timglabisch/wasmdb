@@ -12,7 +12,6 @@
 
 use borsh::{BorshSerialize, BorshDeserialize};
 use tables::{Params, Row, Table, TableId};
-use tables_storage::{StorageTable, StorageCtx, StorageError};
 
 pub struct Customers;
 
@@ -38,12 +37,35 @@ impl Table for Customers {
     type Row = CustomersRow;
 }
 
-impl StorageTable for Customers {
-    fn fetch(params: &CustomersParams, ctx: &StorageCtx) -> Result<Vec<CustomersRow>, StorageError> {
-        if params.owner_id != ctx.session_owner_id {
-            return Err(StorageError::Unauthorized);
+#[cfg(feature = "storage")]
+mod storage_impl {
+    use super::*;
+    use tables_storage::{BoxFut, StorageCtx, StorageError, StorageTable};
+    use crate::AppCtx;
+
+    impl StorageTable for Customers {
+        type Ext = AppCtx;
+        fn fetch(
+            params: CustomersParams,
+            ctx: &StorageCtx<AppCtx>,
+        ) -> BoxFut<'_, Result<Vec<CustomersRow>, StorageError>> {
+            Box::pin(async move {
+                if params.owner_id != ctx.session_owner_id {
+                    return Err(StorageError::Unauthorized);
+                }
+                let rows: Vec<(i64, String)> = sqlx::query_as(
+                    "SELECT id, name FROM invoice_demo.customers WHERE owner_id = ?",
+                )
+                .bind(params.owner_id)
+                .fetch_all(&ctx.ext.pool)
+                .await
+                .map_err(|e| StorageError::Storage(e.to_string()))?;
+
+                Ok(rows
+                    .into_iter()
+                    .map(|(id, name)| CustomersRow { id, name })
+                    .collect())
+            })
         }
-        // real impl: sqlx against TiDB with WHERE owner_id = ?
-        Ok(Vec::new())
     }
 }
