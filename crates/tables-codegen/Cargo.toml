@@ -1,0 +1,15 @@
+[package]
+name = "tables-codegen"
+version = "0.1.0"
+edition = "2021"
+
+# Codegen for the `tables` RPC ecosystem. Reads a server-crate source
+# tree with `#[row]`-annotated rows and `#[query]`-annotated async fns;
+# emits client call-wrappers or server register-glue into `$OUT_DIR`.
+# Intended use: `[build-dependencies]` in the server and client crates.
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+prettyplease = "0.2"

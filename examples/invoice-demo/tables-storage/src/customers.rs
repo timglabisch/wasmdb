@@ -1,20 +1,28 @@
-//! Storage-side fetchers for customer rows. Each `#[storage(Marker)]`
-//! generates a `pub fn register_{fn}` to wire into `Registry<AppCtx>`.
+//! Customer row + fetchers. The `#[row]` macro derives Borsh/Serde and
+//! `impl Row`. `#[query]` is a validation marker — `Params` structs,
+//! `impl Fetcher`, and `register_*` glue are emitted by `tables-codegen`
+//! from `build.rs`.
 
-use invoice_demo_tables_client::{ByOwner, Customer};
-use tables_storage::storage;
+use tables_storage::{query, row};
 
 use crate::AppCtx;
 
-#[storage]
+#[row]
+pub struct Customer {
+    #[pk]
+    pub id: i64,
+    pub name: String,
+}
+
+#[query(id = "invoice_demo::customers::by_owner")]
 async fn by_owner(
-    params: ByOwner,
+    owner_id: i64,
     ctx: &AppCtx,
 ) -> Result<Vec<Customer>, sqlx::Error> {
     let rows: Vec<(i64, String)> = sqlx::query_as(
         "SELECT id, name FROM invoice_demo.customers WHERE owner_id = ?",
     )
-    .bind(params.owner_id)
+    .bind(owner_id)
     .fetch_all(&ctx.pool)
     .await?;
 

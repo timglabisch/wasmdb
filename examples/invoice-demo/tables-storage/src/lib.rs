@@ -1,11 +1,11 @@
 //! Storage-side facade for invoice-demo tables. Native only.
 //!
-//! Owns `AppCtx` and `register_all`. Each fetcher lives in its own
-//! module; `#[storage]` generates a `register_{fn}` we call from here.
+//! Owns `AppCtx`. Rows + queries are declared in submodules with
+//! `#[row]` / `#[query]`; `build.rs` runs `tables-codegen` to generate
+//! `Params` structs, `impl Fetcher`, and `register_*` glue into
+//! `$OUT_DIR/generated.rs` (included as `__generated` below).
 
 mod customers;
-
-use tables_storage::Registry;
 
 /// App-level storage context. Server boot constructs this once with a
 /// connected pool.
@@ -13,7 +13,8 @@ pub struct AppCtx {
     pub pool: sqlx::MySqlPool,
 }
 
-/// Call once at server boot with a ready `Registry`.
-pub fn register_all(registry: &mut Registry<AppCtx>) {
-    customers::register_by_owner(registry);
+mod __generated {
+    include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 }
+
+pub use __generated::register_all;

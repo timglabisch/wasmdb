@@ -15,9 +15,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tables::{FetchRequest, Fetcher};
 
-/// `#[storage]` macro — generates a `pub fn register_{fn}` from a normal
-/// `async fn` fetcher. See `tables-macros` for usage.
-pub use tables_macros::storage;
+/// `#[query]` macro — marks an `async fn` as a table-fetcher query.
+/// Near-no-op at compile time; the real `Params` struct, `impl Fetcher`,
+/// and `register_{fn}` glue are emitted by `tables-codegen` in the
+/// crate's `build.rs`.
+pub use tables_macros::{query, row};
 
 #[derive(Debug)]
 pub enum StorageError {

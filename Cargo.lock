@@ -837,13 +837,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "invoice-demo-tables-client"
+name = "invoice-demo-tables-client-generated"
 version = "0.1.0"
 dependencies = [
  "borsh",
  "serde",
+ "serde-wasm-bindgen",
  "tables",
  "tables-client",
+ "tables-codegen",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]
@@ -852,9 +854,11 @@ dependencies = [
 name = "invoice-demo-tables-storage"
 version = "0.1.0"
 dependencies = [
- "invoice-demo-tables-client",
+ "borsh",
+ "serde",
  "sqlx",
  "tables",
+ "tables-codegen",
  "tables-storage",
 ]
 
@@ -866,7 +870,7 @@ dependencies = [
  "database",
  "database-reactive",
  "invoice-demo-commands",
- "invoice-demo-tables-client",
+ "invoice-demo-tables-client-generated",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -1925,10 +1929,19 @@ dependencies = [
  "js-sys",
  "serde-wasm-bindgen",
  "tables",
- "tables-macros",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "tables-codegen"
+version = "0.1.0"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

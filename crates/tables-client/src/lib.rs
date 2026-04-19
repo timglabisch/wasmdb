@@ -6,9 +6,6 @@
 
 use tables::Fetcher;
 
-/// `#[row]` / `#[fetcher]` macros — see `tables-macros`.
-pub use tables_macros::{fetcher, row};
-
 #[derive(Debug)]
 pub enum FetchError {
     Encode(String),

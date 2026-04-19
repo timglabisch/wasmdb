@@ -3,24 +3,25 @@
 //! - `#[row]` on a struct: emits derives and `impl Row`. Needs one
 //!   `#[pk]` field.
 //!
-//! - `#[fetcher(row = RowType)]` on a struct: the struct itself _is_
-//!   the params. Emits derives and `impl Fetcher` binding the user
-//!   struct to a row type. The wire id is auto-derived from the module
-//!   path + struct name.
+//! - `#[query(id = "...")]` on an async fn: **near-no-op**. Validates
+//!   `id` argument + signature (`async`, last arg `&T`, return
+//!   `Result<Vec<_>, _>`), then returns the fn unchanged — except that
+//!   an inherited visibility is promoted to `pub(crate)` so generated
+//!   glue (in a sibling `__generated` module) can call it via
+//!   absolute path.
 //!
-//! - `#[storage]` on an async fn: emits `pub fn register_{fn}` that
-//!   wires the fn into a `Registry`. The fetcher marker is read from
-//!   the fn's first argument type. Handles `Box::pin` and error mapping
-//!   (any `Display` error → `StorageError::Storage`).
+//!   The actual wire machinery (`Params` struct, `impl Fetcher`,
+//!   `register_{fn}`) is emitted by `tables-codegen` in the crate's
+//!   `build.rs`. Both server and client build from the same source,
+//!   eliminating wire drift.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
-use syn::punctuated::Punctuated;
 use syn::{
-    parse_macro_input, Data, DeriveInput, Error, Expr, Fields, FnArg, ItemFn, MetaNameValue, Pat,
-    PatType, Path, Token, Type, TypePath, TypeReference, Visibility,
+    parse_macro_input, Data, DeriveInput, Error, Fields, FnArg, Ident, ItemFn, LitStr, PatType,
+    ReturnType, Token, Type, TypePath, Visibility,
 };
 
 // ============================================================
@@ -31,12 +32,9 @@ use syn::{
 pub fn row(args: TokenStream, input: TokenStream) -> TokenStream {
     if !args.is_empty() {
         let args2: TokenStream2 = args.into();
-        return Error::new_spanned(
-            args2,
-            "#[row] takes no arguments — use #[pk] on a field",
-        )
-        .to_compile_error()
-        .into();
+        return Error::new_spanned(args2, "#[row] takes no arguments — use #[pk] on a field")
+            .to_compile_error()
+            .into();
     }
     let input = parse_macro_input!(input as DeriveInput);
     match expand_row(input) {
@@ -58,7 +56,9 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     let mut pk_field: Option<(syn::Ident, Type)> = None;
 
     for field in named.named.iter_mut() {
-        let Some(ident) = field.ident.clone() else { continue };
+        let Some(ident) = field.ident.clone() else {
+            continue;
+        };
         let mut is_pk = false;
         field.attrs.retain(|attr| {
             if attr.path().is_ident("pk") {
@@ -101,165 +101,105 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
 }
 
 // ============================================================
-// #[fetcher]
+// #[query]
 // ============================================================
 
-struct FetcherArgs {
-    row: Path,
+struct QueryArgs {
+    _id: String,
 }
 
-impl Parse for FetcherArgs {
+impl Parse for QueryArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let metas: Punctuated<MetaNameValue, Token![,]> =
-            Punctuated::parse_terminated(input)?;
-        let mut row = None;
-        for meta in metas {
-            if meta.path.is_ident("row") {
-                if let Expr::Path(p) = meta.value {
-                    row = Some(p.path);
-                } else {
-                    return Err(Error::new_spanned(meta.value, "row must be a type path"));
-                }
-            } else {
-                return Err(Error::new_spanned(meta.path, "unknown attribute key"));
-            }
+        let ident: Ident = input.parse()?;
+        if ident != "id" {
+            return Err(syn::Error::new(ident.span(), "expected `id = \"...\"`"));
         }
-        let row = row.ok_or_else(|| Error::new(input.span(), "missing required `row = ...`"))?;
-        Ok(Self { row })
+        let _: Token![=] = input.parse()?;
+        let lit: LitStr = input.parse()?;
+        Ok(Self { _id: lit.value() })
     }
 }
 
 #[proc_macro_attribute]
-pub fn fetcher(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as FetcherArgs);
-    let input = parse_macro_input!(input as DeriveInput);
-    match expand_fetcher(args, input) {
-        Ok(ts) => ts.into(),
-        Err(e) => e.to_compile_error().into(),
-    }
-}
-
-fn expand_fetcher(args: FetcherArgs, input: DeriveInput) -> syn::Result<TokenStream2> {
-    let name = input.ident.clone();
-    let name_lit = name.to_string();
-    let row_ty = &args.row;
-
-    // Must be a struct (possibly empty) — the struct _is_ the params.
-    if !matches!(&input.data, Data::Struct(_)) {
-        return Err(Error::new_spanned(&input, "#[fetcher] only works on structs"));
-    }
-
-    Ok(quote! {
-        #[derive(
-            ::core::fmt::Debug,
-            ::core::clone::Clone,
-            ::borsh::BorshSerialize,
-            ::borsh::BorshDeserialize,
-            ::serde::Serialize,
-            ::serde::Deserialize,
-        )]
-        #input
-
-        impl ::tables::Fetcher for #name {
-            const ID: ::tables::FetcherId = ::core::concat!(
-                ::core::module_path!(),
-                "::",
-                #name_lit,
-            );
-            type Params = #name;
-            type Row = #row_ty;
-        }
-    })
-}
-
-// ============================================================
-// #[storage]
-// ============================================================
-
-#[proc_macro_attribute]
-pub fn storage(args: TokenStream, input: TokenStream) -> TokenStream {
-    if !args.is_empty() {
-        let args2: TokenStream2 = args.into();
-        return Error::new_spanned(
-            args2,
-            "#[storage] takes no arguments — the fetcher marker is read from the first fn parameter",
-        )
-        .to_compile_error()
-        .into();
-    }
+pub fn query(args: TokenStream, input: TokenStream) -> TokenStream {
+    let _args = parse_macro_input!(args as QueryArgs);
     let input = parse_macro_input!(input as ItemFn);
 
-    match expand_storage(input) {
+    match expand_query(input) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
 }
 
-fn expand_storage(input: ItemFn) -> syn::Result<TokenStream2> {
+fn expand_query(mut input: ItemFn) -> syn::Result<TokenStream2> {
     if input.sig.asyncness.is_none() {
-        return Err(Error::new_spanned(&input.sig, "#[storage] requires `async fn`"));
+        return Err(Error::new_spanned(&input.sig, "#[query] requires `async fn`"));
     }
-    let fn_name = &input.sig.ident;
-    let register_ident = quote::format_ident!("register_{}", fn_name);
 
-    let mut inputs = input.sig.inputs.iter();
-    let params_arg = inputs.next().ok_or_else(|| {
-        Error::new_spanned(&input.sig, "fn needs (params, ctx) — params arg missing")
-    })?;
-    let ctx_arg = inputs
-        .next()
-        .ok_or_else(|| Error::new_spanned(&input.sig, "fn needs (params, ctx) — ctx arg missing"))?;
-
-    let fetcher = extract_path_type(params_arg)?;
-    let ctx_ty = extract_ref_type(ctx_arg)?;
-
-    let vis = match &input.vis {
-        Visibility::Inherited => quote!(pub),
-        v => quote!(#v),
-    };
-
-    Ok(quote! {
-        #input
-
-        #vis fn #register_ident(registry: &mut ::tables_storage::Registry<#ctx_ty>) {
-            registry.register::<#fetcher>(|params, ctx| {
-                ::std::boxed::Box::pin(async move {
-                    #fn_name(params, ctx).await.map_err(|e| {
-                        ::tables_storage::StorageError::Storage(
-                            ::std::string::ToString::to_string(&e),
-                        )
-                    })
-                })
-            });
-        }
-    })
-}
-
-fn extract_path_type(arg: &FnArg) -> syn::Result<Path> {
-    let FnArg::Typed(PatType { ty, .. }) = arg else {
-        return Err(Error::new_spanned(arg, "params arg must not be `self`"));
-    };
-    let Type::Path(TypePath { qself: None, path }) = ty.as_ref() else {
+    let args: Vec<&FnArg> = input.sig.inputs.iter().collect();
+    if args.len() < 2 {
         return Err(Error::new_spanned(
-            ty,
-            "params arg type must be a plain type path (the fetcher marker)",
+            &input.sig,
+            "#[query] needs at least one param before the ctx arg",
+        ));
+    }
+
+    // Last arg must be `&T` (ctx).
+    let ctx_arg = args.last().unwrap();
+    let FnArg::Typed(PatType { ty: ctx_ty, .. }) = ctx_arg else {
+        return Err(Error::new_spanned(
+            ctx_arg,
+            "#[query] ctx arg must not be `self`",
         ));
     };
-    Ok(path.clone())
-}
-
-fn extract_ref_type(arg: &FnArg) -> syn::Result<Type> {
-    let FnArg::Typed(PatType { ty, pat, .. }) = arg else {
-        return Err(Error::new_spanned(arg, "ctx arg must not be `self`"));
-    };
-    let Type::Reference(TypeReference { elem, mutability: None, .. }) = ty.as_ref() else {
+    if !matches!(ctx_ty.as_ref(), Type::Reference(_)) {
         return Err(Error::new_spanned(
-            ty,
-            "ctx arg must be a shared reference like `&AppCtx`",
+            ctx_ty,
+            "#[query] ctx arg must be a shared reference like `&AppCtx`",
+        ));
+    }
+
+    // Return must be `Result<Vec<_>, _>`.
+    let ReturnType::Type(_, ret) = &input.sig.output else {
+        return Err(Error::new_spanned(
+            &input.sig,
+            "#[query] return must be `Result<Vec<Row>, _>`",
         ));
     };
-    if !matches!(pat.as_ref(), Pat::Ident(_)) {
-        return Err(Error::new_spanned(pat, "ctx arg needs a simple binding"));
+    if !is_result_vec(ret) {
+        return Err(Error::new_spanned(
+            ret.as_ref(),
+            "#[query] return must be `Result<Vec<Row>, _>`",
+        ));
     }
-    Ok((**elem).clone())
+
+    // Promote inherited visibility so generated glue in a sibling
+    // `__generated` module can call the fn via `crate::path::fn`.
+    if matches!(input.vis, Visibility::Inherited) {
+        input.vis = syn::parse_quote!(pub(crate));
+    }
+
+    Ok(quote! { #input })
+}
+
+fn is_result_vec(ty: &Type) -> bool {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return false;
+    };
+    let Some(last) = path.segments.last() else {
+        return false;
+    };
+    if last.ident != "Result" {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last.arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(ok)) = args.args.first() else {
+        return false;
+    };
+    let Type::Path(TypePath { path: vp, .. }) = ok else {
+        return false;
+    };
+    vp.segments.last().map(|s| s.ident == "Vec").unwrap_or(false)
 }
