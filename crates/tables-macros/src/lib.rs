@@ -3,12 +3,13 @@
 //! - `#[row]` on a struct: emits derives and `impl Row`. Needs one
 //!   `#[pk]` field.
 //!
-//! - `#[query(id = "...")]` on an async fn: **near-no-op**. Validates
-//!   `id` argument + signature (`async`, last arg `&T`, return
+//! - `#[query]` (optional `id = "..."`) on an async fn: **near-no-op**.
+//!   Validates signature (`async`, last arg `&T`, return
 //!   `Result<Vec<_>, _>`), then returns the fn unchanged — except that
 //!   an inherited visibility is promoted to `pub(crate)` so generated
 //!   glue (in a sibling `__generated` module) can call it via
-//!   absolute path.
+//!   absolute path. If `id` is omitted, the codegen defaults to
+//!   `<module::path>::<fn_name>`.
 //!
 //!   The actual wire machinery (`Params` struct, `impl Fetcher`,
 //!   `register_{fn}`) is emitted by `tables-codegen` in the crate's
@@ -105,18 +106,21 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
 // ============================================================
 
 struct QueryArgs {
-    _id: String,
+    _id: Option<String>,
 }
 
 impl Parse for QueryArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(Self { _id: None });
+        }
         let ident: Ident = input.parse()?;
         if ident != "id" {
             return Err(syn::Error::new(ident.span(), "expected `id = \"...\"`"));
         }
         let _: Token![=] = input.parse()?;
         let lit: LitStr = input.parse()?;
-        Ok(Self { _id: lit.value() })
+        Ok(Self { _id: Some(lit.value()) })
     }
 }
 

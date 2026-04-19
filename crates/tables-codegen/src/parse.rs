@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use syn::{
     parse::ParseStream, Attribute, Fields, FnArg, GenericArgument, Ident, Item, ItemFn, ItemMod,
-    ItemStruct, LitStr, Pat, PatType, PathArguments, ReturnType, Token, Type, TypePath,
+    ItemStruct, LitStr, Meta, Pat, PatType, PathArguments, ReturnType, Token, Type, TypePath,
 };
 
 use crate::CodegenError;
@@ -37,7 +37,8 @@ pub struct Query {
     pub fn_name: String,
     /// `ByOwner` — PascalCase of `fn_name`.
     pub marker_name: String,
-    /// Explicit wire id from `#[query(id = "...")]`.
+    /// Wire id. Either explicit from `#[query(id = "...")]` or
+    /// defaulted to `<module::path>::<fn_name>`.
     pub id: String,
     /// Params = all fn args before the ctx arg (declaration order).
     pub params: Vec<(String, Type)>,
@@ -77,7 +78,7 @@ fn walk_items(
             }
             Item::Fn(f) => {
                 if let Some(attr) = find_attr(&f.attrs, "query") {
-                    queries.push(parse_query(f, attr)?);
+                    queries.push(parse_query(f, attr, mod_path)?);
                 }
             }
             _ => {}
@@ -186,7 +187,7 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
     })
 }
 
-fn parse_query(f: &ItemFn, attr: &Attribute) -> Result<Query, CodegenError> {
+fn parse_query(f: &ItemFn, attr: &Attribute, mod_path: &[String]) -> Result<Query, CodegenError> {
     let fn_name = f.sig.ident.to_string();
 
     if f.sig.asyncness.is_none() {
@@ -195,9 +196,18 @@ fn parse_query(f: &ItemFn, attr: &Attribute) -> Result<Query, CodegenError> {
         )));
     }
 
-    let id = attr
-        .parse_args_with(parse_id_arg)
-        .map_err(|e| CodegenError::Parse(format!("#[query] on `{fn_name}`: {e}")))?;
+    let explicit_id = match &attr.meta {
+        Meta::Path(_) => None,
+        _ => attr
+            .parse_args_with(parse_id_arg)
+            .map_err(|e| CodegenError::Parse(format!("#[query] on `{fn_name}`: {e}")))?,
+    };
+
+    let id = explicit_id.unwrap_or_else(|| {
+        let mut parts = mod_path.to_vec();
+        parts.push(fn_name.clone());
+        parts.join("::")
+    });
 
     let marker_name = snake_to_pascal(&fn_name);
 
@@ -259,14 +269,17 @@ fn parse_query(f: &ItemFn, attr: &Attribute) -> Result<Query, CodegenError> {
     })
 }
 
-fn parse_id_arg(input: ParseStream) -> syn::Result<String> {
+fn parse_id_arg(input: ParseStream) -> syn::Result<Option<String>> {
+    if input.is_empty() {
+        return Ok(None);
+    }
     let ident: Ident = input.parse()?;
     if ident != "id" {
         return Err(syn::Error::new(ident.span(), "expected `id = \"...\"`"));
     }
     let _eq: Token![=] = input.parse()?;
     let lit: LitStr = input.parse()?;
-    Ok(lit.value())
+    Ok(Some(lit.value()))
 }
 
 fn snake_to_pascal(s: &str) -> String {

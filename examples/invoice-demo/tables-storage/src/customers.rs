@@ -14,7 +14,7 @@ pub struct Customer {
     pub name: String,
 }
 
-#[query(id = "invoice_demo::customers::by_owner")]
+#[query]
 async fn by_owner(
     owner_id: i64,
     ctx: &AppCtx,
