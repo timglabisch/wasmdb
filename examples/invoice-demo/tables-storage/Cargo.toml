@@ -3,12 +3,11 @@ name = "invoice-demo-tables-storage"
 version = "0.1.0"
 edition = "2021"
 
-# Storage-side facade for invoice-demo tables. Native only. Re-exports
-# the shared crate (which holds the StorageTable impls) and is the
-# place for storage-only glue: runtime registration, sqlx bridge,
-# background jobs.
+# Storage-side facade for invoice-demo tables. Native only. Owns the
+# `StorageTable` impls, `AppCtx`, and `register_all`.
 
 [dependencies]
-invoice-demo-tables = { path = "../tables", features = ["storage"] }
+invoice-demo-tables-client = { path = "../tables-client" }
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }

@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 sync = { path = "../../../crates/sync", features = ["serde"] }
 sync-client = { path = "../../../crates/sync-client" }
 invoice-demo-commands = { path = "../commands" }
+invoice-demo-tables-client = { path = "../tables-client" }
 database = { path = "../../../crates/database", features = ["borsh", "serde"] }
 database-reactive = { path = "../../../crates/database-reactive", features = ["borsh", "serde"] }
 sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde", "wasm-timing"] }

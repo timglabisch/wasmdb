@@ -825,37 +825,37 @@ dependencies = [
  "borsh",
  "database",
  "invoice-demo-commands",
+ "invoice-demo-tables-storage",
  "sql-engine",
+ "sqlx",
  "sync",
  "sync-server",
- "tokio",
- "tower-http",
-]
-
-[[package]]
-name = "invoice-demo-tables"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "sqlx",
  "tables",
  "tables-storage",
+ "tokio",
+ "tower-http",
 ]
 
 [[package]]
 name = "invoice-demo-tables-client"
 version = "0.1.0"
 dependencies = [
- "invoice-demo-tables",
+ "borsh",
+ "js-sys",
+ "serde",
+ "serde-wasm-bindgen",
  "tables",
  "tables-client",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
 name = "invoice-demo-tables-storage"
 version = "0.1.0"
 dependencies = [
- "invoice-demo-tables",
+ "invoice-demo-tables-client",
+ "sqlx",
  "tables",
  "tables-storage",
 ]
@@ -868,6 +868,7 @@ dependencies = [
  "database",
  "database-reactive",
  "invoice-demo-commands",
+ "invoice-demo-tables-client",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
@@ -1923,7 +1924,11 @@ name = "tables-client"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "js-sys",
  "tables",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

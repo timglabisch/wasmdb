@@ -6,13 +6,14 @@ use axum::response::IntoResponse;
 use borsh::BorshDeserialize;
 use sync::command::Command;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
-use sync_server::state::ServerState;
 use invoice_demo_commands::InvoiceCommand;
+
+use crate::AppState;
 
 /// POST /command — borsh-encoded batch of `InvoiceCommand`s; replies with a
 /// borsh `BatchCommandResponse` (one verdict per request, order preserved).
 pub async fn handle_command(
-    State(state): State<Arc<ServerState<InvoiceCommand>>>,
+    State(state): State<Arc<AppState>>,
     body: Bytes,
 ) -> impl IntoResponse {
     let batch = match BatchCommandRequest::<InvoiceCommand>::try_from_slice(&body) {
@@ -22,7 +23,7 @@ pub async fn handle_command(
         }
     };
 
-    let mut db = state.db.lock().unwrap();
+    let mut db = state.sync.db.lock().unwrap();
 
     let responses: Vec<CommandResponse> = batch
         .requests
@@ -47,4 +48,19 @@ pub async fn handle_command(
     let batch_response = BatchCommandResponse { responses };
     let bytes = borsh::to_vec(&batch_response).expect("serialize batch response");
     (StatusCode::OK, bytes)
+}
+
+/// POST /table-fetch — borsh `FetchRequest`, replies with borsh
+/// `Vec<T::Row>` (the row type is implicit in `table_id`).
+pub async fn handle_table_fetch(
+    State(state): State<Arc<AppState>>,
+    body: Bytes,
+) -> impl IntoResponse {
+    match tables_storage::handle_fetch_bytes(&state.registry, &body, &state.ctx).await {
+        Ok(bytes) => (StatusCode::OK, bytes),
+        Err(e) => {
+            eprintln!("[server] table-fetch failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string().into_bytes())
+        }
+    }
 }

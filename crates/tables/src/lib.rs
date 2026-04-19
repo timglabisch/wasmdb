@@ -35,3 +35,12 @@ pub trait Table: 'static {
     type Params: Params;
     type Row: Row;
 }
+
+/// Wire-level fetch request. Body of `POST /table-fetch` (or whatever
+/// path the app picks). `params` is Borsh-encoded `T::Params` for the
+/// named table.
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct FetchRequest {
+    pub table_id: String,
+    pub params: Vec<u8>,
+}

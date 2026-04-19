@@ -18,7 +18,6 @@ members = [
     "examples/invoice-demo/server",
     "examples/invoice-demo/commands",
     "examples/invoice-demo/wasm",
-    "examples/invoice-demo/tables",
     "examples/invoice-demo/tables-client",
     "examples/invoice-demo/tables-storage",
 ]
