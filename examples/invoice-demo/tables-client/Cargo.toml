@@ -1,0 +1,14 @@
+[package]
+name = "invoice-demo-tables-client"
+version = "0.1.0"
+edition = "2021"
+
+# Client-side facade for invoice-demo tables. Re-exports markers from
+# the shared crate and is the place for client-only extras (e.g.
+# formatting helpers). The client binary depends on this crate, not on
+# -storage.
+
+[dependencies]
+invoice-demo-tables = { path = "../tables" }
+tables = { path = "../../../crates/tables" }
+tables-client = { path = "../../../crates/tables-client" }

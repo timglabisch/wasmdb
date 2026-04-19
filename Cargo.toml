@@ -7,6 +7,9 @@ members = [
     "crates/dirty-set",
     "crates/sync",
     "crates/sync-client",
+    "crates/tables",
+    "crates/tables-client",
+    "crates/tables-storage",
     "crates/sync-server",
     "crates/wasmdb-debug",
     "examples/sync-demo/server",
@@ -15,5 +18,8 @@ members = [
     "examples/invoice-demo/server",
     "examples/invoice-demo/commands",
     "examples/invoice-demo/wasm",
+    "examples/invoice-demo/tables",
+    "examples/invoice-demo/tables-client",
+    "examples/invoice-demo/tables-storage",
 ]
 resolver = "2"

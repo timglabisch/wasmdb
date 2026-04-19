@@ -1,0 +1,18 @@
+[package]
+name = "invoice-demo-tables"
+version = "0.1.0"
+edition = "2021"
+
+# Shared app crate — holds the marker types, their Params/Row, and
+# BOTH trait impls (Table + StorageTable). The impls must live here
+# because the marker is local to this crate; putting them in the
+# -client or -storage app crates would violate Rust's orphan rule.
+#
+# This crate compiles to wasm and native. `StorageTable::fetch` bodies
+# here must stay wasm-safe — no sqlx directly; pool access goes through
+# a trait on `StorageCtx` once that lands.
+
+[dependencies]
+tables = { path = "../../../crates/tables" }
+tables-storage = { path = "../../../crates/tables-storage" }
+borsh = { version = "1", features = ["derive"] }
