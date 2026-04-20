@@ -20,6 +20,47 @@ pub struct RequirementPlan {
     pub requirements: Vec<Requirement>,
 }
 
+impl RequirementPlan {
+    /// Render the plan in a compact human-readable form. Output is stable
+    /// enough to assert against directly in tests.
+    pub fn pretty_print(&self) -> String {
+        let mut out = String::new();
+        if self.requirements.is_empty() {
+            out.push_str("RequirementPlan (no requirements)\n");
+            return out;
+        }
+        out.push_str(&format!(
+            "RequirementPlan ({} requirements)\n",
+            self.requirements.len()
+        ));
+        for (i, req) in self.requirements.iter().enumerate() {
+            match req {
+                Requirement::Fetcher(f) => {
+                    let args = f
+                        .args
+                        .iter()
+                        .map(fmt_cell)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(
+                        "  [{i}] Fetcher {}({args}) row={}\n",
+                        f.fetcher_id, f.row_table
+                    ));
+                }
+            }
+        }
+        out
+    }
+}
+
+fn fmt_cell(v: &CellValue) -> String {
+    match v {
+        CellValue::I64(n) => n.to_string(),
+        CellValue::Str(s) => format!("'{s}'"),
+        CellValue::Null => "NULL".to_string(),
+    }
+}
+
 /// One requirement. Open-ended enum; today only fetcher calls.
 #[derive(Debug, Clone)]
 pub enum Requirement {
@@ -329,5 +370,110 @@ mod tests {
         assert_eq!(f1.fetcher_id, "invoices::by_customer");
         assert_eq!(f1.row_table, "invoices");
         assert_eq!(f1.args, vec![CellValue::I64(42)]);
+
+        let expected = "\
+RequirementPlan (2 requirements)
+  [0] Fetcher customers::by_owner(42, 'active') row=customers
+  [1] Fetcher invoices::by_customer(42) row=invoices
+";
+        assert_eq!(plan.pretty_print(), expected);
+    }
+
+    #[test]
+    fn pretty_print_empty_plan() {
+        let ast = select_with(vec![table("users")]);
+        let plan = plan_requirements(&ast).unwrap();
+        assert_eq!(plan.pretty_print(), "RequirementPlan (no requirements)\n");
+    }
+
+    /// Integration: a realistic plain-table query — no fetchers, so the
+    /// `RequirementPlan` is empty — exercised through ALL three planners
+    /// end-to-end. Pretty-printed output of every plan is asserted in full
+    /// so the full planner pipeline stays stable under refactoring.
+    #[test]
+    fn complex_query_all_three_plans() {
+        use std::collections::HashMap;
+        use crate::schema::{ColumnSchema, DataType, TableSchema};
+        use crate::planner::{sql, reactive};
+
+        let sql_text = "\
+            SELECT users.name, REACTIVE(users.id = 42) AS is_me \
+            FROM users \
+            INNER JOIN orders ON users.id = orders.user_id \
+            WHERE orders.amount > 100 \
+            ORDER BY orders.amount DESC \
+            LIMIT 10\
+        ";
+        let ast = sql_parser::parser::parse(sql_text).expect("parse");
+
+        let mut schemas: HashMap<String, TableSchema> = HashMap::new();
+        schemas.insert("users".into(), TableSchema {
+            name: "users".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        });
+        schemas.insert("orders".into(), TableSchema {
+            name: "orders".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "amount".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        });
+
+        // (1) RequirementPlan — no fetchers in FROM, so empty.
+        let req_plan = plan_requirements(&ast).unwrap();
+        assert!(req_plan.requirements.is_empty());
+
+        // (2) ExecutionPlan
+        let exec_plan = sql::plan(&ast, &schemas).unwrap();
+
+        // (3) ReactivePlan
+        let reactive_plan = reactive::plan_reactive(&ast, &schemas).unwrap();
+
+        let rendered = format!(
+            "=== RequirementPlan ===\n{}=== ExecutionPlan ===\n{}=== ReactivePlan ===\n{}",
+            req_plan.pretty_print(),
+            exec_plan.pretty_print(),
+            reactive_plan.pretty_print(),
+        );
+
+        let expected = "\
+=== RequirementPlan ===
+RequirementPlan (no requirements)
+=== ExecutionPlan ===
+Select
+  Scan table=users scan=Full
+  Join type=Inner strategy=NestedLoop table=orders scan=Full
+    pre_filter: orders.amount > 100
+    on: users.id = orders.user_id
+  OrderBy [orders.amount DESC]
+  Limit 10
+  Output [users.name, REACTIVE[0] AS is_me]
+=== ReactivePlan ===
+Reactive[0] table=users strategy=IndexLookup [users.id = 42]
+  verify: users.id = 42
+";
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn pretty_print_null_and_string_args() {
+        let ast = select_with(vec![call(
+            "x",
+            "y",
+            vec![AstExpr::Literal(Value::Null), lit_text("hi")],
+        )]);
+        let plan = plan_requirements(&ast).unwrap();
+        assert_eq!(
+            plan.pretty_print(),
+            "RequirementPlan (1 requirements)\n  [0] Fetcher x::y(NULL, 'hi') row=x\n",
+        );
     }
 }
