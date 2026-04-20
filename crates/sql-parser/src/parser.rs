@@ -73,7 +73,7 @@ mod tests {
     fn test_parse_simple_select() {
         let ast = parse("SELECT users.name FROM users").unwrap();
         assert_eq!(ast.sources.len(), 1);
-        assert_eq!(ast.sources[0].table, "users");
+        assert!(matches!(&ast.sources[0].source, AstSource::Table(t) if t == "users"));
         assert!(ast.sources[0].join.is_none());
         assert_eq!(ast.result_columns.len(), 1);
         assert!(matches!(
@@ -128,7 +128,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ast.sources.len(), 2);
-        assert_eq!(ast.sources[1].table, "orders");
+        assert!(matches!(&ast.sources[1].source, AstSource::Table(t) if t == "orders"));
         let join = ast.sources[1].join.as_ref().unwrap();
         assert_eq!(join.join_type, JoinType::Inner);
         assert_eq!(join.on.len(), 1);
@@ -161,9 +161,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ast.sources.len(), 3);
-        assert_eq!(ast.sources[0].table, "users");
-        assert_eq!(ast.sources[1].table, "orders");
-        assert_eq!(ast.sources[2].table, "products");
+        assert!(matches!(&ast.sources[0].source, AstSource::Table(t) if t == "users"));
+        assert!(matches!(&ast.sources[1].source, AstSource::Table(t) if t == "orders"));
+        assert!(matches!(&ast.sources[2].source, AstSource::Table(t) if t == "products"));
         assert_eq!(
             ast.sources[1].join.as_ref().unwrap().join_type,
             JoinType::Inner
@@ -825,5 +825,170 @@ mod tests {
     fn test_parse_statements_whitespace_only() {
         let stmts = parse_statements("   ").unwrap();
         assert!(stmts.is_empty());
+    }
+
+    // ── Function-call sources in FROM ───────────────────────────────────
+
+    fn expect_call(e: &AstSourceEntry) -> (&str, &str, &[AstExpr]) {
+        match &e.source {
+            AstSource::Call { schema, function, args } => (schema, function, args),
+            AstSource::Table(t) => panic!("expected Call, got Table({t})"),
+        }
+    }
+
+    #[test]
+    fn test_parse_call_basic() {
+        let ast = parse("SELECT c.name FROM customers.by_owner(42)").unwrap();
+        assert_eq!(ast.sources.len(), 1);
+        let s = &ast.sources[0];
+        let (schema, function, args) = expect_call(s);
+        assert_eq!(schema, "customers");
+        assert_eq!(function, "by_owner");
+        assert!(s.alias.is_none());
+        assert_eq!(args.len(), 1);
+        assert!(matches!(args[0], AstExpr::Literal(Value::Int(42))));
+    }
+
+    #[test]
+    fn test_parse_call_with_alias_and_filter() {
+        let ast = parse(
+            "SELECT c.name FROM customers.by_owner(42) AS c WHERE c.name = 'Alice'",
+        ).unwrap();
+        let s = &ast.sources[0];
+        let (schema, function, _args) = expect_call(s);
+        assert_eq!(schema, "customers");
+        assert_eq!(function, "by_owner");
+        assert_eq!(s.alias.as_deref(), Some("c"));
+        assert_eq!(ast.filter.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_call_join() {
+        let ast = parse(
+            "SELECT a.x FROM a.f(1) AS a \
+             INNER JOIN b.g(2, 'x') AS b ON a.id = b.a_id",
+        ).unwrap();
+        assert_eq!(ast.sources.len(), 2);
+
+        let left = &ast.sources[0];
+        let (ls, lf, la) = expect_call(left);
+        assert_eq!(ls, "a");
+        assert_eq!(lf, "f");
+        assert_eq!(left.alias.as_deref(), Some("a"));
+        assert_eq!(la.len(), 1);
+
+        let right = &ast.sources[1];
+        let (rs, rf, ra) = expect_call(right);
+        assert_eq!(rs, "b");
+        assert_eq!(rf, "g");
+        assert_eq!(right.alias.as_deref(), Some("b"));
+        assert_eq!(ra.len(), 2);
+        assert!(matches!(ra[0], AstExpr::Literal(Value::Int(2))));
+        assert!(matches!(&ra[1], AstExpr::Literal(Value::Text(s)) if s == "x"));
+        assert!(right.join.is_some());
+    }
+
+    #[test]
+    fn test_parse_plain_table_still_works() {
+        let ast = parse("SELECT users.name FROM users").unwrap();
+        let s = &ast.sources[0];
+        assert!(matches!(&s.source, AstSource::Table(t) if t == "users"));
+        assert!(s.alias.is_none());
+    }
+
+    #[test]
+    fn test_parse_call_no_args() {
+        let ast = parse("SELECT c.id FROM customers.list() AS c").unwrap();
+        let s = &ast.sources[0];
+        let (schema, function, args) = expect_call(s);
+        assert_eq!(schema, "customers");
+        assert_eq!(function, "list");
+        assert_eq!(args.len(), 0);
+    }
+
+    #[test]
+    fn test_parse_call_three_args() {
+        let ast = parse("SELECT c.id FROM customers.by_bucket(1, 2, 3)").unwrap();
+        let (_, _, args) = expect_call(&ast.sources[0]);
+        assert_eq!(args.len(), 3);
+        assert!(matches!(args[0], AstExpr::Literal(Value::Int(1))));
+        assert!(matches!(args[1], AstExpr::Literal(Value::Int(2))));
+        assert!(matches!(args[2], AstExpr::Literal(Value::Int(3))));
+    }
+
+    #[test]
+    fn test_parse_call_placeholder_arg() {
+        let ast = parse("SELECT c.id FROM customers.by_owner(:owner_id)").unwrap();
+        let (_, _, args) = expect_call(&ast.sources[0]);
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0], AstExpr::Literal(Value::Placeholder(n)) if n == "owner_id"));
+    }
+
+    #[test]
+    fn test_parse_call_mixed_arg_types() {
+        let ast = parse("SELECT c.id FROM customers.by_name(1, 'Alice', NULL)").unwrap();
+        let (_, _, args) = expect_call(&ast.sources[0]);
+        assert_eq!(args.len(), 3);
+        assert!(matches!(args[0], AstExpr::Literal(Value::Int(1))));
+        assert!(matches!(&args[1], AstExpr::Literal(Value::Text(s)) if s == "Alice"));
+        assert!(matches!(args[2], AstExpr::Literal(Value::Null)));
+    }
+
+    #[test]
+    fn test_parse_plain_table_with_alias() {
+        let ast = parse("SELECT c.name FROM customers AS c").unwrap();
+        let s = &ast.sources[0];
+        assert!(matches!(&s.source, AstSource::Table(t) if t == "customers"));
+        assert_eq!(s.alias.as_deref(), Some("c"));
+    }
+
+    #[test]
+    fn test_parse_join_plain_table_with_alias() {
+        let ast = parse(
+            "SELECT a.x FROM users AS a INNER JOIN orders AS b ON a.id = b.user_id",
+        ).unwrap();
+        assert_eq!(ast.sources[0].alias.as_deref(), Some("a"));
+        assert_eq!(ast.sources[1].alias.as_deref(), Some("b"));
+    }
+
+    // ── Call error cases ───────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_call_error_unclosed_paren() {
+        let err = parse("SELECT c.id FROM customers.by_owner(42").unwrap_err();
+        assert!(err.message.contains("expected"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_parse_call_error_missing_fn_name() {
+        let err = parse("SELECT c.id FROM customers.(42)").unwrap_err();
+        assert!(err.message.contains("expected identifier"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_parse_call_error_trailing_comma() {
+        let err = parse("SELECT c.id FROM customers.by_owner(1,)").unwrap_err();
+        assert!(err.message.contains("expected expression"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_parse_call_error_leading_dot() {
+        // bare `.by_owner(42)` should not be accepted — there is no schema.
+        let err = parse("SELECT c.id FROM .by_owner(42)").unwrap_err();
+        assert!(err.message.contains("expected identifier"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_parse_call_implicit_alias_rejected() {
+        // Implicit alias (Postgres allows `FROM x y`) is intentionally
+        // NOT supported by this parser — only `AS y` works.
+        let err = parse(
+            "SELECT c.name FROM customers.by_owner(42) c WHERE c.name = 'A'",
+        ).unwrap_err();
+        // the dangling `c` before WHERE is an unexpected identifier token
+        assert!(
+            err.message.contains("expected") || err.message.contains("got"),
+            "got: {}", err.message,
+        );
     }
 }

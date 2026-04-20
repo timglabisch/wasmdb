@@ -84,9 +84,38 @@ pub enum OrderDirection {
 
 #[derive(Debug, Clone)]
 pub struct AstSourceEntry {
-    pub table: String,
+    pub source: AstSource,
+    /// Optional `AS alias` after the source expression.
+    pub alias: Option<String>,
     /// None for the first table, Some for joined tables.
     pub join: Option<AstJoinClause>,
+}
+
+/// What sits in the FROM-clause slot. Either a plain table name, or a
+/// qualified function-call `schema.function(args)`. The parser stays
+/// domain-agnostic: whether a `Call` resolves to a fetcher, a set-
+/// returning function, or something else is the planner's problem.
+#[derive(Debug, Clone)]
+pub enum AstSource {
+    Table(String),
+    Call {
+        schema: String,
+        function: String,
+        args: Vec<AstExpr>,
+    },
+}
+
+impl AstSource {
+    /// Name shown in error messages and used for column-resolution lookups
+    /// against the plain-table registry. For a `Call` this returns the
+    /// function name — callers that care about the difference must
+    /// match on the variant directly.
+    pub fn name(&self) -> &str {
+        match self {
+            AstSource::Table(t) => t,
+            AstSource::Call { function, .. } => function,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

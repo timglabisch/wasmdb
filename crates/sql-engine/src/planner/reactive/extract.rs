@@ -223,7 +223,7 @@ mod tests {
     /// Dummy subquery — contents don't matter, we only care about the AST shape.
     fn dummy_subquery() -> Box<ast::AstSelect> {
         Box::new(ast::AstSelect {
-            sources: vec![ast::AstSourceEntry { table: "orders".into(), join: None }],
+            sources: vec![ast::AstSourceEntry { source: ast::AstSource::Table("orders".into()), alias: None, join: None }],
             filter: vec![],
             group_by: vec![],
             order_by: vec![],

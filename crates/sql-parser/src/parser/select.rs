@@ -93,8 +93,7 @@ fn parse_result_column(p: &mut ParserCore) -> Result<AstResultColumn, ParseError
 }
 
 fn parse_sources(p: &mut ParserCore) -> Result<Vec<AstSourceEntry>, ParseError> {
-    let (table, _) = p.expect_ident()?;
-    let mut sources = vec![AstSourceEntry { table, join: None }];
+    let mut sources = vec![parse_source_entry(p)?];
 
     loop {
         if p.at(&TokenKind::Inner)?
@@ -122,17 +121,53 @@ fn parse_join(p: &mut ParserCore) -> Result<AstSourceEntry, ParseError> {
     };
 
     p.expect(TokenKind::Join)?;
-    let (table, _) = p.expect_ident()?;
+    let entry = parse_source_entry(p)?;
     p.expect(TokenKind::On)?;
     let on_expr = p.parse_expr(0)?;
 
     Ok(AstSourceEntry {
-        table,
         join: Some(AstJoinClause {
             join_type,
             on: vec![on_expr],
         }),
+        ..entry
     })
+}
+
+/// Parse a single FROM-clause source: either a plain `table`, or a
+/// qualified function-call `schema.func(args)`, each optionally
+/// followed by `AS alias`. `join` is always `None` here — callers set
+/// it for joined entries.
+fn parse_source_entry(p: &mut ParserCore) -> Result<AstSourceEntry, ParseError> {
+    let (first, _) = p.expect_ident()?;
+
+    let source = if p.at(&TokenKind::Dot)? {
+        p.eat()?;
+        let (function, _) = p.expect_ident()?;
+        p.expect(TokenKind::LParen)?;
+        let mut args = Vec::new();
+        if !p.at(&TokenKind::RParen)? {
+            args.push(p.parse_expr(0)?);
+            while p.at(&TokenKind::Comma)? {
+                p.eat()?;
+                args.push(p.parse_expr(0)?);
+            }
+        }
+        p.expect(TokenKind::RParen)?;
+        AstSource::Call { schema: first, function, args }
+    } else {
+        AstSource::Table(first)
+    };
+
+    let alias = if p.at(&TokenKind::As)? {
+        p.eat()?;
+        let (name, _) = p.expect_ident()?;
+        Some(name)
+    } else {
+        None
+    };
+
+    Ok(AstSourceEntry { source, alias, join: None })
 }
 
 fn parse_where(p: &mut ParserCore) -> Result<Vec<AstExpr>, ParseError> {

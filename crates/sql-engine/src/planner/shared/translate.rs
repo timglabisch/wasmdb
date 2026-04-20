@@ -22,13 +22,26 @@ pub fn build_raw_plan(
     let mut sources = Vec::new();
 
     for entry in &select.sources {
+        let table_name = match &entry.source {
+            ast::AstSource::Table(t) => t,
+            ast::AstSource::Call { schema, function, .. } => {
+                return Err(PlanError::UnsupportedExpr(format!(
+                    "function-call source `{schema}.{function}(...)` not yet supported by the planner",
+                )));
+            }
+        };
+        if entry.alias.is_some() {
+            return Err(PlanError::UnsupportedExpr(
+                "FROM-clause alias (`AS name`) not yet supported".into(),
+            ));
+        }
         let table_schema = ctx.query_schemas
-            .get(&entry.table)
-            .ok_or_else(|| PlanError::UnknownTable(entry.table.clone()))?
+            .get(table_name)
+            .ok_or_else(|| PlanError::UnknownTable(table_name.clone()))?
             .clone();
 
         sources.push(PlanSourceEntry {
-            table: entry.table.clone(),
+            table: table_name.clone(),
             schema: table_schema,
             join: None,
             pre_filter: PlanFilterPredicate::None,
