@@ -386,10 +386,20 @@ RequirementPlan (2 requirements)
         assert_eq!(plan.pretty_print(), "RequirementPlan (no requirements)\n");
     }
 
-    /// Integration: a realistic plain-table query — no fetchers, so the
-    /// `RequirementPlan` is empty — exercised through ALL three planners
-    /// end-to-end. Pretty-printed output of every plan is asserted in full
-    /// so the full planner pipeline stays stable under refactoring.
+    /// Integration: a query that uses a *fetcher-call* FROM-source
+    /// (`orders.fetch_by_user(42)`) — routed through all three planners so
+    /// you can see how each one reacts to the same input:
+    ///
+    /// - `RequirementPlan` picks the fetcher up and lists it as external work.
+    /// - `ExecutionPlan` (SQL) rejects the call source — today the SQL
+    ///   pipeline has no TVF support, so the error surface is what callers
+    ///   must cope with.
+    /// - `ReactivePlan` shares the SQL translation step and therefore
+    ///   rejects with the same error.
+    ///
+    /// Asserting the exact outputs pins the current division of labor down:
+    /// fetchers are a `RequirementPlan` concern; the SQL/Reactive planners
+    /// intentionally know nothing about them yet.
     #[test]
     fn complex_query_all_three_plans() {
         use std::collections::HashMap;
@@ -397,25 +407,18 @@ RequirementPlan (2 requirements)
         use crate::planner::{sql, reactive};
 
         let sql_text = "\
-            SELECT users.name, REACTIVE(users.id = 42) AS is_me \
-            FROM users \
-            INNER JOIN orders ON users.id = orders.user_id \
+            SELECT orders.amount, REACTIVE(orders.user_id = 42) AS inv \
+            FROM orders.fetch_by_user(42) \
             WHERE orders.amount > 100 \
             ORDER BY orders.amount DESC \
             LIMIT 10\
         ";
         let ast = sql_parser::parser::parse(sql_text).expect("parse");
 
+        // Plain-table schema registered under the same name as the fetcher
+        // call's schema part. RequirementPlan doesn't need this, but we keep
+        // the shape realistic.
         let mut schemas: HashMap<String, TableSchema> = HashMap::new();
-        schemas.insert("users".into(), TableSchema {
-            name: "users".into(),
-            columns: vec![
-                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
-                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
-            ],
-            primary_key: vec![0],
-            indexes: vec![],
-        });
         schemas.insert("orders".into(), TableSchema {
             name: "orders".into(),
             columns: vec![
@@ -427,38 +430,32 @@ RequirementPlan (2 requirements)
             indexes: vec![],
         });
 
-        // (1) RequirementPlan — no fetchers in FROM, so empty.
+        // (1) RequirementPlan — succeeds; picks up the fetcher.
         let req_plan = plan_requirements(&ast).unwrap();
-        assert!(req_plan.requirements.is_empty());
+        assert_eq!(req_plan.requirements.len(), 1);
 
-        // (2) ExecutionPlan
-        let exec_plan = sql::plan(&ast, &schemas).unwrap();
+        // (2) ExecutionPlan — SQL planner rejects call sources today.
+        let exec_err = sql::plan(&ast, &schemas).unwrap_err();
 
-        // (3) ReactivePlan
-        let reactive_plan = reactive::plan_reactive(&ast, &schemas).unwrap();
+        // (3) ReactivePlan — goes through the same SQL translation step, so
+        // it rejects too (identical error surface).
+        let reactive_err = reactive::plan_reactive(&ast, &schemas).unwrap_err();
 
         let rendered = format!(
-            "=== RequirementPlan ===\n{}=== ExecutionPlan ===\n{}=== ReactivePlan ===\n{}",
+            "=== RequirementPlan ===\n{}\
+=== ExecutionPlan (error) ===\n{exec_err}\n\
+=== ReactivePlan (error) ===\n{reactive_err}\n",
             req_plan.pretty_print(),
-            exec_plan.pretty_print(),
-            reactive_plan.pretty_print(),
         );
 
         let expected = "\
 === RequirementPlan ===
-RequirementPlan (no requirements)
-=== ExecutionPlan ===
-Select
-  Scan table=users scan=Full
-  Join type=Inner strategy=NestedLoop table=orders scan=Full
-    pre_filter: orders.amount > 100
-    on: users.id = orders.user_id
-  OrderBy [orders.amount DESC]
-  Limit 10
-  Output [users.name, REACTIVE[0] AS is_me]
-=== ReactivePlan ===
-Reactive[0] table=users strategy=IndexLookup [users.id = 42]
-  verify: users.id = 42
+RequirementPlan (1 requirements)
+  [0] Fetcher orders::fetch_by_user(42) row=orders
+=== ExecutionPlan (error) ===
+unsupported expression: function-call source `orders.fetch_by_user(...)` not yet supported by the planner
+=== ReactivePlan (error) ===
+unsupported expression: function-call source `orders.fetch_by_user(...)` not yet supported by the planner
 ";
         assert_eq!(rendered, expected);
     }
