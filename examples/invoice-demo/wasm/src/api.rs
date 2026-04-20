@@ -217,6 +217,23 @@ pub fn flush_stream(stream_id: f64) -> js_sys::Promise {
     promise
 }
 
+/// Dogfood: call a generated fetcher directly from Rust (not via the
+/// generated `#[wasm_bindgen]` wrapper). Shape the user would write
+/// when composing fetches on the client side.
+#[wasm_bindgen]
+pub async fn demo_customers_by_owner(owner_id: f64) -> Result<JsValue, JsError> {
+    let rows: Vec<invoice_demo_tables_client_generated::customers::Customer> =
+        invoice_demo_tables_client_generated::customers::by_owner(owner_id as i64)
+            .await
+            .map_err(|e| JsError::new(&e.to_string()))?;
+
+    let first_name: Option<String> = rows.first().map(|c| c.name.clone());
+    let _pk_check: Option<i64> = rows.first().map(|c| c.id);
+
+    serde_wasm_bindgen::to_value(&(rows.len(), first_name))
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[wasm_bindgen]
 pub fn query(sql: &str) -> Result<JsValue, JsError> {
     with_client(|client| {
