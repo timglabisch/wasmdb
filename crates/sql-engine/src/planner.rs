@@ -1,6 +1,7 @@
 pub mod shared;
 pub mod sql;
 pub mod reactive;
+pub mod requirement;
 
 use std::collections::HashMap;
 
