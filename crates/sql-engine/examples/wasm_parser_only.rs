@@ -20,7 +20,7 @@ pub extern "C" fn run() -> i64 {
     table.insert(&[CellValue::I64(1), CellValue::Str("Alice".into()), CellValue::I64(30)]).unwrap();
     table.insert(&[CellValue::I64(2), CellValue::Str("Bob".into()), CellValue::I64(25)]).unwrap();
 
-    let ast = parser::parse("SELECT users.name FROM users WHERE users.age > 28").unwrap();
+    let ast = parser::parse("SELECT users.name FROM await(customers.by_reference('df')) WHERE users.age > 28").unwrap();
     ast.result_columns.len() as i64
 }
 
