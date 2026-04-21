@@ -57,8 +57,9 @@ pub fn scan_row_ids(_ctx: &mut ExecutionContext, table: &Table) -> Vec<usize> {
 /// Scan a caller-backed source:
 ///   1. Resolve each `RequirementArg::Placeholder` against `ctx.bound_values`
 ///      first, then `ctx.params`.
-///   2. Invoke the registered caller closure → `Vec<Vec<Value>>` (one PK
-///      tuple per row the caller selects).
+///   2. Look up PK tuples for `(caller_id, resolved_args)` in
+///      `ctx.requirements` — Phase 0 fetched & upserted rows, then stored
+///      the returned PK tuples there.
 ///   3. Map each PK tuple to a local row id via the row-table's PK index.
 ///   4. Apply `source.pre_filter` on the resulting row ids.
 ///
@@ -74,7 +75,14 @@ pub fn scan_requirement<'a>(
     };
 
     let resolved_args = resolve_caller_args(ctx, &caller_id, &args)?;
-    let pk_tuples = invoke_caller(ctx, &caller_id, &resolved_args)?;
+    let pk_tuples_owned: Vec<Vec<Value>> = ctx.requirements
+        .get(&caller_id, &resolved_args)
+        .ok_or_else(|| ExecuteError::CallerError(format!(
+            "Phase 0 produced no result for fetcher `{caller_id}` with args {resolved_args:?} \
+             — either resolve_requirements was not run, or this invocation was missed",
+        )))?
+        .to_vec();
+
     let pk_columns = row_table.schema.primary_key.clone();
     if pk_columns.is_empty() {
         return Err(ExecuteError::CallerError(format!(
@@ -83,7 +91,7 @@ pub fn scan_requirement<'a>(
         )));
     }
 
-    let mut row_ids = resolve_pks_to_row_ids(row_table, &pk_columns, &pk_tuples, &caller_id)?;
+    let mut row_ids = resolve_pks_to_row_ids(row_table, &pk_columns, &pk_tuples_owned, &caller_id)?;
     if !matches!(source.pre_filter, PlanFilterPredicate::None) {
         row_ids = source.pre_filter.filter_batch(ctx, row_table, &row_ids);
     }
@@ -130,19 +138,6 @@ fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
         ParamValue::Null => Some(Value::Null),
         ParamValue::IntList(_) | ParamValue::TextList(_) => None,
     }
-}
-
-fn invoke_caller(
-    ctx: &ExecutionContext,
-    caller_id: &str,
-    resolved_args: &[Value],
-) -> Result<Vec<Vec<Value>>, ExecuteError> {
-    let caller_fn = ctx.callers.get(caller_id).ok_or_else(|| {
-        ExecuteError::CallerError(format!("caller `{caller_id}` not registered"))
-    })?;
-    caller_fn(resolved_args).map_err(|e| {
-        ExecuteError::CallerError(format!("caller `{caller_id}` failed: {e}"))
-    })
 }
 
 fn resolve_pks_to_row_ids(

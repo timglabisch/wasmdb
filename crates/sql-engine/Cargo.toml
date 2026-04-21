@@ -10,6 +10,9 @@ borsh = { version = "1", features = ["derive"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 web-time = { version = "1", optional = true }
 
+[dev-dependencies]
+pollster = "0.3"
+
 [features]
 default = []
 borsh = ["dep:borsh"]

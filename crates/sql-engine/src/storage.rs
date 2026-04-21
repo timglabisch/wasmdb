@@ -359,6 +359,39 @@ impl Table {
         Ok(row_idx)
     }
 
+    /// Insert `row`, or overwrite the existing row that has the same primary key.
+    /// Tables without a primary key fall back to plain insert (no dedup).
+    ///
+    /// Implementation: find existing live row via PK Hash index → soft-delete it
+    /// (removing it from all indexes), then insert the new row.
+    pub fn upsert_by_pk(&mut self, row: &[CellValue]) -> Result<usize, StorageError> {
+        if row.len() != self.columns.len() {
+            return Err(StorageError::ColumnCountMismatch {
+                expected: self.columns.len(),
+                got: row.len(),
+            });
+        }
+        if self.schema.primary_key.is_empty() {
+            return self.insert(row);
+        }
+
+        let pk_columns = self.schema.primary_key.clone();
+        let pk_key: Vec<CellValue> = pk_columns.iter().map(|&c| row[c].clone()).collect();
+
+        let existing_row_id = {
+            let pk_idx = self.indexes.iter()
+                .find(|i| i.columns() == pk_columns.as_slice())
+                .expect("PK index must exist when primary_key is non-empty");
+            pk_idx.lookup_eq(&pk_key)
+                .and_then(|ids| ids.iter().find(|&&id| !self.deleted.get(id)).copied())
+        };
+
+        if let Some(existing) = existing_row_id {
+            self.delete(existing)?;
+        }
+        self.insert(row)
+    }
+
     pub fn delete(&mut self, row_idx: usize) -> Result<(), StorageError> {
         if row_idx >= self.physical_len() || self.deleted.get(row_idx) {
             return Err(StorageError::RowNotFound { row_idx });
@@ -686,6 +719,89 @@ mod tests {
         // PK is column 0 → auto Hash index created.
         let idx = table.index_for_column(0).unwrap();
         assert!(idx.is_hash());
+    }
+
+    #[test]
+    fn test_upsert_by_pk_inserts_new_row() {
+        let mut table = Table::new(users_schema());
+        let row_id = table.upsert_by_pk(&[
+            CellValue::I64(1),
+            CellValue::Str("Alice".into()),
+            CellValue::I64(30),
+        ]).unwrap();
+        assert_eq!(row_id, 0);
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_by_pk_overwrites_existing_row() {
+        let mut table = Table::new(users_schema());
+        table.insert(&[
+            CellValue::I64(1),
+            CellValue::Str("Alice".into()),
+            CellValue::I64(30),
+        ]).unwrap();
+
+        table.upsert_by_pk(&[
+            CellValue::I64(1),
+            CellValue::Str("Alicia".into()),
+            CellValue::I64(31),
+        ]).unwrap();
+
+        // One live row, the old one is tombstoned.
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.deleted_count(), 1);
+
+        // PK-index lookup points at the live row.
+        let idx = table.index_for_column(0).unwrap();
+        let hits = idx.lookup_eq(&[CellValue::I64(1)]).unwrap();
+        let live_hits: Vec<usize> = hits.iter().copied()
+            .filter(|&id| !table.is_deleted(id)).collect();
+        assert_eq!(live_hits.len(), 1);
+        assert_eq!(table.get(live_hits[0], 1), CellValue::Str("Alicia".into()));
+        assert_eq!(table.get(live_hits[0], 2), CellValue::I64(31));
+    }
+
+    #[test]
+    fn test_upsert_by_pk_no_pk_falls_back_to_insert() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::I64, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.upsert_by_pk(&[CellValue::I64(1)]).unwrap();
+        table.upsert_by_pk(&[CellValue::I64(1)]).unwrap();
+        // No PK → both rows remain, no dedup.
+        assert_eq!(table.len(), 2);
+    }
+
+    #[test]
+    fn test_upsert_by_pk_composite_key() {
+        let schema = TableSchema {
+            name: "memberships".into(),
+            columns: vec![
+                ColumnSchema { name: "org_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "role".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0, 1],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.upsert_by_pk(&[CellValue::I64(1), CellValue::I64(1), CellValue::Str("admin".into())]).unwrap();
+        table.upsert_by_pk(&[CellValue::I64(1), CellValue::I64(1), CellValue::Str("owner".into())]).unwrap();
+        assert_eq!(table.len(), 1);
+    }
+
+    #[test]
+    fn test_upsert_by_pk_column_count_mismatch() {
+        let mut table = Table::new(users_schema());
+        let err = table.upsert_by_pk(&[CellValue::I64(1)]).unwrap_err();
+        assert!(matches!(err, StorageError::ColumnCountMismatch { expected: 3, got: 1 }));
     }
 
     fn composite_indexed_schema() -> TableSchema {

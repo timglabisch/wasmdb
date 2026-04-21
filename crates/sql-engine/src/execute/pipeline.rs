@@ -126,6 +126,22 @@ mod tests {
     use sql_parser::ast::*;
     use sql_parser::schema::{ColumnDef, Schema};
     use crate::schema::{ColumnSchema, DataType, TableSchema};
+    use crate::execute::value_to_cell;
+
+    /// Pre-populate `ctx.requirements` so that `scan_requirement` treats
+    /// `(caller_id, args)` as having produced `pks`. Simulates what Phase 0
+    /// would have done for this invocation.
+    fn fill_req(
+        ctx: &mut ExecutionContext,
+        caller_id: &str,
+        args: &[Value],
+        pks: Vec<Vec<Value>>,
+    ) {
+        let cells: Vec<CellValue> = args.iter().map(value_to_cell).collect();
+        ctx.requirements
+            .pk_sets
+            .insert((caller_id.to_string(), cells), pks);
+    }
 
     fn c(source: usize, col: usize) -> ColumnRef {
         ColumnRef { source, col }
@@ -334,21 +350,14 @@ mod tests {
     fn test_execute_caller_source_returns_rows_by_pk() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-
-        // Caller returns PKs [1, 3] — rows Alice and Carol.
-        ctx.callers.insert(
-            "users::by_ids".into(),
-            Box::new(|args: &[Value]| {
-                // Echo-style: arg is pk, caller returns just that pk + pk+2
-                let base = match args.first() {
-                    Some(Value::Int(n)) => *n,
-                    _ => return Err("expected Int arg".into()),
-                };
-                Ok(vec![vec![Value::Int(base)], vec![Value::Int(base + 2)]])
-            }),
-        );
-
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
+
+        // Phase 0 would have fetched & upserted. Here we just pre-fill the
+        // resolved PK set, since the row_table already has Alice/Bob/Carol.
+        fill_req(&mut ctx, "users::by_ids", &[Value::Int(1)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(3)],
+        ]);
 
         let plan = caller_plan("users::by_ids", "users", "__caller_0_arg_0");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -359,7 +368,9 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_caller_unregistered_errors() {
+    fn test_execute_caller_missing_requirements_entry_errors() {
+        // Nothing was populated by Phase 0 — scan surfaces this as a
+        // CallerError with the "no result" marker.
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
@@ -367,8 +378,11 @@ mod tests {
         let plan = caller_plan("users::unknown", "users", "__caller_0_arg_0");
         let err = execute(&mut ctx, &plan).unwrap_err();
         match err {
-            ExecuteError::CallerError(msg) => assert!(msg.contains("not registered"), "got: {msg}"),
-            other => panic!("expected CallerError(not registered), got {other:?}"),
+            ExecuteError::CallerError(msg) => assert!(
+                msg.contains("Phase 0 produced no result"),
+                "got: {msg}",
+            ),
+            other => panic!("expected CallerError, got {other:?}"),
         }
     }
 
@@ -376,12 +390,8 @@ mod tests {
     fn test_execute_caller_missing_arg_errors() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::by_ids".into(),
-            Box::new(|_| Ok(vec![])),
-        );
-        // No bound_values, no params — placeholder has nowhere to resolve.
-
+        // No bound_values, no params — scan's arg resolver fails before it
+        // ever looks in `requirements`.
         let plan = caller_plan("users::by_ids", "users", "__caller_0_arg_0");
         let err = execute(&mut ctx, &plan).unwrap_err();
         match err {
@@ -392,14 +402,13 @@ mod tests {
 
     #[test]
     fn test_execute_caller_pk_not_in_row_table_errors() {
+        // Phase 0 stored PK 999, but users row_table has no such row.
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        // Caller returns a PK that doesn't exist in users (id=999).
-        ctx.callers.insert(
-            "users::phantom".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(999)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
+        fill_req(&mut ctx, "users::phantom", &[Value::Int(1)], vec![
+            vec![Value::Int(999)],
+        ]);
 
         let plan = caller_plan("users::phantom", "users", "__caller_0_arg_0");
         let err = execute(&mut ctx, &plan).unwrap_err();
@@ -417,18 +426,8 @@ mod tests {
         let db = make_db();
         let params = HashMap::from([("owner".into(), super::super::ParamValue::Int(2))]);
         let mut ctx = ExecutionContext::with_params(&db, params);
-        ctx.callers.insert(
-            "users::by_owner".into(),
-            Box::new(|args: &[Value]| {
-                let id = match args.first() {
-                    Some(Value::Int(n)) => *n,
-                    _ => return Err("expected Int".into()),
-                };
-                Ok(vec![vec![Value::Int(id)]])
-            }),
-        );
-        // No bound_values — the arg resolves from ctx.params via the external
-        // placeholder name `owner` (user-supplied at query time).
+        // arg resolves from params (no bound_value). Phase 0 key is Int(2).
+        fill_req(&mut ctx, "users::by_owner", &[Value::Int(2)], vec![vec![Value::Int(2)]]);
 
         let plan = caller_plan("users::by_owner", "users", "owner");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -441,15 +440,12 @@ mod tests {
     fn test_execute_caller_with_pre_filter() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::all".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Int(1)],
-                vec![Value::Int(2)],
-                vec![Value::Int(3)],
-            ])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::all", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+            vec![Value::Int(3)],
+        ]);
 
         let mut plan = caller_plan("users::all", "users", "__caller_0_arg_0");
         // Post-filter on age>28 — should narrow to Alice(30) and Carol(35).
@@ -470,11 +466,8 @@ mod tests {
     fn test_execute_caller_empty_return_yields_no_rows() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::none".into(),
-            Box::new(|_| Ok(vec![])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::none", &[Value::Int(0)], vec![]);
 
         let plan = caller_plan("users::none", "users", "__caller_0_arg_0");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -487,17 +480,14 @@ mod tests {
     fn test_execute_caller_duplicate_pks_are_deduplicated() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::dup".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Int(1)],
-                vec![Value::Int(2)],
-                vec![Value::Int(1)],
-                vec![Value::Int(2)],
-                vec![Value::Int(1)],
-            ])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::dup", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+            vec![Value::Int(1)],
+        ]);
 
         let plan = caller_plan("users::dup", "users", "__caller_0_arg_0");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -506,14 +496,14 @@ mod tests {
 
     #[test]
     fn test_execute_caller_pk_arity_mismatch_errors() {
+        // row_table users has single-column PK; Phase 0 stored a 2-col PK
+        // tuple → scan must reject at lookup time.
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        // row_table users has single-column PK; caller returns a 2-col PK tuple.
-        ctx.callers.insert(
-            "users::bad_arity".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1), Value::Int(99)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::bad_arity", &[Value::Int(0)], vec![
+            vec![Value::Int(1), Value::Int(99)],
+        ]);
 
         let plan = caller_plan("users::bad_arity", "users", "__caller_0_arg_0");
         let err = execute(&mut ctx, &plan).unwrap_err();
@@ -547,11 +537,10 @@ mod tests {
         let mut db = HashMap::new();
         db.insert("users_no_pk".into(), make_users_table_no_pk());
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users_no_pk::all".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users_no_pk::all", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+        ]);
 
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
@@ -580,27 +569,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_execute_caller_closure_error_propagates() {
-        let db = make_db();
-        let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::boom".into(),
-            Box::new(|_| Err("network failure".into())),
-        );
-        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
-
-        let plan = caller_plan("users::boom", "users", "__caller_0_arg_0");
-        let err = execute(&mut ctx, &plan).unwrap_err();
-        match err {
-            ExecuteError::CallerError(msg) => {
-                assert!(msg.contains("users::boom"), "got: {msg}");
-                assert!(msg.contains("network failure"), "got: {msg}");
-            }
-            other => panic!("expected CallerError, got {other:?}"),
-        }
-    }
-
     // ── Caller param resolution ──────────────────────────────────────────
 
     #[test]
@@ -610,17 +578,8 @@ mod tests {
         let params = HashMap::from([("x".into(), super::super::ParamValue::Int(99))]);
         let mut ctx = ExecutionContext::with_params(&db, params);
         ctx.bound_values.insert("x".into(), Value::Int(2));
-        ctx.callers.insert(
-            "users::echo".into(),
-            Box::new(|args: &[Value]| {
-                let n = match args.first() {
-                    Some(Value::Int(n)) => *n,
-                    _ => return Err("expected Int".into()),
-                };
-                assert_eq!(n, 2, "bound_values (2) must win over params (99)");
-                Ok(vec![vec![Value::Int(n)]])
-            }),
-        );
+        // Phase 0 key uses the resolved value (2, not 99).
+        fill_req(&mut ctx, "users::echo", &[Value::Int(2)], vec![vec![Value::Int(2)]]);
 
         let plan = caller_plan("users::echo", "users", "x");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -635,10 +594,6 @@ mod tests {
             super::super::ParamValue::IntList(vec![1, 2]),
         )]);
         let mut ctx = ExecutionContext::with_params(&db, params);
-        ctx.callers.insert(
-            "users::any".into(),
-            Box::new(|_| Ok(vec![])),
-        );
 
         let plan = caller_plan("users::any", "users", "ids");
         let err = execute(&mut ctx, &plan).unwrap_err();
@@ -659,10 +614,6 @@ mod tests {
             super::super::ParamValue::TextList(vec!["a".into()]),
         )]);
         let mut ctx = ExecutionContext::with_params(&db, params);
-        ctx.callers.insert(
-            "users::any".into(),
-            Box::new(|_| Ok(vec![])),
-        );
         let plan = caller_plan("users::any", "users", "names");
         let err = execute(&mut ctx, &plan).unwrap_err();
         assert!(matches!(err, ExecuteError::BindError(msg) if msg.contains("list")));
@@ -676,15 +627,9 @@ mod tests {
             super::super::ParamValue::Text("hello".into()),
         )]);
         let mut ctx = ExecutionContext::with_params(&db, params);
-        ctx.callers.insert(
-            "users::by_name".into(),
-            Box::new(|args: &[Value]| {
-                match args.first() {
-                    Some(Value::Text(s)) if s == "hello" => Ok(vec![vec![Value::Int(1)]]),
-                    other => Err(format!("expected Text(hello), got {other:?}")),
-                }
-            }),
-        );
+        fill_req(&mut ctx, "users::by_name", &[Value::Text("hello".into())], vec![
+            vec![Value::Int(1)],
+        ]);
         let plan = caller_plan("users::by_name", "users", "name");
         let result = execute(&mut ctx, &plan).unwrap();
         assert_eq!(result[0], vec![CellValue::I64(1)]);
@@ -695,15 +640,9 @@ mod tests {
         let db = make_db();
         let params = HashMap::from([("x".into(), super::super::ParamValue::Null)]);
         let mut ctx = ExecutionContext::with_params(&db, params);
-        ctx.callers.insert(
-            "users::null_arg".into(),
-            Box::new(|args: &[Value]| {
-                match args.first() {
-                    Some(Value::Null) => Ok(vec![vec![Value::Int(1)]]),
-                    other => Err(format!("expected Null, got {other:?}")),
-                }
-            }),
-        );
+        fill_req(&mut ctx, "users::null_arg", &[Value::Null], vec![
+            vec![Value::Int(1)],
+        ]);
         let plan = caller_plan("users::null_arg", "users", "x");
         let result = execute(&mut ctx, &plan).unwrap();
         assert_eq!(result[0], vec![CellValue::I64(1)]);
@@ -718,15 +657,11 @@ mod tests {
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(42));
         ctx.bound_values.insert("__caller_0_arg_1".into(), Value::Text("bob".into()));
         ctx.bound_values.insert("__caller_0_arg_2".into(), Value::Null);
-        ctx.callers.insert(
-            "users::three".into(),
-            Box::new(|args: &[Value]| {
-                assert_eq!(args.len(), 3);
-                assert!(matches!(args[0], Value::Int(42)));
-                assert!(matches!(&args[1], Value::Text(s) if s == "bob"));
-                assert!(matches!(args[2], Value::Null));
-                Ok(vec![vec![Value::Int(2)]])
-            }),
+        fill_req(
+            &mut ctx,
+            "users::three",
+            &[Value::Int(42), Value::Text("bob".into()), Value::Null],
+            vec![vec![Value::Int(2)]],
         );
 
         let plan = PlanSelect {
@@ -755,21 +690,18 @@ mod tests {
 
     #[test]
     fn test_execute_caller_pk_of_deleted_row_errors() {
-        // Invariant: a caller-returned PK that is no longer in the PK index
+        // Invariant: a Phase 0 PK that is no longer in the PK index
         // (either never existed, or was deleted) must surface as a CallerError.
-        // Silently skipping would hide stale caller state — the opposite of
+        // Silently skipping would hide stale upstream state — the opposite of
         // what the reactive layer needs.
         let mut db = make_db();
         db.get_mut("users").unwrap().delete(1).unwrap(); // Bob gone.
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::all".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Int(1)],
-                vec![Value::Int(2)],
-            ])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::all", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+        ]);
 
         let plan = caller_plan("users::all", "users", "__caller_0_arg_0");
         let err = execute(&mut ctx, &plan).unwrap_err();
@@ -784,17 +716,17 @@ mod tests {
 
     #[test]
     fn test_execute_caller_live_rows_only_succeed_after_delete() {
-        // Happy counterpart to `*_pk_of_deleted_row_errors`: when the caller
-        // only returns PKs for live rows (correctly reflecting state), the
-        // query succeeds and returns exactly those live rows.
+        // Happy counterpart: when Phase 0 only stored PKs for live rows
+        // (correctly reflecting state), the query succeeds and returns
+        // exactly those live rows.
         let mut db = make_db();
         db.get_mut("users").unwrap().delete(1).unwrap();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::live".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(3)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::live", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(3)],
+        ]);
 
         let plan = caller_plan("users::live", "users", "__caller_0_arg_0");
         let result = execute(&mut ctx, &plan).unwrap();
@@ -823,14 +755,11 @@ mod tests {
         let mut db = HashMap::new();
         db.insert("tags".into(), make_tags_table_string_pk());
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "tags::popular".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Text("red".into())],
-                vec![Value::Text("blue".into())],
-            ])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "tags::popular", &[Value::Int(0)], vec![
+            vec![Value::Text("red".into())],
+            vec![Value::Text("blue".into())],
+        ]);
 
         let tags_schema = Schema::new(vec![
             ColumnDef { table: Some("tags".into()), name: "name".into() },
@@ -885,14 +814,11 @@ mod tests {
         let mut db = HashMap::new();
         db.insert("memberships".into(), make_memberships_composite_pk());
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "memberships::for_admin".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Int(1), Value::Int(1)],
-                vec![Value::Int(2), Value::Int(1)],
-            ])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "memberships::for_admin", &[Value::Int(0)], vec![
+            vec![Value::Int(1), Value::Int(1)],
+            vec![Value::Int(2), Value::Int(1)],
+        ]);
 
         let m_schema = Schema::new(vec![
             ColumnDef { table: Some("memberships".into()), name: "org_id".into() },
@@ -929,14 +855,11 @@ mod tests {
         // users (table) ⨝ orders-by-user(id) (caller into orders).
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "orders::by_user".into(),
-            Box::new(|_| Ok(vec![
-                vec![Value::Int(10)],
-                vec![Value::Int(11)],
-            ])),
-        );
         ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "orders::by_user", &[Value::Int(0)], vec![
+            vec![Value::Int(10)],
+            vec![Value::Int(11)],
+        ]);
 
         let plan = PlanSelect {
             sources: vec![
@@ -981,11 +904,11 @@ mod tests {
         // caller (users) first source, orders plain-table second as join partner.
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::pick".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(2)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::pick", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+        ]);
 
         let plan = PlanSelect {
             sources: vec![
@@ -1034,16 +957,16 @@ mod tests {
         // Caller ⨝ Caller (same row_table twice through different callers).
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::first".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(2)]])),
-        );
-        ctx.callers.insert(
-            "users::second".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(3)]])),
-        );
         ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
         ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::first", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(2)],
+        ]);
+        fill_req(&mut ctx, "users::second", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+            vec![Value::Int(3)],
+        ]);
 
         let plan = PlanSelect {
             sources: vec![
@@ -1084,11 +1007,10 @@ mod tests {
     fn test_execute_index_lookup_onto_caller_rejected() {
         let db = make_db();
         let mut ctx = ExecutionContext::new(&db);
-        ctx.callers.insert(
-            "users::pick".into(),
-            Box::new(|_| Ok(vec![vec![Value::Int(1)]])),
-        );
         ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+        fill_req(&mut ctx, "users::pick", &[Value::Int(0)], vec![
+            vec![Value::Int(1)],
+        ]);
 
         let plan = PlanSelect {
             sources: vec![

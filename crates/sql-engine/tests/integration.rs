@@ -73,6 +73,63 @@ impl TestDb {
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
+
+    fn run_with_fetchers(
+        &mut self,
+        sql: &str,
+        params: execute::Params,
+        fetchers: &execute::FetcherRuntime,
+    ) -> Columns {
+        let ast = parser::parse(sql).expect("parse failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements)
+            .expect("plan failed");
+        pollster::block_on(execute::execute_and_resolve_requirements(
+            &mut self.tables,
+            &plan,
+            params,
+            fetchers,
+        ))
+        .expect("execute failed")
+    }
+
+    fn run_with_fetchers_result(
+        &mut self,
+        sql: &str,
+        params: execute::Params,
+        fetchers: &execute::FetcherRuntime,
+    ) -> Result<Columns, execute::ExecuteError> {
+        let ast = parser::parse(sql).expect("parse failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements)
+            .expect("plan failed");
+        pollster::block_on(execute::execute_and_resolve_requirements(
+            &mut self.tables,
+            &plan,
+            params,
+            fetchers,
+        ))
+    }
+}
+
+/// Wrap a sync closure as an `AsyncFetcherFn` — the closure runs eagerly
+/// inside a ready future. For real async fetchers (HTTP, etc.) use
+/// `Box::new(move |args| Box::pin(async move { ... }))` directly.
+fn sync_fetcher<F>(f: F) -> execute::AsyncFetcherFn
+where
+    F: Fn(Vec<sql_parser::ast::Value>) -> Result<Vec<Vec<CellValue>>, String> + 'static,
+{
+    Box::new(move |args| {
+        let result = f(args);
+        Box::pin(async move { result })
+    })
+}
+
+/// Build a `users` row in the schema's column order: (id, name, age).
+fn user_row(id: i64, name: &str, age: Option<i64>) -> Vec<CellValue> {
+    vec![
+        i(id),
+        s(name),
+        age.map(i).unwrap_or(CellValue::Null),
+    ]
 }
 
 fn i(v: i64) -> CellValue {
@@ -961,19 +1018,19 @@ fn caller_source_end_to_end() {
     assert_eq!(plan.bound_values.len(), 1);
     assert!(plan.bound_values.contains_key("__caller_0_arg_0"));
 
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
-            // Simulate: owner=2 returns users with id 2 and 3 (Bob, Carol).
+        sync_fetcher(|args| {
+            // owner=2 returns full rows for Bob and Carol.
             let owner = match args.first() {
                 Some(sql_parser::ast::Value::Int(n)) => *n,
                 _ => return Err("expected Int owner".into()),
             };
             if owner == 2 {
                 Ok(vec![
-                    vec![sql_parser::ast::Value::Int(2)],
-                    vec![sql_parser::ast::Value::Int(3)],
+                    user_row(2, "Bob", Some(25)),
+                    user_row(3, "Carol", Some(35)),
                 ])
             } else {
                 Ok(vec![])
@@ -981,7 +1038,13 @@ fn caller_source_end_to_end() {
         }),
     );
 
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = pollster::block_on(execute::execute_and_resolve_requirements(
+        &mut db.tables,
+        &plan,
+        execute::Params::new(),
+        &fetchers,
+    ))
+    .expect("execute");
     assert_eq!(result[0], vec![i(2), i(3)]);
     assert_eq!(result[1], vec![s("Bob"), s("Carol")]);
 }
@@ -1017,41 +1080,45 @@ fn caller_source_with_user_placeholder() {
         "owner".into(),
         execute::ParamValue::Int(1),
     )]);
-    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
+        sync_fetcher(|args| {
             let owner = match args.first() {
                 Some(sql_parser::ast::Value::Int(n)) => *n,
                 _ => return Err("expected Int".into()),
             };
-            assert_eq!(owner, 1, "caller should receive resolved user-param value");
-            Ok(vec![vec![sql_parser::ast::Value::Int(1)]])
+            assert_eq!(owner, 1, "fetcher should receive resolved user-param value");
+            Ok(vec![user_row(1, "Alice", Some(30))])
         }),
     );
 
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = pollster::block_on(execute::execute_and_resolve_requirements(
+        &mut db.tables,
+        &plan,
+        params,
+        &fetchers,
+    ))
+    .expect("execute");
     assert_eq!(result[0], vec![i(1)]);
     assert_eq!(result[1], vec![s("Alice")]);
 }
 
 // ── Caller-backed FROM sources — more literal + operator coverage ───────────
 
-/// Helper: register a users::by_owner caller that returns the echo of its
-/// single I64 arg (and that id + 2 if present). Reused across tests below.
-fn register_users_by_owner(ctx: &mut execute::ExecutionContext) {
-    ctx.callers.insert(
+/// Fixture: a `users::by_owner` fetcher that returns all four users regardless
+/// of the owner arg. Simulates a Fetcher with broad read-scope — WHERE/LIMIT
+/// narrow the result at the SQL layer. Reused across tests below.
+fn register_users_by_owner(fetchers: &mut execute::FetcherRuntime) {
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
-            let owner = match args.first() {
-                Some(sql_parser::ast::Value::Int(n)) => *n,
-                other => return Err(format!("expected Int, got {other:?}")),
-            };
-            let mut result = vec![vec![sql_parser::ast::Value::Int(owner)]];
-            if owner + 1 <= 4 {
-                result.push(vec![sql_parser::ast::Value::Int(owner + 1)]);
-            }
-            Ok(result)
+        sync_fetcher(|_args| {
+            Ok(vec![
+                user_row(1, "Alice", Some(30)),
+                user_row(2, "Bob", Some(25)),
+                user_row(3, "Carol", Some(35)),
+                user_row(4, "Dave", None),
+            ])
         }),
     );
 }
@@ -1086,24 +1153,23 @@ fn caller_source_with_text_literal_arg() {
         },
     );
 
-    let ast = parser::parse("SELECT users.id FROM users.by_name('Bob')")
-        .expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_name".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
+        sync_fetcher(|args| {
             match args.first() {
                 Some(sql_parser::ast::Value::Text(n)) if n == "Bob" =>
-                    Ok(vec![vec![sql_parser::ast::Value::Int(2)]]),
+                    Ok(vec![user_row(2, "Bob", Some(25))]),
                 other => Err(format!("expected Text(Bob), got {other:?}")),
             }
         }),
     );
 
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = db.run_with_fetchers(
+        "SELECT users.id FROM users.by_name('Bob')",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![i(2)]);
 }
 
@@ -1112,24 +1178,23 @@ fn caller_source_with_null_literal_arg() {
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse("SELECT users.id FROM users.by_owner(NULL)")
-        .expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
+        sync_fetcher(|args| {
             match args.first() {
                 Some(sql_parser::ast::Value::Null) =>
-                    Ok(vec![vec![sql_parser::ast::Value::Int(1)]]),
+                    Ok(vec![user_row(1, "Alice", Some(30))]),
                 other => Err(format!("expected Null, got {other:?}")),
             }
         }),
     );
 
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = db.run_with_fetchers(
+        "SELECT users.id FROM users.by_owner(NULL)",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![i(1)]);
 }
 
@@ -1149,31 +1214,38 @@ fn caller_source_with_multiple_literal_args() {
         },
     );
 
+    // Parse once to assert bound_values; then run via helper.
     let ast = parser::parse(
         "SELECT users.id, users.age FROM users.by_age_range(25, 32)"
     ).expect("parse");
     let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
         .expect("plan");
-
     // Both literals auto-platzhalterisiert.
     assert_eq!(plan.bound_values.len(), 2);
     assert!(plan.bound_values.contains_key("__caller_0_arg_0"));
     assert!(plan.bound_values.contains_key("__caller_0_arg_1"));
+    drop(plan);
 
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_age_range".into(),
-        Box::new(|args: &[sql_parser::ast::Value]| {
+        sync_fetcher(|args| {
             assert_eq!(args.len(), 2);
             match (&args[0], &args[1]) {
-                (sql_parser::ast::Value::Int(25), sql_parser::ast::Value::Int(32)) =>
-                    Ok(vec![vec![sql_parser::ast::Value::Int(1)], vec![sql_parser::ast::Value::Int(2)]]),
+                (sql_parser::ast::Value::Int(25), sql_parser::ast::Value::Int(32)) => Ok(vec![
+                    user_row(1, "Alice", Some(30)),
+                    user_row(2, "Bob", Some(25)),
+                ]),
                 other => Err(format!("bad args: {other:?}")),
             }
         }),
     );
 
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = db.run_with_fetchers(
+        "SELECT users.id, users.age FROM users.by_age_range(25, 32)",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![i(1), i(2)]);
     assert_eq!(result[1], vec![i(30), i(25)]);
 }
@@ -1183,22 +1255,21 @@ fn caller_source_with_where_clause() {
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse(
-        "SELECT users.id, users.age FROM users.by_owner(1) WHERE users.age > 28"
-    ).expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|_| Ok(vec![
-            vec![sql_parser::ast::Value::Int(1)], // Alice, age 30
-            vec![sql_parser::ast::Value::Int(2)], // Bob, age 25 (filtered out)
-            vec![sql_parser::ast::Value::Int(3)], // Carol, age 35
+        sync_fetcher(|_| Ok(vec![
+            user_row(1, "Alice", Some(30)),
+            user_row(2, "Bob", Some(25)),    // filtered out by age > 28
+            user_row(3, "Carol", Some(35)),
         ])),
     );
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+
+    let result = db.run_with_fetchers(
+        "SELECT users.id, users.age FROM users.by_owner(1) WHERE users.age > 28",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![i(1), i(3)]);
     assert_eq!(result[1], vec![i(30), i(35)]);
 }
@@ -1208,22 +1279,20 @@ fn caller_source_with_order_by() {
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse(
-        "SELECT users.name FROM users.by_owner(1) ORDER BY users.age DESC"
-    ).expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|_| Ok(vec![
-            vec![sql_parser::ast::Value::Int(1)], // Alice 30
-            vec![sql_parser::ast::Value::Int(2)], // Bob 25
-            vec![sql_parser::ast::Value::Int(3)], // Carol 35
+        sync_fetcher(|_| Ok(vec![
+            user_row(1, "Alice", Some(30)),
+            user_row(2, "Bob", Some(25)),
+            user_row(3, "Carol", Some(35)),
         ])),
     );
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = db.run_with_fetchers(
+        "SELECT users.name FROM users.by_owner(1) ORDER BY users.age DESC",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![s("Carol"), s("Alice"), s("Bob")]);
 }
 
@@ -1232,46 +1301,42 @@ fn caller_source_with_limit() {
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse(
-        "SELECT users.id FROM users.by_owner(1) ORDER BY users.id ASC LIMIT 2"
-    ).expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    ctx.callers.insert(
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
         "users::by_owner".into(),
-        Box::new(|_| Ok(vec![
-            vec![sql_parser::ast::Value::Int(3)],
-            vec![sql_parser::ast::Value::Int(1)],
-            vec![sql_parser::ast::Value::Int(2)],
+        sync_fetcher(|_| Ok(vec![
+            user_row(3, "Carol", Some(35)),
+            user_row(1, "Alice", Some(30)),
+            user_row(2, "Bob", Some(25)),
         ])),
     );
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    let result = db.run_with_fetchers(
+        "SELECT users.id FROM users.by_owner(1) ORDER BY users.id ASC LIMIT 2",
+        execute::Params::new(),
+        &fetchers,
+    );
     assert_eq!(result[0], vec![i(1), i(2)]);
 }
 
 #[test]
 fn caller_source_with_group_by_and_aggregate() {
-    // Caller returns users; JOIN orders; GROUP BY age-bucket; COUNT orders.
-    // Covers Phase 2 join + Phase 4 aggregate on a caller-seeded scan.
+    // Fetcher seeds users; JOIN orders; GROUP BY name; COUNT orders.
+    // Covers Phase 0 fetch + Phase 2 join + Phase 4 aggregate end-to-end.
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse(
+    let mut fetchers = execute::FetcherRuntime::new();
+    register_users_by_owner(&mut fetchers);
+
+    let result = db.run_with_fetchers(
         "SELECT users.name, COUNT(orders.amount) \
          FROM users.by_owner(1) \
          INNER JOIN orders ON users.id = orders.user_id \
-         GROUP BY users.name"
-    ).expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    register_users_by_owner(&mut ctx);
-
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
-    // by_owner(1) returns [1, 2] → Alice(2 orders) + Bob(1 order).
+         GROUP BY users.name",
+        execute::Params::new(),
+        &fetchers,
+    );
+    // Fetcher returns all 4 users → join with orders → Alice(2), Bob(1), Carol(1).
     // Row order may depend on HashMap iteration of group keys, so sort.
     let mut pairs: Vec<(CellValue, CellValue)> = result[0].iter()
         .cloned()
@@ -1284,6 +1349,7 @@ fn caller_source_with_group_by_and_aggregate() {
     assert_eq!(pairs, vec![
         (s("Alice"), i(2)),
         (s("Bob"), i(1)),
+        (s("Carol"), i(1)),
     ]);
 }
 
@@ -1294,35 +1360,34 @@ fn caller_source_joined_with_plain_table_end_to_end() {
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse(
+    let mut fetchers = execute::FetcherRuntime::new();
+    register_users_by_owner(&mut fetchers);
+    let result = db.run_with_fetchers(
         "SELECT users.name, orders.amount \
          FROM users.by_owner(1) \
          INNER JOIN orders ON users.id = orders.user_id \
-         ORDER BY orders.amount ASC"
-    ).expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
-        .expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    register_users_by_owner(&mut ctx);
-    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
-    // Alice(1) → 100, 200; Bob(2) → 50.
-    assert_eq!(result[0], vec![s("Bob"), s("Alice"), s("Alice")]);
-    assert_eq!(result[1], vec![i(50), i(100), i(200)]);
+         ORDER BY orders.amount ASC",
+        execute::Params::new(),
+        &fetchers,
+    );
+    // by_owner returns all 4 → join with orders → Bob(50), Alice(100,200), Carol(300).
+    assert_eq!(result[0], vec![s("Bob"), s("Alice"), s("Alice"), s("Carol")]);
+    assert_eq!(result[1], vec![i(50), i(100), i(200), i(300)]);
 }
 
 #[test]
-fn caller_source_unregistered_caller_runtime_errors() {
-    // Planner passes (registry has Meta) but no runtime closure is registered.
+fn caller_source_unregistered_fetcher_errors() {
+    // Planner passes (registry has Meta) but no fetcher is registered —
+    // Phase 0 (resolve_requirements) surfaces the missing fetcher.
     let mut db = make_db();
     register_users_meta(&mut db);
 
-    let ast = parser::parse("SELECT users.id FROM users.by_owner(1)").expect("parse");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements).expect("plan");
-
-    let mut ctx = execute::ExecutionContext::new(&db.tables);
-    // deliberately no ctx.callers.insert(...)
-    let err = execute::execute_plan(&mut ctx, &plan).unwrap_err();
+    let fetchers = execute::FetcherRuntime::new();
+    let err = db.run_with_fetchers_result(
+        "SELECT users.id FROM users.by_owner(1)",
+        execute::Params::new(),
+        &fetchers,
+    ).unwrap_err();
     match err {
         execute::ExecuteError::CallerError(msg) => {
             assert!(msg.contains("users::by_owner"), "got: {msg}");
@@ -1330,4 +1395,183 @@ fn caller_source_unregistered_caller_runtime_errors() {
         }
         other => panic!("expected CallerError, got {other:?}"),
     }
+}
+
+// ── Phase 0 (resolve_requirements) edge cases ───────────────────────────────
+
+#[test]
+fn phase0_fetcher_error_propagates() {
+    // A fetcher closure returning Err surfaces as CallerError("... failed: ...").
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        sync_fetcher(|_| Err("upstream 503".into())),
+    );
+    let err = db.run_with_fetchers_result(
+        "SELECT users.id FROM users.by_owner(1)",
+        execute::Params::new(),
+        &fetchers,
+    ).unwrap_err();
+    match err {
+        execute::ExecuteError::CallerError(msg) => {
+            assert!(msg.contains("users::by_owner"), "got: {msg}");
+            assert!(msg.contains("failed"), "got: {msg}");
+            assert!(msg.contains("upstream 503"), "got: {msg}");
+        }
+        other => panic!("expected CallerError, got {other:?}"),
+    }
+}
+
+#[test]
+fn phase0_list_param_rejected_for_caller_arg() {
+    // IntList as fetcher arg — can't downgrade to scalar, Phase 0 BindError.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        sync_fetcher(|_| Ok(vec![])),
+    );
+
+    let params = HashMap::from([(
+        "owner".into(),
+        execute::ParamValue::IntList(vec![1, 2]),
+    )]);
+    let err = db.run_with_fetchers_result(
+        "SELECT users.id FROM users.by_owner(:owner)",
+        params,
+        &fetchers,
+    ).unwrap_err();
+    assert!(
+        matches!(err, execute::ExecuteError::BindError(ref msg) if msg.contains("list")),
+        "got: {err:?}",
+    );
+}
+
+#[test]
+fn phase0_column_count_mismatch_errors() {
+    // Fetcher returns rows with too few cells — must error before scan.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        sync_fetcher(|_| Ok(vec![vec![i(1), s("Alice")]])), // missing age col
+    );
+    let err = db.run_with_fetchers_result(
+        "SELECT users.id FROM users.by_owner(1)",
+        execute::Params::new(),
+        &fetchers,
+    ).unwrap_err();
+    match err {
+        execute::ExecuteError::CallerError(msg) => {
+            assert!(msg.contains("returned 2 cells"), "got: {msg}");
+            assert!(msg.contains("has 3 columns"), "got: {msg}");
+        }
+        other => panic!("expected CallerError, got {other:?}"),
+    }
+}
+
+#[test]
+fn phase0_upsert_persists_beyond_query_lifetime() {
+    // Start with an empty users table; Phase 0 populates it; after the query,
+    // a plain SELECT (no caller) still sees the rows — data has DB lifetime.
+    let mut db = TestDb::new();
+    db.add_table(
+        "users",
+        &[
+            ("id", DataType::I64, false),
+            ("name", DataType::String, false),
+            ("age", DataType::I64, true),
+        ],
+    );
+    register_users_meta(&mut db);
+
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        sync_fetcher(|_| Ok(vec![
+            user_row(1, "Alice", Some(30)),
+            user_row(2, "Bob", Some(25)),
+        ])),
+    );
+
+    // First query: fetch + read.
+    let r1 = db.run_with_fetchers(
+        "SELECT users.name FROM users.by_owner(1)",
+        execute::Params::new(),
+        &fetchers,
+    );
+    assert_eq!(r1[0], vec![s("Alice"), s("Bob")]);
+    assert_eq!(db.tables["users"].len(), 2);
+
+    // Second query: plain SELECT, no fetcher involvement → rows still there.
+    let r2 = db.run("SELECT users.name FROM users WHERE users.age > 26");
+    assert_eq!(r2[0], vec![s("Alice")]);
+    assert_eq!(db.tables["users"].len(), 2);
+}
+
+#[test]
+fn phase0_upsert_overwrites_existing_row() {
+    // Pre-existing users row with id=1 (Alice, age 30); fetcher returns id=1
+    // with different name+age → after Phase 0, only the new version exists.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+    assert_eq!(db.tables["users"].len(), 4);
+
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        sync_fetcher(|_| Ok(vec![user_row(1, "Alicia", Some(31))])),
+    );
+    let result = db.run_with_fetchers(
+        "SELECT users.name, users.age FROM users.by_owner(1)",
+        execute::Params::new(),
+        &fetchers,
+    );
+    assert_eq!(result[0], vec![s("Alicia")]);
+    assert_eq!(result[1], vec![i(31)]);
+
+    // Live-row count unchanged (overwrite, not duplicate).
+    assert_eq!(db.tables["users"].len(), 4);
+    // The original row is now tombstoned.
+    assert_eq!(db.tables["users"].deleted_count(), 1);
+}
+
+#[test]
+fn phase0_dedup_same_invocation_called_once() {
+    // Same (caller_id, args) appears twice in the plan (e.g. main + a
+    // materialization) — fetcher is invoked once. We proxy "once" by having
+    // the fetcher increment a shared counter.
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    let mut fetchers = execute::FetcherRuntime::new();
+    fetchers.insert(
+        "users::by_owner".into(),
+        Box::new(move |_args| {
+            counter_clone.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                Ok(vec![user_row(1, "Alice", Some(30))])
+            })
+        }),
+    );
+
+    // Two literal-identical caller invocations (both `by_owner(1)`) in an
+    // IN subquery + the outer select — same (caller_id, [Int(1)]) both times.
+    let _ = db.run_with_fetchers(
+        "SELECT users.name FROM users.by_owner(1) \
+         WHERE users.id IN (SELECT users.id FROM users.by_owner(1))",
+        execute::Params::new(),
+        &fetchers,
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 1, "fetcher should be called exactly once");
 }
