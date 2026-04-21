@@ -13,8 +13,9 @@ pub struct AppCtx {
     pub pool: sqlx::MySqlPool,
 }
 
-mod __generated {
+pub mod __generated {
     include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 }
 
 pub use __generated::register_all;
+pub use customers::Customer;

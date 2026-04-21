@@ -6,4 +6,4 @@ pub mod reactive;
 pub mod schema;
 pub mod storage;
 
-pub use caller::{Caller, CallerRegistry};
+pub use caller::{Caller, CallerRegistry, DbCaller, DbTable};

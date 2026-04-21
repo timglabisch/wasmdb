@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use sql_engine::execute::ExecuteError;
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::{CellValue, Table};
-use sql_engine::{Caller, CallerRegistry};
+use sql_engine::{Caller, CallerRegistry, DbCaller, DbTable};
 use sql_parser::ast::Statement;
 
 use crate::error::DbError;
@@ -90,5 +91,19 @@ impl Database {
     /// time and resolve at Phase 0 of async execution.
     pub fn register_caller(&mut self, caller: Caller) {
         self.callers.insert(caller);
+    }
+
+    /// Register a typed row: builds the table from `T::schema()`. Sugar
+    /// over `create_table` for the trait-based codegen path.
+    pub fn register_table<T: DbTable>(&mut self) -> Result<(), DbError> {
+        self.create_table(T::schema())
+    }
+
+    /// Register a typed caller. Wraps `Q::call` into the erased
+    /// `AsyncFetcherFn` expected by `Caller`, clones `ctx` into the
+    /// closure so every invocation gets an `Arc`-bump.
+    pub fn register_caller_of<Q: DbCaller>(&mut self, ctx: Arc<Q::Ctx>) {
+        let fetcher = Arc::new(move |args| Q::call(args, ctx.clone()));
+        self.register_caller(Caller::new(Q::ID, Q::meta(), fetcher));
     }
 }

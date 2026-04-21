@@ -1,0 +1,26 @@
+[package]
+name = "tables-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# E2E fixture crate for the `tables` ecosystem. Uses the real #[row]/#[query]
+# macros and `tables-codegen` (server mode) against its own `src/`. Provides
+# an in-memory `AppCtx` so integration tests can drive the full stack
+# (Database::register_table + register_caller_of + SQL execution) without a
+# real database backend.
+
+[dependencies]
+tables = { path = "../tables" }
+tables-storage = { path = "../tables-storage" }
+sql-engine = { path = "../sql-engine" }
+sql-parser = { path = "../sql-parser" }
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+tables-codegen = { path = "../tables-codegen" }
+
+[dev-dependencies]
+database = { path = "../database" }
+pollster = "0.4"

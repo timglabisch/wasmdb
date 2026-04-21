@@ -1,0 +1,14 @@
+[package]
+name = "tables-fieldtypes"
+version = "0.1.0"
+edition = "2021"
+
+# Rust-Type → DataType classification shared between the `#[row]` /
+# `#[query]` proc-macros (`tables-macros`) and the build-time codegen
+# (`tables-codegen`). Kept separate so neither depends on the other —
+# both consume the same rules and error messages, so drift is impossible.
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"

@@ -10,6 +10,8 @@ members = [
     "crates/tables",
     "crates/tables-client",
     "crates/tables-codegen",
+    "crates/tables-e2e",
+    "crates/tables-fieldtypes",
     "crates/tables-macros",
     "crates/tables-storage",
     "crates/sync-server",

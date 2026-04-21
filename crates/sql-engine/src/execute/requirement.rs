@@ -35,16 +35,28 @@ use super::{cell_to_value, value_to_cell, ExecuteError, ParamValue, Params};
 /// `row_table`'s column order. Phase 0 upserts these into the row_table and
 /// extracts the PK tuples for Phase 3 to scan.
 ///
-/// `+ Send` so that a `Database` holding a `FetcherRuntime` is itself `Send`,
-/// enabling `Arc<Mutex<Database>>`-style sharing in axum handlers.
-pub type FetcherFuture = Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>> + Send>>;
+/// Native builds carry `+ Send` so a `Database` holding a `FetcherRuntime`
+/// can cross threads (Axum handlers wrap it in `Arc<Mutex<_>>`). The wasm
+/// client runs single-threaded and the HTTP fetcher uses `JsFuture`, which
+/// holds `Rc<RefCell<_>>` and can't be `Send` — the bound is dropped there.
+#[cfg(not(target_arch = "wasm32"))]
+pub type FetcherFuture =
+    Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+pub type FetcherFuture =
+    Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>>>>;
 
 /// A registered fetcher. Invoked during Phase 0 (`resolve_requirements`).
-/// `Send + Sync` so `Database` stays `Send`; wrapped in `Arc` so cloning a
-/// `FetcherRuntime` / `Database` shares closure identity rather than
-/// forcing every closure to be `Clone` (most capture Arc-wrapped state
-/// like DB pools).
+/// Native builds require `Send + Sync` so `Database` stays `Send`; on wasm
+/// both bounds are dropped for the same reason `FetcherFuture` loses `Send`
+/// there. `Arc` so cloning shares closure identity rather than forcing every
+/// closure to be `Clone`.
+#[cfg(not(target_arch = "wasm32"))]
 pub type AsyncFetcherFn = Arc<dyn Fn(Vec<Value>) -> FetcherFuture + Send + Sync>;
+
+#[cfg(target_arch = "wasm32")]
+pub type AsyncFetcherFn = Arc<dyn Fn(Vec<Value>) -> FetcherFuture>;
 
 /// Registry of fetcher implementations, keyed by `"{schema}::{function}"`.
 pub type FetcherRuntime = HashMap<String, AsyncFetcherFn>;

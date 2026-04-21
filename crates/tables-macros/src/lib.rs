@@ -24,6 +24,7 @@ use syn::{
     parse_macro_input, Data, DeriveInput, Error, Fields, FnArg, Ident, ItemFn, LitStr, PatType,
     ReturnType, Token, Type, TypePath, Visibility,
 };
+use tables_fieldtypes::{classify, pascal_to_snake, FieldKind};
 
 // ============================================================
 // #[row]
@@ -54,7 +55,15 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
         return Err(Error::new_spanned(&input, "#[row] needs named fields"));
     };
 
-    let mut pk_field: Option<(syn::Ident, Type)> = None;
+    struct RowField {
+        ident: syn::Ident,
+        ty: Type,
+        kind: FieldKind,
+        is_pk: bool,
+    }
+
+    let mut fields: Vec<RowField> = Vec::new();
+    let mut pk_seen = false;
 
     for field in named.named.iter_mut() {
         let Some(ident) = field.ident.clone() else {
@@ -70,16 +79,68 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
             }
         });
         if is_pk {
-            if pk_field.is_some() {
+            if pk_seen {
                 return Err(Error::new_spanned(field, "more than one #[pk] field"));
             }
-            pk_field = Some((ident, field.ty.clone()));
+            pk_seen = true;
         }
+        let kind = classify(&field.ty).ok_or_else(|| {
+            Error::new_spanned(
+                &field.ty,
+                format!(
+                    "#[row] field `{ident}`: supported types are i64, String, Option<i64>, Option<String>",
+                ),
+            )
+        })?;
+        fields.push(RowField { ident, ty: field.ty.clone(), kind, is_pk });
     }
 
-    let (pk_name, pk_ty) = pk_field.ok_or_else(|| {
-        Error::new_spanned(&input, "missing #[pk] field — exactly one required")
-    })?;
+    let pk_idx = fields
+        .iter()
+        .position(|f| f.is_pk)
+        .ok_or_else(|| Error::new_spanned(&input, "missing #[pk] field — exactly one required"))?;
+    let pk_name = fields[pk_idx].ident.clone();
+    let pk_ty = fields[pk_idx].ty.clone();
+
+    let table_lit = pascal_to_snake(&name.to_string());
+
+    let column_defs = fields.iter().map(|f| {
+        let col_name = f.ident.to_string();
+        let (dt, nullable) = f.kind.column_meta();
+        quote! {
+            ::sql_engine::schema::ColumnSchema {
+                name: #col_name.into(),
+                data_type: #dt,
+                nullable: #nullable,
+            }
+        }
+    });
+
+    let cell_pushes = fields.iter().map(|f| {
+        let ident = &f.ident;
+        match f.kind {
+            FieldKind::I64 => quote! {
+                out.push(::sql_engine::storage::CellValue::I64(self.#ident));
+            },
+            FieldKind::Str => quote! {
+                out.push(::sql_engine::storage::CellValue::Str(self.#ident));
+            },
+            FieldKind::OptI64 => quote! {
+                out.push(match self.#ident {
+                    ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::I64(v),
+                    ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
+                });
+            },
+            FieldKind::OptStr => quote! {
+                out.push(match self.#ident {
+                    ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::Str(v),
+                    ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
+                });
+            },
+        }
+    });
+
+    let n_fields = fields.len();
 
     Ok(quote! {
         #[derive(
@@ -96,6 +157,25 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
             type Pk = #pk_ty;
             fn pk(&self) -> #pk_ty {
                 ::core::clone::Clone::clone(&self.#pk_name)
+            }
+        }
+
+        impl ::sql_engine::DbTable for #name {
+            const TABLE: &'static str = #table_lit;
+
+            fn schema() -> ::sql_engine::schema::TableSchema {
+                ::sql_engine::schema::TableSchema {
+                    name: <Self as ::sql_engine::DbTable>::TABLE.into(),
+                    columns: ::std::vec![ #(#column_defs),* ],
+                    primary_key: ::std::vec![ #pk_idx ],
+                    indexes: ::std::vec![],
+                }
+            }
+
+            fn into_cells(self) -> ::std::vec::Vec<::sql_engine::storage::CellValue> {
+                let mut out = ::std::vec::Vec::with_capacity(#n_fields);
+                #(#cell_pushes)*
+                out
             }
         }
     })

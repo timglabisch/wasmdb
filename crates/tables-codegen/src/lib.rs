@@ -107,7 +107,7 @@ impl Builder {
         let out_path = PathBuf::from(out_dir).join(&self.out_file);
 
         let tokens = match self.mode {
-            Mode::Client => emit::emit_client(&model, &self.url, self.wasm_bindings),
+            Mode::Client => emit::emit_client(&model, &self.url, self.wasm_bindings)?,
             Mode::Server => {
                 let ctx = self.ctx_ty.as_deref().unwrap_or("crate::AppCtx");
                 emit::emit_server(&model, ctx)?
