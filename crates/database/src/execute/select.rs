@@ -15,7 +15,8 @@ fn plan_select(
     let table_schemas: HashMap<String, TableSchema> = tables.iter()
         .map(|(name, table)| (name.clone(), table.schema.clone()))
         .collect();
-    Ok(planner::sql::plan(select, &table_schemas)?)
+    let requirements = planner::requirement::RequirementRegistry::new();
+    Ok(planner::sql::plan(select, &table_schemas, &requirements)?)
 }
 
 pub(crate) fn execute_select(

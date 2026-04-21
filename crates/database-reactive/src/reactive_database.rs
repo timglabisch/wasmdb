@@ -190,7 +190,8 @@ impl ReactiveDatabase {
             };
 
             let table_schemas = self.db.table_schemas();
-            let plan = sql_engine::planner::reactive::plan_reactive(&select, &table_schemas)?;
+            let requirements = sql_engine::planner::requirement::RequirementRegistry::new();
+            let plan = sql_engine::planner::reactive::plan_reactive(&select, &table_schemas, &requirements)?;
             let sub_id = self.registry.subscribe(&plan.conditions, &plan.sources, &HashMap::new())?;
 
             self.subscriptions.insert(sub_id, Subscription {
