@@ -83,24 +83,71 @@ pub struct CallerRequirement {
     pub args: Vec<CellValue>,
 }
 
-/// Extract requirements from an AST. Walks top-level sources only.
+/// Extract requirements from an AST. Walks recursively into JOIN-partners,
+/// filter/group/order/result expressions, and every nested subquery — a
+/// `schema.fn(...)` deep inside `WHERE x IN (SELECT ...)` is just as much a
+/// requirement as one at the top level.
 pub fn plan_requirements(ast: &ast::AstSelect) -> Result<RequirementPlan, PlanError> {
     let mut requirements = Vec::new();
-    for entry in &ast.sources {
+    collect_from_select(ast, &mut requirements)?;
+    Ok(RequirementPlan { requirements })
+}
+
+fn collect_from_select(
+    select: &ast::AstSelect,
+    out: &mut Vec<Requirement>,
+) -> Result<(), PlanError> {
+    for entry in &select.sources {
         if let ast::AstSource::Call { schema, function, args } = &entry.source {
             let arg_values = args
                 .iter()
                 .enumerate()
                 .map(|(i, expr)| const_eval_literal(expr, schema, function, i))
                 .collect::<Result<Vec<_>, _>>()?;
-            requirements.push(Requirement::Caller(CallerRequirement {
+            out.push(Requirement::Caller(CallerRequirement {
                 caller_id: format!("{schema}::{function}"),
                 row_table: schema.clone(),
                 args: arg_values,
             }));
         }
+        if let Some(join) = &entry.join {
+            for e in &join.on {
+                collect_from_expr(e, out)?;
+            }
+        }
     }
-    Ok(RequirementPlan { requirements })
+    for e in &select.filter { collect_from_expr(e, out)?; }
+    for e in &select.group_by { collect_from_expr(e, out)?; }
+    for spec in &select.order_by { collect_from_expr(&spec.expr, out)?; }
+    for rc in &select.result_columns {
+        collect_from_expr(&rc.expr, out)?;
+    }
+    Ok(())
+}
+
+fn collect_from_expr(
+    expr: &ast::AstExpr,
+    out: &mut Vec<Requirement>,
+) -> Result<(), PlanError> {
+    match expr {
+        ast::AstExpr::Column(_) | ast::AstExpr::Literal(_) => Ok(()),
+        ast::AstExpr::Binary { left, right, .. } => {
+            collect_from_expr(left, out)?;
+            collect_from_expr(right, out)
+        }
+        ast::AstExpr::Aggregate { arg, .. } => collect_from_expr(arg, out),
+        ast::AstExpr::InList { expr, values } => {
+            collect_from_expr(expr, out)?;
+            for v in values { collect_from_expr(v, out)?; }
+            Ok(())
+        }
+        ast::AstExpr::InSubquery { expr, subquery } => {
+            collect_from_expr(expr, out)?;
+            collect_from_select(subquery, out)
+        }
+        ast::AstExpr::Subquery(sq) => collect_from_select(sq, out),
+        ast::AstExpr::Reactive(inner) => collect_from_expr(inner, out),
+    }
 }
 
 /// Collapse a single AST literal into a `CellValue`. Non-literals, floats,
@@ -463,6 +510,23 @@ unknown requirement: orders::fetch_by_user
 unknown requirement: orders::fetch_by_user
 ";
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn caller_inside_in_subquery_is_collected() {
+        // Caller tief in `WHERE id IN (SELECT id FROM x.fn(1))` muss als
+        // Requirement erkannt werden — Phase 0 muss den Fetcher auflösen,
+        // bevor die Materialisierung läuft.
+        let sql = "\
+            SELECT u.id FROM users AS u \
+            WHERE u.id IN (SELECT customers.id FROM customers.by_owner(42))\
+        ";
+        let ast = sql_parser::parser::parse(sql).expect("parse");
+        let plan = plan_requirements(&ast).unwrap();
+        assert_eq!(plan.requirements.len(), 1);
+        let f = expect_caller(&plan.requirements[0]);
+        assert_eq!(f.caller_id, "customers::by_owner");
+        assert_eq!(f.args, vec![CellValue::I64(42)]);
     }
 
     #[test]

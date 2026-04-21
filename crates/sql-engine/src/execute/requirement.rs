@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use sql_parser::ast::Value;
 
@@ -33,10 +34,17 @@ use super::{cell_to_value, value_to_cell, ExecuteError, ParamValue, Params};
 /// future can outlive the call site) and yield full rows — cells in the
 /// `row_table`'s column order. Phase 0 upserts these into the row_table and
 /// extracts the PK tuples for Phase 3 to scan.
-pub type FetcherFuture = Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>>>>;
+///
+/// `+ Send` so that a `Database` holding a `FetcherRuntime` is itself `Send`,
+/// enabling `Arc<Mutex<Database>>`-style sharing in axum handlers.
+pub type FetcherFuture = Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>> + Send>>;
 
 /// A registered fetcher. Invoked during Phase 0 (`resolve_requirements`).
-pub type AsyncFetcherFn = Box<dyn Fn(Vec<Value>) -> FetcherFuture>;
+/// `Send + Sync` so `Database` stays `Send`; wrapped in `Arc` so cloning a
+/// `FetcherRuntime` / `Database` shares closure identity rather than
+/// forcing every closure to be `Clone` (most capture Arc-wrapped state
+/// like DB pools).
+pub type AsyncFetcherFn = Arc<dyn Fn(Vec<Value>) -> FetcherFuture + Send + Sync>;
 
 /// Registry of fetcher implementations, keyed by `"{schema}::{function}"`.
 pub type FetcherRuntime = HashMap<String, AsyncFetcherFn>;

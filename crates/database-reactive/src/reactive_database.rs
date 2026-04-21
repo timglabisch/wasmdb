@@ -357,11 +357,12 @@ impl ReactiveDatabase {
         None
     }
 
-    /// Replace the inner table data with a clone of `other`. Keeps the registry
-    /// and subscriptions intact. Used by sync-client to rebuild optimistic from
-    /// confirmed without losing subscriptions.
+    /// Replace the inner table data with a clone of `other`'s tables. Keeps
+    /// the subscription registry, requirement registry, and fetcher runtime
+    /// intact. Used by sync-client to rebuild optimistic from confirmed
+    /// without losing subscriptions or registered fetchers.
     pub fn replace_data(&mut self, other: &Database) {
-        self.db = other.clone();
+        self.db.replace_tables(other);
     }
 
     // ── Introspection ────────────────────────────────────────────────

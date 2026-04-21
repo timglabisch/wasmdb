@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use sql_engine::execute::{self, ExecutionContext};
 use sql_engine::planner;
-use sql_engine::planner::requirement::RequirementRegistry;
+use sql_engine::CallerRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
@@ -30,11 +30,11 @@ fn make_table_schema(name: &str, cols: &[(&str, DataType, bool)]) -> TableSchema
 struct TestDb {
     tables: HashMap<String, Table>,
     table_schemas: HashMap<String, TableSchema>,
-    requirements: RequirementRegistry,
+    callers: CallerRegistry,
 }
 
 impl TestDb {
-    fn new() -> Self { Self { tables: HashMap::new(), table_schemas: HashMap::new(), requirements: RequirementRegistry::new() } }
+    fn new() -> Self { Self { tables: HashMap::new(), table_schemas: HashMap::new(), callers: CallerRegistry::new() } }
 
     fn add_table(&mut self, name: &str, cols: &[(&str, DataType, bool)]) -> &mut Table {
         let ts = make_table_schema(name, cols);
@@ -53,7 +53,7 @@ impl TestDb {
 
     fn trace(&self, sql: &str) -> String {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.callers.requirements).expect("plan failed");
         let mut ctx = ExecutionContext::new(&self.tables);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed");
         ctx.pretty_print()
@@ -999,7 +999,7 @@ fn parent_duration_gte_children_sum() {
     let ast = parser::parse(
         "SELECT users.name, orders.amount FROM users INNER JOIN orders ON users.id = orders.user_id"
     ).unwrap();
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements).unwrap();
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
     let mut ctx = ExecutionContext::new(&db.tables);
     execute::execute_plan(&mut ctx, &plan).unwrap();
 
