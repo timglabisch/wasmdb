@@ -38,9 +38,9 @@ pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 pub use bind::{resolve_filter, resolve_params, resolve_value};
 pub use context::{ExecutionContext, ScanMethod, Span, SpanOperation};
 pub use materialize::execute_plan;
-pub use pipeline::execute;
+pub use pipeline::{execute, execute_and_resolve_requirements};
 pub use requirement::{
-    execute_and_resolve_requirements, resolve_requirements,
+    resolve_requirements,
     AsyncFetcherFn, FetcherFuture, FetcherRuntime, RequirementKey, RequirementsResult,
 };
 pub use rowset::{RowSet, NULL_ROW};

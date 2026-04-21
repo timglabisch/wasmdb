@@ -25,7 +25,7 @@ use crate::planner::shared::plan::{
 use crate::planner::sql::plan::ExecutionPlan;
 use crate::storage::{CellValue, Table};
 
-use super::{cell_to_value, value_to_cell, Columns, ExecuteError, ExecutionContext, ParamValue, Params};
+use super::{cell_to_value, value_to_cell, ExecuteError, ParamValue, Params};
 
 // ── Fetcher runtime ───────────────────────────────────────────────────────
 
@@ -216,19 +216,3 @@ fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
     }
 }
 
-/// Async entry point: resolve requirements (Phase 0) and then run the full
-/// query. Returns the query's columns; diagnostic spans live on the
-/// (internally constructed) `ExecutionContext` and are currently not
-/// exposed. Use [`resolve_requirements`] + [`super::execute_plan`]
-/// separately if you need the spans.
-pub async fn execute_and_resolve_requirements(
-    db: &mut HashMap<String, Table>,
-    plan: &ExecutionPlan,
-    params: Params,
-    fetchers: &FetcherRuntime,
-) -> Result<Columns, ExecuteError> {
-    let requirements = resolve_requirements(db, plan, &params, fetchers).await?;
-    let mut ctx = ExecutionContext::with_params(db, params);
-    ctx.requirements = requirements;
-    super::execute_plan(&mut ctx, plan)
-}

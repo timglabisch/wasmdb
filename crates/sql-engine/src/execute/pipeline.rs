@@ -1,15 +1,37 @@
 //! Core execution pipeline: scan -> join -> filter -> aggregate -> sort -> limit -> project.
 
-use crate::planner::shared::plan::*;
+use std::collections::HashMap;
 
+use crate::planner::shared::plan::*;
+use crate::planner::sql::plan::ExecutionPlan;
+use crate::storage::Table;
+
+use super::requirement::{resolve_requirements, FetcherRuntime};
 use super::{aggregate, join, project, scan, sort};
-use super::{Columns, ExecuteError, ExecutionContext, SpanOperation};
+use super::{Columns, ExecuteError, ExecutionContext, Params, SpanOperation};
 
 pub fn execute(
     ctx: &mut ExecutionContext,
     plan: &PlanSelect,
 ) -> Result<Columns, ExecuteError> {
     ctx.span(SpanOperation::Execute, |ctx| execute_inner(ctx, plan))
+}
+
+/// Async entry point: resolve requirements (Phase 0) and then run the full
+/// query. Returns the query's columns; diagnostic spans live on the
+/// (internally constructed) `ExecutionContext` and are currently not
+/// exposed. Use [`resolve_requirements`] + [`super::execute_plan`]
+/// separately if you need the spans.
+pub async fn execute_and_resolve_requirements(
+    db: &mut HashMap<String, Table>,
+    plan: &ExecutionPlan,
+    params: Params,
+    fetchers: &FetcherRuntime,
+) -> Result<Columns, ExecuteError> {
+    let requirements = resolve_requirements(db, plan, &params, fetchers).await?;
+    let mut ctx = ExecutionContext::with_params(db, params);
+    ctx.requirements = requirements;
+    super::execute_plan(&mut ctx, plan)
 }
 
 fn execute_inner(
