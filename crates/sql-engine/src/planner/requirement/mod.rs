@@ -4,7 +4,7 @@
 //! produced directly from the AST and lists external work the caller
 //! must discharge before a result can be computed.
 //!
-//! Today the only variant is `Fetcher` (an HTTP-backed row delivery for
+//! Today the only variant is `Caller` (an HTTP-backed row delivery for
 //! a `schema.function(args)` FROM-clause source). The enum is open so
 //! future requirement kinds (cache warmups, external lookups, …) can
 //! slot in without churn.
@@ -35,7 +35,7 @@ impl RequirementPlan {
         ));
         for (i, req) in self.requirements.iter().enumerate() {
             match req {
-                Requirement::Fetcher(f) => {
+                Requirement::Caller(f) => {
                     let args = f
                         .args
                         .iter()
@@ -43,8 +43,8 @@ impl RequirementPlan {
                         .collect::<Vec<_>>()
                         .join(", ");
                     out.push_str(&format!(
-                        "  [{i}] Fetcher {}({args}) row={}\n",
-                        f.fetcher_id, f.row_table
+                        "  [{i}] Caller {}({args}) row={}\n",
+                        f.caller_id, f.row_table
                     ));
                 }
             }
@@ -61,18 +61,18 @@ fn fmt_cell(v: &CellValue) -> String {
     }
 }
 
-/// One requirement. Open-ended enum; today only fetcher calls.
+/// One requirement. Open-ended enum; today only caller invocations.
 #[derive(Debug, Clone)]
 pub enum Requirement {
-    Fetcher(FetcherRequirement),
+    Caller(CallerRequirement),
 }
 
-/// A fetcher call extracted from a FROM-clause `schema.function(args)` source.
+/// A caller invocation extracted from a FROM-clause `schema.function(args)` source.
 #[derive(Debug, Clone)]
-pub struct FetcherRequirement {
+pub struct CallerRequirement {
     /// Wire-ID used to dispatch the HTTP call, shaped `"{schema}::{function}"`.
-    pub fetcher_id: String,
-    /// Logical row table the fetcher populates — currently taken verbatim
+    pub caller_id: String,
+    /// Logical row table the caller populates — currently taken verbatim
     /// from the schema part of the call.
     pub row_table: String,
     /// Const-evaluated arguments in declaration order.
@@ -89,8 +89,8 @@ pub fn plan_requirements(ast: &ast::AstSelect) -> Result<RequirementPlan, PlanEr
                 .enumerate()
                 .map(|(i, expr)| const_eval_literal(expr, schema, function, i))
                 .collect::<Result<Vec<_>, _>>()?;
-            requirements.push(Requirement::Fetcher(FetcherRequirement {
-                fetcher_id: format!("{schema}::{function}"),
+            requirements.push(Requirement::Caller(CallerRequirement {
+                caller_id: format!("{schema}::{function}"),
                 row_table: schema.clone(),
                 args: arg_values,
             }));
@@ -100,7 +100,7 @@ pub fn plan_requirements(ast: &ast::AstSelect) -> Result<RequirementPlan, PlanEr
 }
 
 /// Collapse a single AST literal into a `CellValue`. Non-literals, floats,
-/// bools, and placeholders are rejected — MVP keeps fetcher args strictly
+/// bools, and placeholders are rejected — MVP keeps caller args strictly
 /// concrete.
 fn const_eval_literal(
     expr: &ast::AstExpr,
@@ -112,7 +112,7 @@ fn const_eval_literal(
         ast::AstExpr::Literal(v) => v,
         _ => {
             return Err(PlanError::UnsupportedExpr(format!(
-                "fetcher `{schema}.{function}(...)` arg {arg_idx}: only literal arguments are supported"
+                "caller `{schema}.{function}(...)` arg {arg_idx}: only literal arguments are supported"
             )));
         }
     };
@@ -121,7 +121,7 @@ fn const_eval_literal(
         ast::Value::Text(s) => Ok(CellValue::Str(s.clone())),
         ast::Value::Null => Ok(CellValue::Null),
         other => Err(PlanError::UnsupportedExpr(format!(
-            "fetcher `{schema}.{function}(...)` arg {arg_idx}: unsupported literal {other:?}"
+            "caller `{schema}.{function}(...)` arg {arg_idx}: unsupported literal {other:?}"
         ))),
     }
 }
@@ -180,9 +180,9 @@ mod tests {
         }
     }
 
-    fn expect_fetcher(req: &Requirement) -> &FetcherRequirement {
+    fn expect_caller(req: &Requirement) -> &CallerRequirement {
         match req {
-            Requirement::Fetcher(f) => f,
+            Requirement::Caller(f) => f,
         }
     }
 
@@ -194,46 +194,46 @@ mod tests {
     }
 
     #[test]
-    fn single_fetcher_call() {
+    fn single_caller_call() {
         let ast = select_with(vec![call("customers", "by_owner", vec![lit_int(42)])]);
         let plan = plan_requirements(&ast).unwrap();
         assert_eq!(plan.requirements.len(), 1);
-        let f = expect_fetcher(&plan.requirements[0]);
-        assert_eq!(f.fetcher_id, "customers::by_owner");
+        let f = expect_caller(&plan.requirements[0]);
+        assert_eq!(f.caller_id, "customers::by_owner");
         assert_eq!(f.row_table, "customers");
         assert_eq!(f.args, vec![CellValue::I64(42)]);
     }
 
     #[test]
-    fn fetcher_in_join_position() {
+    fn caller_in_join_position() {
         let ast = select_with(vec![
             table("users"),
             join_of(call("invoices", "by_customer", vec![lit_int(42)])),
         ]);
         let plan = plan_requirements(&ast).unwrap();
         assert_eq!(plan.requirements.len(), 1);
-        let f = expect_fetcher(&plan.requirements[0]);
-        assert_eq!(f.fetcher_id, "invoices::by_customer");
+        let f = expect_caller(&plan.requirements[0]);
+        assert_eq!(f.caller_id, "invoices::by_customer");
         assert_eq!(f.row_table, "invoices");
     }
 
     #[test]
-    fn two_fetchers_in_one_select() {
+    fn two_callers_in_one_select() {
         let ast = select_with(vec![
             call("a", "f", vec![lit_int(1)]),
             join_of(call("b", "g", vec![lit_int(2)])),
         ]);
         let plan = plan_requirements(&ast).unwrap();
         assert_eq!(plan.requirements.len(), 2);
-        assert_eq!(expect_fetcher(&plan.requirements[0]).fetcher_id, "a::f");
-        assert_eq!(expect_fetcher(&plan.requirements[1]).fetcher_id, "b::g");
+        assert_eq!(expect_caller(&plan.requirements[0]).caller_id, "a::f");
+        assert_eq!(expect_caller(&plan.requirements[1]).caller_id, "b::g");
     }
 
     #[test]
     fn string_literal_arg() {
         let ast = select_with(vec![call("contacts", "by_name", vec![lit_text("alice")])]);
         let plan = plan_requirements(&ast).unwrap();
-        let f = expect_fetcher(&plan.requirements[0]);
+        let f = expect_caller(&plan.requirements[0]);
         assert_eq!(f.args, vec![CellValue::Str("alice".into())]);
     }
 
@@ -245,7 +245,7 @@ mod tests {
             vec![AstExpr::Literal(Value::Null)],
         )]);
         let plan = plan_requirements(&ast).unwrap();
-        let f = expect_fetcher(&plan.requirements[0]);
+        let f = expect_caller(&plan.requirements[0]);
         assert_eq!(f.args, vec![CellValue::Null]);
     }
 
@@ -257,7 +257,7 @@ mod tests {
             vec![lit_int(1), lit_text("x"), lit_int(3)],
         )]);
         let plan = plan_requirements(&ast).unwrap();
-        let f = expect_fetcher(&plan.requirements[0]);
+        let f = expect_caller(&plan.requirements[0]);
         assert_eq!(
             f.args,
             vec![
@@ -330,17 +330,17 @@ mod tests {
         ]);
         let plan = plan_requirements(&ast).unwrap();
         assert_eq!(plan.requirements.len(), 1);
-        let f = expect_fetcher(&plan.requirements[0]);
-        assert_eq!(f.fetcher_id, "invoices::by_customer");
+        let f = expect_caller(&plan.requirements[0]);
+        assert_eq!(f.caller_id, "invoices::by_customer");
     }
 
     /// End-to-end: real SQL string → parser → requirement plan. Exercises
-    /// multiple fetchers with heterogeneous argument types, `AS` aliases,
-    /// an `INNER JOIN` onto another fetcher, a plain-table join, and a
+    /// multiple callers with heterogeneous argument types, `AS` aliases,
+    /// an `INNER JOIN` onto another caller, a plain-table join, and a
     /// `WHERE` clause — none of which the requirement planner cares about,
     /// but they must all pass through without disturbing the extracted set.
     #[test]
-    fn complex_multi_fetcher_query_from_sql() {
+    fn complex_multi_caller_query_from_sql() {
         let sql = "\
             SELECT c.name, i.number \
             FROM customers.by_owner(42, 'active') AS c \
@@ -354,11 +354,11 @@ mod tests {
         assert_eq!(
             plan.requirements.len(),
             2,
-            "one requirement per FROM/JOIN fetcher, plain tables ignored"
+            "one requirement per FROM/JOIN caller, plain tables ignored"
         );
 
-        let f0 = expect_fetcher(&plan.requirements[0]);
-        assert_eq!(f0.fetcher_id, "customers::by_owner");
+        let f0 = expect_caller(&plan.requirements[0]);
+        assert_eq!(f0.caller_id, "customers::by_owner");
         assert_eq!(f0.row_table, "customers");
         assert_eq!(
             f0.args,
@@ -366,15 +366,15 @@ mod tests {
             "mixed-type args preserve order and literal kind"
         );
 
-        let f1 = expect_fetcher(&plan.requirements[1]);
-        assert_eq!(f1.fetcher_id, "invoices::by_customer");
+        let f1 = expect_caller(&plan.requirements[1]);
+        assert_eq!(f1.caller_id, "invoices::by_customer");
         assert_eq!(f1.row_table, "invoices");
         assert_eq!(f1.args, vec![CellValue::I64(42)]);
 
         let expected = "\
 RequirementPlan (2 requirements)
-  [0] Fetcher customers::by_owner(42, 'active') row=customers
-  [1] Fetcher invoices::by_customer(42) row=invoices
+  [0] Caller customers::by_owner(42, 'active') row=customers
+  [1] Caller invoices::by_customer(42) row=invoices
 ";
         assert_eq!(plan.pretty_print(), expected);
     }
@@ -386,11 +386,11 @@ RequirementPlan (2 requirements)
         assert_eq!(plan.pretty_print(), "RequirementPlan (no requirements)\n");
     }
 
-    /// Integration: a query that uses a *fetcher-call* FROM-source
+    /// Integration: a query that uses a *caller-call* FROM-source
     /// (`orders.fetch_by_user(42)`) — routed through all three planners so
     /// you can see how each one reacts to the same input:
     ///
-    /// - `RequirementPlan` picks the fetcher up and lists it as external work.
+    /// - `RequirementPlan` picks the caller up and lists it as external work.
     /// - `ExecutionPlan` (SQL) rejects the call source — today the SQL
     ///   pipeline has no TVF support, so the error surface is what callers
     ///   must cope with.
@@ -398,7 +398,7 @@ RequirementPlan (2 requirements)
     ///   rejects with the same error.
     ///
     /// Asserting the exact outputs pins the current division of labor down:
-    /// fetchers are a `RequirementPlan` concern; the SQL/Reactive planners
+    /// callers are a `RequirementPlan` concern; the SQL/Reactive planners
     /// intentionally know nothing about them yet.
     #[test]
     fn complex_query_all_three_plans() {
@@ -415,7 +415,7 @@ RequirementPlan (2 requirements)
         ";
         let ast = sql_parser::parser::parse(sql_text).expect("parse");
 
-        // Plain-table schema registered under the same name as the fetcher
+        // Plain-table schema registered under the same name as the caller
         // call's schema part. RequirementPlan doesn't need this, but we keep
         // the shape realistic.
         let mut schemas: HashMap<String, TableSchema> = HashMap::new();
@@ -430,7 +430,7 @@ RequirementPlan (2 requirements)
             indexes: vec![],
         });
 
-        // (1) RequirementPlan — succeeds; picks up the fetcher.
+        // (1) RequirementPlan — succeeds; picks up the caller.
         let req_plan = plan_requirements(&ast).unwrap();
         assert_eq!(req_plan.requirements.len(), 1);
 
@@ -451,7 +451,7 @@ RequirementPlan (2 requirements)
         let expected = "\
 === RequirementPlan ===
 RequirementPlan (1 requirements)
-  [0] Fetcher orders::fetch_by_user(42) row=orders
+  [0] Caller orders::fetch_by_user(42) row=orders
 === ExecutionPlan (error) ===
 unsupported expression: function-call source `orders.fetch_by_user(...)` not yet supported by the planner
 === ReactivePlan (error) ===
@@ -470,7 +470,7 @@ unsupported expression: function-call source `orders.fetch_by_user(...)` not yet
         let plan = plan_requirements(&ast).unwrap();
         assert_eq!(
             plan.pretty_print(),
-            "RequirementPlan (1 requirements)\n  [0] Fetcher x::y(NULL, 'hi') row=x\n",
+            "RequirementPlan (1 requirements)\n  [0] Caller x::y(NULL, 'hi') row=x\n",
         );
     }
 }
