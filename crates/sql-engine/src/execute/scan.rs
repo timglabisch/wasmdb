@@ -1,19 +1,23 @@
-use crate::planner::shared::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSource, PlanSourceEntry};
+use crate::planner::shared::plan::{
+    PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSource, PlanSourceEntry,
+    RequirementArg,
+};
 use crate::storage::{CellValue, RangeOp, Table};
+use sql_parser::ast::Value;
 use super::value_to_cell;
-use super::{ExecutionContext, ScanMethod, SpanOperation};
+use super::{ExecuteError, ExecutionContext, ParamValue, ScanMethod, SpanOperation};
 
 use super::RowSet;
 
 /// Scan a source according to the plan's scan_method.
 ///
-/// Requirement sources are rejected at the pipeline level before reaching
-/// here, so this function assumes the source is a `Table`.
+/// Requirement sources are handled by [`scan_requirement`] — this function
+/// assumes the source is a `Table`.
 pub fn scan<'a>(ctx: &mut ExecutionContext, table: &'a Table, source: &PlanSourceEntry) -> RowSet<'a> {
     let scan_method = match &source.source {
         PlanSource::Table { scan_method, .. } => scan_method,
         PlanSource::Requirement { .. } => {
-            unreachable!("Requirement sources are filtered out in the pipeline before scan()");
+            unreachable!("Requirement sources go through scan_requirement(), not scan()");
         }
     };
     let table_name = table.schema.name.clone();
@@ -48,6 +52,137 @@ pub fn scan<'a>(ctx: &mut ExecutionContext, table: &'a Table, source: &PlanSourc
 
 pub fn scan_row_ids(_ctx: &mut ExecutionContext, table: &Table) -> Vec<usize> {
     table.row_ids().collect()
+}
+
+/// Scan a caller-backed source:
+///   1. Resolve each `RequirementArg::Placeholder` against `ctx.bound_values`
+///      first, then `ctx.params`.
+///   2. Invoke the registered caller closure → `Vec<Vec<Value>>` (one PK
+///      tuple per row the caller selects).
+///   3. Map each PK tuple to a local row id via the row-table's PK index.
+///   4. Apply `source.pre_filter` on the resulting row ids.
+///
+/// Emits a `Scan` span with `ScanMethod::Index` to reflect the PK lookup.
+pub fn scan_requirement<'a>(
+    ctx: &mut ExecutionContext,
+    row_table: &'a Table,
+    source: &PlanSourceEntry,
+) -> Result<RowSet<'a>, ExecuteError> {
+    let (caller_id, args) = match &source.source {
+        PlanSource::Requirement { caller_id, args, .. } => (caller_id.clone(), args.clone()),
+        _ => unreachable!("scan_requirement called with non-Requirement source"),
+    };
+
+    let resolved_args = resolve_caller_args(ctx, &caller_id, &args)?;
+    let pk_tuples = invoke_caller(ctx, &caller_id, &resolved_args)?;
+    let pk_columns = row_table.schema.primary_key.clone();
+    if pk_columns.is_empty() {
+        return Err(ExecuteError::CallerError(format!(
+            "caller `{caller_id}` row_table `{}` has no primary key",
+            row_table.schema.name,
+        )));
+    }
+
+    let mut row_ids = resolve_pks_to_row_ids(row_table, &pk_columns, &pk_tuples, &caller_id)?;
+    if !matches!(source.pre_filter, PlanFilterPredicate::None) {
+        row_ids = source.pre_filter.filter_batch(ctx, row_table, &row_ids);
+    }
+
+    // Emit a scan span so traces show the caller-backed read.
+    let table_name = row_table.schema.name.clone();
+    let rows_count = row_ids.len();
+    let method = ScanMethod::Index {
+        columns: pk_columns.clone(),
+        prefix_len: pk_columns.len(),
+        is_hash: true,
+    };
+    ctx.span(SpanOperation::Scan { table: table_name, method, rows: rows_count }, |_| {});
+
+    Ok(RowSet::from_scan(row_table, row_ids))
+}
+
+fn resolve_caller_args(
+    ctx: &ExecutionContext,
+    caller_id: &str,
+    args: &[RequirementArg],
+) -> Result<Vec<Value>, ExecuteError> {
+    args.iter().enumerate().map(|(idx, arg)| match arg {
+        RequirementArg::Placeholder(name) => {
+            if let Some(v) = ctx.bound_values.get(name) {
+                return Ok(v.clone());
+            }
+            if let Some(pv) = ctx.params.get(name) {
+                return param_value_to_value(pv).ok_or_else(|| ExecuteError::BindError(
+                    format!("caller `{caller_id}` arg {idx}: placeholder :{name} is a list, expected scalar"),
+                ));
+            }
+            Err(ExecuteError::BindError(format!(
+                "caller `{caller_id}` arg {idx}: missing value for placeholder :{name}"
+            )))
+        }
+    }).collect()
+}
+
+fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
+    match pv {
+        ParamValue::Int(n) => Some(Value::Int(*n)),
+        ParamValue::Text(s) => Some(Value::Text(s.clone())),
+        ParamValue::Null => Some(Value::Null),
+        ParamValue::IntList(_) | ParamValue::TextList(_) => None,
+    }
+}
+
+fn invoke_caller(
+    ctx: &ExecutionContext,
+    caller_id: &str,
+    resolved_args: &[Value],
+) -> Result<Vec<Vec<Value>>, ExecuteError> {
+    let caller_fn = ctx.callers.get(caller_id).ok_or_else(|| {
+        ExecuteError::CallerError(format!("caller `{caller_id}` not registered"))
+    })?;
+    caller_fn(resolved_args).map_err(|e| {
+        ExecuteError::CallerError(format!("caller `{caller_id}` failed: {e}"))
+    })
+}
+
+fn resolve_pks_to_row_ids(
+    table: &Table,
+    pk_columns: &[usize],
+    pk_tuples: &[Vec<Value>],
+    caller_id: &str,
+) -> Result<Vec<usize>, ExecuteError> {
+    // Find the PK index — stored as an index on the PK columns.
+    let idx = table.indexes().iter()
+        .find(|i| i.columns() == pk_columns)
+        .ok_or_else(|| ExecuteError::CallerError(format!(
+            "caller `{caller_id}`: row_table `{}` has no index on its primary key",
+            table.schema.name,
+        )))?;
+
+    let mut row_ids: Vec<usize> = Vec::with_capacity(pk_tuples.len());
+    for (row_idx, pk) in pk_tuples.iter().enumerate() {
+        if pk.len() != pk_columns.len() {
+            return Err(ExecuteError::CallerError(format!(
+                "caller `{caller_id}` row {row_idx}: PK has {} columns, row_table expects {}",
+                pk.len(), pk_columns.len(),
+            )));
+        }
+        let key_cells: Vec<CellValue> = pk.iter().map(value_to_cell).collect();
+        let hits = idx.lookup_eq(&key_cells).ok_or_else(|| {
+            ExecuteError::CallerError(format!(
+                "caller `{caller_id}` returned PK {:?} that is not present in row_table `{}`",
+                pk, table.schema.name,
+            ))
+        })?;
+        for &h in hits {
+            if !table.is_deleted(h) {
+                row_ids.push(h);
+            }
+        }
+    }
+    row_ids.sort_unstable();
+    row_ids.dedup();
+    Ok(row_ids)
 }
 
 pub fn scan_filtered(ctx: &mut ExecutionContext, table: &Table, pred: &PlanFilterPredicate) -> Vec<usize> {

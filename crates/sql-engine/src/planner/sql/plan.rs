@@ -1,5 +1,9 @@
 //! SQL-specific plan types: execution plan, materialization, pretty-printing.
 
+use std::collections::HashMap;
+
+use sql_parser::ast::Value;
+
 use crate::planner::shared::plan::PlanSelect;
 
 /// Top-level execution plan: materialization steps + main query.
@@ -9,6 +13,11 @@ pub struct ExecutionPlan {
     pub materializations: Vec<MaterializeStep>,
     /// Main query — may contain InMaterialized/CompareMaterialized predicates.
     pub main: PlanSelect,
+    /// Values bound to internal placeholders (auto-platzhalterisierte Literale
+    /// aus Caller-Args). Flow from `PlanContext.bound_values` through the
+    /// planner to the executor, where `RequirementArg::Placeholder`-Namen
+    /// gegen diese Map aufgelöst werden.
+    pub bound_values: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone)]

@@ -18,6 +18,13 @@ pub fn execute_plan(
     ctx: &mut ExecutionContext,
     plan: &ExecutionPlan,
 ) -> Result<Columns, ExecuteError> {
+    // Bring the plan's internal placeholder bindings (from auto-platzhalterisierten
+    // Caller-Args) into the execution context so `scan_requirement` can resolve
+    // them at scan time. External params still live in `ctx.params`; resolver
+    // tries `bound_values` first, then `params`.
+    for (name, value) in &plan.bound_values {
+        ctx.bound_values.insert(name.clone(), value.clone());
+    }
     let plan = &bind::resolve_plan_params(plan, &ctx.params)?;
     let main = resolve_materializations(ctx, plan)?;
     execute(ctx, &main)

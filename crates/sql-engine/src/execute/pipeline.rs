@@ -18,42 +18,49 @@ fn execute_inner(
 ) -> Result<Columns, ExecuteError> {
     // Phase 1: Scan first source -> RowSet.
     let first = &plan.sources[0];
-    let first_name = match &first.source {
-        PlanSource::Table { name, .. } => name,
-        PlanSource::Requirement { caller_id, .. } => {
-            return Err(ExecuteError::NotImplemented(
-                format!("caller source `{caller_id}` not yet executable"),
-            ));
+    let mut rs = match &first.source {
+        PlanSource::Table { name, .. } => {
+            let first_table = ctx.db
+                .get(name)
+                .ok_or_else(|| ExecuteError::TableNotFound(name.clone()))?;
+            scan::scan(ctx, first_table, first)
+        }
+        PlanSource::Requirement { row_table, .. } => {
+            let first_table = ctx.db
+                .get(row_table)
+                .ok_or_else(|| ExecuteError::TableNotFound(row_table.clone()))?;
+            scan::scan_requirement(ctx, first_table, first)?
         }
     };
-    let first_table = ctx.db
-        .get(first_name)
-        .ok_or_else(|| ExecuteError::TableNotFound(first_name.clone()))?;
-    let mut rs = scan::scan(ctx, first_table, first);
 
     // Phase 2: Join remaining sources.
     for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
-        let name = match &source.source {
-            PlanSource::Table { name, .. } => name,
-            PlanSource::Requirement { caller_id, .. } => {
-                return Err(ExecuteError::NotImplemented(
-                    format!("caller source `{caller_id}` not yet executable"),
-                ));
-            }
+        let (table_name, is_caller) = match &source.source {
+            PlanSource::Table { name, .. } => (name.clone(), false),
+            PlanSource::Requirement { row_table, .. } => (row_table.clone(), true),
         };
         let table = ctx.db
-            .get(name)
-            .ok_or_else(|| ExecuteError::TableNotFound(name.clone()))?;
+            .get(&table_name)
+            .ok_or_else(|| ExecuteError::TableNotFound(table_name.clone()))?;
         match source.join.as_ref() {
             Some(j) => match &j.strategy {
                 PlanJoinStrategy::NestedLoop => {
-                    let right = scan::scan(ctx, table, source);
+                    let right = if is_caller {
+                        scan::scan_requirement(ctx, table, source)?
+                    } else {
+                        scan::scan(ctx, table, source)
+                    };
                     rs = join::nested_loop_join(
                         ctx, &rs, right.tables[0], &right.row_ids[0],
                         source_idx, &j.on, j.join_type,
                     );
                 }
                 PlanJoinStrategy::IndexLookup { left_col, index_columns, .. } => {
+                    if is_caller {
+                        return Err(ExecuteError::NotImplemented(
+                            "IndexLookup join strategy onto caller source not supported".into(),
+                        ));
+                    }
                     rs = join::index_nested_loop_join(
                         ctx, &rs, table,
                         j.join_type, *left_col,
@@ -63,7 +70,11 @@ fn execute_inner(
                 }
             },
             None => {
-                let right = scan::scan(ctx, table, source);
+                let right = if is_caller {
+                    scan::scan_requirement(ctx, table, source)?
+                } else {
+                    scan::scan(ctx, table, source)
+                };
                 rs = join::nested_loop_join(
                     ctx, &rs, right.tables[0], &right.row_ids[0],
                     source_idx, &PlanFilterPredicate::None, sql_parser::ast::JoinType::Inner,
@@ -289,5 +300,836 @@ mod tests {
         };
         let err = execute(&mut ctx, &plan).unwrap_err();
         assert!(matches!(err, ExecuteError::TableNotFound(_)));
+    }
+
+    // ── Caller-backed source (MVS for P6) ────────────────────────────────
+    //
+    // These tests exercise the PK-producer model: a caller returns PK
+    // tuples, and scan_requirement looks up rows in the local row_table
+    // via the auto-created PK index.
+
+    fn caller_plan(caller_id: &str, row_table: &str, arg_placeholder: &str) -> PlanSelect {
+        PlanSelect {
+            sources: vec![PlanSourceEntry {
+                source: PlanSource::Requirement {
+                    alias: row_table.into(),
+                    row_table: row_table.into(),
+                    row_schema: users_query_schema(),
+                    caller_id: caller_id.into(),
+                    args: vec![RequirementArg::Placeholder(arg_placeholder.into())],
+                },
+                join: None,
+                pre_filter: PlanFilterPredicate::None,
+            }],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![
+                PlanResultColumn::Column { col: c(0, 0), alias: None },
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
+            ],
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_source_returns_rows_by_pk() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+
+        // Caller returns PKs [1, 3] — rows Alice and Carol.
+        ctx.callers.insert(
+            "users::by_ids".into(),
+            Box::new(|args: &[Value]| {
+                // Echo-style: arg is pk, caller returns just that pk + pk+2
+                let base = match args.first() {
+                    Some(Value::Int(n)) => *n,
+                    _ => return Err("expected Int arg".into()),
+                };
+                Ok(vec![vec![Value::Int(base)], vec![Value::Int(base + 2)]])
+            }),
+        );
+
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
+
+        let plan = caller_plan("users::by_ids", "users", "__caller_0_arg_0");
+        let result = execute(&mut ctx, &plan).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], vec![CellValue::I64(1), CellValue::I64(3)]);
+        assert_eq!(result[1], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
+    }
+
+    #[test]
+    fn test_execute_caller_unregistered_errors() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
+
+        let plan = caller_plan("users::unknown", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => assert!(msg.contains("not registered"), "got: {msg}"),
+            other => panic!("expected CallerError(not registered), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_missing_arg_errors() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::by_ids".into(),
+            Box::new(|_| Ok(vec![])),
+        );
+        // No bound_values, no params — placeholder has nowhere to resolve.
+
+        let plan = caller_plan("users::by_ids", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::BindError(msg) => assert!(msg.contains("missing value"), "got: {msg}"),
+            other => panic!("expected BindError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_pk_not_in_row_table_errors() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        // Caller returns a PK that doesn't exist in users (id=999).
+        ctx.callers.insert(
+            "users::phantom".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(999)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(1));
+
+        let plan = caller_plan("users::phantom", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => assert!(
+                msg.contains("not present in row_table"),
+                "got: {msg}",
+            ),
+            other => panic!("expected CallerError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_user_placeholder_from_params() {
+        let db = make_db();
+        let params = HashMap::from([("owner".into(), super::super::ParamValue::Int(2))]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.callers.insert(
+            "users::by_owner".into(),
+            Box::new(|args: &[Value]| {
+                let id = match args.first() {
+                    Some(Value::Int(n)) => *n,
+                    _ => return Err("expected Int".into()),
+                };
+                Ok(vec![vec![Value::Int(id)]])
+            }),
+        );
+        // No bound_values — the arg resolves from ctx.params via the external
+        // placeholder name `owner` (user-supplied at query time).
+
+        let plan = caller_plan("users::by_owner", "users", "owner");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], vec![CellValue::I64(2)]);
+        assert_eq!(result[1], vec![CellValue::Str("Bob".into())]);
+    }
+
+    #[test]
+    fn test_execute_caller_with_pre_filter() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::all".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Int(1)],
+                vec![Value::Int(2)],
+                vec![Value::Int(3)],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let mut plan = caller_plan("users::all", "users", "__caller_0_arg_0");
+        // Post-filter on age>28 — should narrow to Alice(30) and Carol(35).
+        plan.sources[0].pre_filter = PlanFilterPredicate::GreaterThan {
+            col: c(0, 2),
+            value: Value::Int(28),
+        };
+
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], vec![CellValue::I64(1), CellValue::I64(3)]);
+        assert_eq!(result[1], vec![CellValue::Str("Alice".into()), CellValue::Str("Carol".into())]);
+    }
+
+    // ── Caller edge cases ────────────────────────────────────────────────
+
+    #[test]
+    fn test_execute_caller_empty_return_yields_no_rows() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::none".into(),
+            Box::new(|_| Ok(vec![])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::none", "users", "__caller_0_arg_0");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result[0].is_empty());
+        assert!(result[1].is_empty());
+    }
+
+    #[test]
+    fn test_execute_caller_duplicate_pks_are_deduplicated() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::dup".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Int(1)],
+                vec![Value::Int(2)],
+                vec![Value::Int(1)],
+                vec![Value::Int(2)],
+                vec![Value::Int(1)],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::dup", "users", "__caller_0_arg_0");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::I64(1), CellValue::I64(2)]);
+    }
+
+    #[test]
+    fn test_execute_caller_pk_arity_mismatch_errors() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        // row_table users has single-column PK; caller returns a 2-col PK tuple.
+        ctx.callers.insert(
+            "users::bad_arity".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1), Value::Int(99)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::bad_arity", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => {
+                assert!(msg.contains("PK has 2 columns"), "got: {msg}");
+                assert!(msg.contains("row_table expects 1"), "got: {msg}");
+            }
+            other => panic!("expected CallerError, got {other:?}"),
+        }
+    }
+
+    fn make_users_table_no_pk() -> Table {
+        let schema = TableSchema {
+            name: "users_no_pk".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+                ColumnSchema { name: "age".into(), data_type: DataType::I64, nullable: true },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        t.insert(&[CellValue::I64(1), CellValue::Str("X".into()), CellValue::I64(1)]).unwrap();
+        t
+    }
+
+    #[test]
+    fn test_execute_caller_row_table_without_pk_errors() {
+        let mut db = HashMap::new();
+        db.insert("users_no_pk".into(), make_users_table_no_pk());
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users_no_pk::all".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = PlanSelect {
+            sources: vec![PlanSourceEntry {
+                source: PlanSource::Requirement {
+                    alias: "users_no_pk".into(),
+                    row_table: "users_no_pk".into(),
+                    row_schema: Schema::new(vec![]),
+                    caller_id: "users_no_pk::all".into(),
+                    args: vec![RequirementArg::Placeholder("__caller_0_arg_0".into())],
+                },
+                join: None,
+                pre_filter: PlanFilterPredicate::None,
+            }],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![PlanResultColumn::Column { col: c(0, 0), alias: None }],
+        };
+
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => assert!(
+                msg.contains("has no primary key"),
+                "got: {msg}",
+            ),
+            other => panic!("expected CallerError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_closure_error_propagates() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::boom".into(),
+            Box::new(|_| Err("network failure".into())),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::boom", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => {
+                assert!(msg.contains("users::boom"), "got: {msg}");
+                assert!(msg.contains("network failure"), "got: {msg}");
+            }
+            other => panic!("expected CallerError, got {other:?}"),
+        }
+    }
+
+    // ── Caller param resolution ──────────────────────────────────────────
+
+    #[test]
+    fn test_execute_caller_bound_values_wins_over_params() {
+        // If both bound_values and ctx.params have the placeholder, bound_values wins.
+        let db = make_db();
+        let params = HashMap::from([("x".into(), super::super::ParamValue::Int(99))]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.bound_values.insert("x".into(), Value::Int(2));
+        ctx.callers.insert(
+            "users::echo".into(),
+            Box::new(|args: &[Value]| {
+                let n = match args.first() {
+                    Some(Value::Int(n)) => *n,
+                    _ => return Err("expected Int".into()),
+                };
+                assert_eq!(n, 2, "bound_values (2) must win over params (99)");
+                Ok(vec![vec![Value::Int(n)]])
+            }),
+        );
+
+        let plan = caller_plan("users::echo", "users", "x");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::I64(2)]);
+    }
+
+    #[test]
+    fn test_execute_caller_param_list_rejected() {
+        let db = make_db();
+        let params = HashMap::from([(
+            "ids".into(),
+            super::super::ParamValue::IntList(vec![1, 2]),
+        )]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.callers.insert(
+            "users::any".into(),
+            Box::new(|_| Ok(vec![])),
+        );
+
+        let plan = caller_plan("users::any", "users", "ids");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::BindError(msg) => assert!(
+                msg.contains("list, expected scalar"),
+                "got: {msg}",
+            ),
+            other => panic!("expected BindError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_param_text_list_rejected() {
+        let db = make_db();
+        let params = HashMap::from([(
+            "names".into(),
+            super::super::ParamValue::TextList(vec!["a".into()]),
+        )]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.callers.insert(
+            "users::any".into(),
+            Box::new(|_| Ok(vec![])),
+        );
+        let plan = caller_plan("users::any", "users", "names");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        assert!(matches!(err, ExecuteError::BindError(msg) if msg.contains("list")));
+    }
+
+    #[test]
+    fn test_execute_caller_param_text_resolves() {
+        let db = make_db();
+        let params = HashMap::from([(
+            "name".into(),
+            super::super::ParamValue::Text("hello".into()),
+        )]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.callers.insert(
+            "users::by_name".into(),
+            Box::new(|args: &[Value]| {
+                match args.first() {
+                    Some(Value::Text(s)) if s == "hello" => Ok(vec![vec![Value::Int(1)]]),
+                    other => Err(format!("expected Text(hello), got {other:?}")),
+                }
+            }),
+        );
+        let plan = caller_plan("users::by_name", "users", "name");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::I64(1)]);
+    }
+
+    #[test]
+    fn test_execute_caller_param_null_resolves() {
+        let db = make_db();
+        let params = HashMap::from([("x".into(), super::super::ParamValue::Null)]);
+        let mut ctx = ExecutionContext::with_params(&db, params);
+        ctx.callers.insert(
+            "users::null_arg".into(),
+            Box::new(|args: &[Value]| {
+                match args.first() {
+                    Some(Value::Null) => Ok(vec![vec![Value::Int(1)]]),
+                    other => Err(format!("expected Null, got {other:?}")),
+                }
+            }),
+        );
+        let plan = caller_plan("users::null_arg", "users", "x");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::I64(1)]);
+    }
+
+    // ── Caller multi-arg / deleted / String PK / composite PK ────────────
+
+    #[test]
+    fn test_execute_caller_multiple_args_passed_through() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(42));
+        ctx.bound_values.insert("__caller_0_arg_1".into(), Value::Text("bob".into()));
+        ctx.bound_values.insert("__caller_0_arg_2".into(), Value::Null);
+        ctx.callers.insert(
+            "users::three".into(),
+            Box::new(|args: &[Value]| {
+                assert_eq!(args.len(), 3);
+                assert!(matches!(args[0], Value::Int(42)));
+                assert!(matches!(&args[1], Value::Text(s) if s == "bob"));
+                assert!(matches!(args[2], Value::Null));
+                Ok(vec![vec![Value::Int(2)]])
+            }),
+        );
+
+        let plan = PlanSelect {
+            sources: vec![PlanSourceEntry {
+                source: PlanSource::Requirement {
+                    alias: "users".into(),
+                    row_table: "users".into(),
+                    row_schema: users_query_schema(),
+                    caller_id: "users::three".into(),
+                    args: vec![
+                        RequirementArg::Placeholder("__caller_0_arg_0".into()),
+                        RequirementArg::Placeholder("__caller_0_arg_1".into()),
+                        RequirementArg::Placeholder("__caller_0_arg_2".into()),
+                    ],
+                },
+                join: None,
+                pre_filter: PlanFilterPredicate::None,
+            }],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![PlanResultColumn::Column { col: c(0, 1), alias: None }],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::Str("Bob".into())]);
+    }
+
+    #[test]
+    fn test_execute_caller_pk_of_deleted_row_errors() {
+        // Invariant: a caller-returned PK that is no longer in the PK index
+        // (either never existed, or was deleted) must surface as a CallerError.
+        // Silently skipping would hide stale caller state — the opposite of
+        // what the reactive layer needs.
+        let mut db = make_db();
+        db.get_mut("users").unwrap().delete(1).unwrap(); // Bob gone.
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::all".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Int(1)],
+                vec![Value::Int(2)],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::all", "users", "__caller_0_arg_0");
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::CallerError(msg) => {
+                assert!(msg.contains("not present in row_table"), "got: {msg}");
+                assert!(msg.contains("Int(2)"), "got: {msg}");
+            }
+            other => panic!("expected CallerError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_execute_caller_live_rows_only_succeed_after_delete() {
+        // Happy counterpart to `*_pk_of_deleted_row_errors`: when the caller
+        // only returns PKs for live rows (correctly reflecting state), the
+        // query succeeds and returns exactly those live rows.
+        let mut db = make_db();
+        db.get_mut("users").unwrap().delete(1).unwrap();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::live".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(3)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = caller_plan("users::live", "users", "__caller_0_arg_0");
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![CellValue::I64(1), CellValue::I64(3)]);
+    }
+
+    fn make_tags_table_string_pk() -> Table {
+        let schema = TableSchema {
+            name: "tags".into(),
+            columns: vec![
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+                ColumnSchema { name: "color".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        t.insert(&[CellValue::Str("red".into()), CellValue::Str("#f00".into())]).unwrap();
+        t.insert(&[CellValue::Str("green".into()), CellValue::Str("#0f0".into())]).unwrap();
+        t.insert(&[CellValue::Str("blue".into()), CellValue::Str("#00f".into())]).unwrap();
+        t
+    }
+
+    #[test]
+    fn test_execute_caller_string_pk_lookup() {
+        let mut db = HashMap::new();
+        db.insert("tags".into(), make_tags_table_string_pk());
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "tags::popular".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Text("red".into())],
+                vec![Value::Text("blue".into())],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let tags_schema = Schema::new(vec![
+            ColumnDef { table: Some("tags".into()), name: "name".into() },
+            ColumnDef { table: Some("tags".into()), name: "color".into() },
+        ]);
+        let plan = PlanSelect {
+            sources: vec![PlanSourceEntry {
+                source: PlanSource::Requirement {
+                    alias: "tags".into(),
+                    row_table: "tags".into(),
+                    row_schema: tags_schema,
+                    caller_id: "tags::popular".into(),
+                    args: vec![RequirementArg::Placeholder("__caller_0_arg_0".into())],
+                },
+                join: None,
+                pre_filter: PlanFilterPredicate::None,
+            }],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![
+                PlanResultColumn::Column { col: c(0, 0), alias: None },
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
+            ],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0].len(), 2);
+        // sort_unstable on row_ids means insertion order — red first (row 0), blue third (row 2).
+        assert_eq!(result[0][0], CellValue::Str("red".into()));
+        assert_eq!(result[0][1], CellValue::Str("blue".into()));
+    }
+
+    fn make_memberships_composite_pk() -> Table {
+        let schema = TableSchema {
+            name: "memberships".into(),
+            columns: vec![
+                ColumnSchema { name: "org_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "user_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "role".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0, 1],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        t.insert(&[CellValue::I64(1), CellValue::I64(1), CellValue::Str("admin".into())]).unwrap();
+        t.insert(&[CellValue::I64(1), CellValue::I64(2), CellValue::Str("member".into())]).unwrap();
+        t.insert(&[CellValue::I64(2), CellValue::I64(1), CellValue::Str("owner".into())]).unwrap();
+        t
+    }
+
+    #[test]
+    fn test_execute_caller_composite_pk_lookup() {
+        let mut db = HashMap::new();
+        db.insert("memberships".into(), make_memberships_composite_pk());
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "memberships::for_admin".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Int(1), Value::Int(1)],
+                vec![Value::Int(2), Value::Int(1)],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let m_schema = Schema::new(vec![
+            ColumnDef { table: Some("memberships".into()), name: "org_id".into() },
+            ColumnDef { table: Some("memberships".into()), name: "user_id".into() },
+            ColumnDef { table: Some("memberships".into()), name: "role".into() },
+        ]);
+        let plan = PlanSelect {
+            sources: vec![PlanSourceEntry {
+                source: PlanSource::Requirement {
+                    alias: "memberships".into(),
+                    row_table: "memberships".into(),
+                    row_schema: m_schema,
+                    caller_id: "memberships::for_admin".into(),
+                    args: vec![RequirementArg::Placeholder("__caller_0_arg_0".into())],
+                },
+                join: None,
+                pre_filter: PlanFilterPredicate::None,
+            }],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![PlanResultColumn::Column { col: c(0, 2), alias: None }],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        assert_eq!(result[0], vec![
+            CellValue::Str("admin".into()),
+            CellValue::Str("owner".into()),
+        ]);
+    }
+
+    // ── Phase-2 joins involving caller sources ───────────────────────────
+
+    #[test]
+    fn test_execute_phase2_table_join_caller() {
+        // users (table) ⨝ orders-by-user(id) (caller into orders).
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "orders::by_user".into(),
+            Box::new(|_| Ok(vec![
+                vec![Value::Int(10)],
+                vec![Value::Int(11)],
+            ])),
+        );
+        ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+
+        let plan = PlanSelect {
+            sources: vec![
+                PlanSourceEntry {
+                    source: PlanSource::Table {
+                        name: "users".into(), schema: users_query_schema(),
+                        scan_method: PlanScanMethod::Full,
+                    },
+                    join: None, pre_filter: PlanFilterPredicate::None,
+                },
+                PlanSourceEntry {
+                    source: PlanSource::Requirement {
+                        alias: "orders".into(),
+                        row_table: "orders".into(),
+                        row_schema: orders_query_schema(),
+                        caller_id: "orders::by_user".into(),
+                        args: vec![RequirementArg::Placeholder("__caller_1_arg_0".into())],
+                    },
+                    join: Some(PlanJoin {
+                        join_type: JoinType::Inner,
+                        on: PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
+                        strategy: PlanJoinStrategy::NestedLoop,
+                    }),
+                    pre_filter: PlanFilterPredicate::None,
+                },
+            ],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
+                PlanResultColumn::Column { col: c(1, 2), alias: None },
+            ],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        // Both orders 10 & 11 belong to user_id=1 (Alice).
+        assert_eq!(result[0], vec![CellValue::Str("Alice".into()), CellValue::Str("Alice".into())]);
+        assert_eq!(result[1], vec![CellValue::I64(100), CellValue::I64(200)]);
+    }
+
+    #[test]
+    fn test_execute_phase2_caller_join_table() {
+        // caller (users) first source, orders plain-table second as join partner.
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::pick".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(2)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+
+        let plan = PlanSelect {
+            sources: vec![
+                PlanSourceEntry {
+                    source: PlanSource::Requirement {
+                        alias: "users".into(),
+                        row_table: "users".into(),
+                        row_schema: users_query_schema(),
+                        caller_id: "users::pick".into(),
+                        args: vec![RequirementArg::Placeholder("__caller_0_arg_0".into())],
+                    },
+                    join: None, pre_filter: PlanFilterPredicate::None,
+                },
+                PlanSourceEntry {
+                    source: PlanSource::Table {
+                        name: "orders".into(), schema: orders_query_schema(),
+                        scan_method: PlanScanMethod::Full,
+                    },
+                    join: Some(PlanJoin {
+                        join_type: JoinType::Inner,
+                        on: PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
+                        strategy: PlanJoinStrategy::NestedLoop,
+                    }),
+                    pre_filter: PlanFilterPredicate::None,
+                },
+            ],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![
+                PlanResultColumn::Column { col: c(0, 1), alias: None },
+                PlanResultColumn::Column { col: c(1, 0), alias: None },
+            ],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        // Alice has orders 10,11; Bob has order 12.
+        assert_eq!(result[0], vec![
+            CellValue::Str("Alice".into()),
+            CellValue::Str("Alice".into()),
+            CellValue::Str("Bob".into()),
+        ]);
+        assert_eq!(result[1], vec![CellValue::I64(10), CellValue::I64(11), CellValue::I64(12)]);
+    }
+
+    #[test]
+    fn test_execute_phase2_caller_join_caller() {
+        // Caller ⨝ Caller (same row_table twice through different callers).
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::first".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(2)]])),
+        );
+        ctx.callers.insert(
+            "users::second".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)], vec![Value::Int(3)]])),
+        );
+        ctx.bound_values.insert("__caller_0_arg_0".into(), Value::Int(0));
+        ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+
+        let plan = PlanSelect {
+            sources: vec![
+                PlanSourceEntry {
+                    source: PlanSource::Requirement {
+                        alias: "users".into(), row_table: "users".into(),
+                        row_schema: users_query_schema(),
+                        caller_id: "users::first".into(),
+                        args: vec![RequirementArg::Placeholder("__caller_0_arg_0".into())],
+                    },
+                    join: None, pre_filter: PlanFilterPredicate::None,
+                },
+                PlanSourceEntry {
+                    source: PlanSource::Requirement {
+                        alias: "users".into(), row_table: "users".into(),
+                        row_schema: users_query_schema(),
+                        caller_id: "users::second".into(),
+                        args: vec![RequirementArg::Placeholder("__caller_1_arg_0".into())],
+                    },
+                    join: Some(PlanJoin {
+                        join_type: JoinType::Inner,
+                        on: PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 0) },
+                        strategy: PlanJoinStrategy::NestedLoop,
+                    }),
+                    pre_filter: PlanFilterPredicate::None,
+                },
+            ],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![PlanResultColumn::Column { col: c(0, 0), alias: None }],
+        };
+        let result = execute(&mut ctx, &plan).unwrap();
+        // Intersection by PK: only id=1 is in both sets.
+        assert_eq!(result[0], vec![CellValue::I64(1)]);
+    }
+
+    #[test]
+    fn test_execute_index_lookup_onto_caller_rejected() {
+        let db = make_db();
+        let mut ctx = ExecutionContext::new(&db);
+        ctx.callers.insert(
+            "users::pick".into(),
+            Box::new(|_| Ok(vec![vec![Value::Int(1)]])),
+        );
+        ctx.bound_values.insert("__caller_1_arg_0".into(), Value::Int(0));
+
+        let plan = PlanSelect {
+            sources: vec![
+                PlanSourceEntry {
+                    source: PlanSource::Table {
+                        name: "orders".into(), schema: orders_query_schema(),
+                        scan_method: PlanScanMethod::Full,
+                    },
+                    join: None, pre_filter: PlanFilterPredicate::None,
+                },
+                PlanSourceEntry {
+                    source: PlanSource::Requirement {
+                        alias: "users".into(), row_table: "users".into(),
+                        row_schema: users_query_schema(),
+                        caller_id: "users::pick".into(),
+                        args: vec![RequirementArg::Placeholder("__caller_1_arg_0".into())],
+                    },
+                    join: Some(PlanJoin {
+                        join_type: JoinType::Inner,
+                        on: PlanFilterPredicate::ColumnEquals { left: c(0, 1), right: c(1, 0) },
+                        strategy: PlanJoinStrategy::IndexLookup {
+                            left_col: c(0, 1),
+                            right_col: 0,
+                            index_columns: vec![0],
+                            is_hash: true,
+                        },
+                    }),
+                    pre_filter: PlanFilterPredicate::None,
+                },
+            ],
+            filter: PlanFilterPredicate::None,
+            group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
+            result_columns: vec![PlanResultColumn::Column { col: c(0, 0), alias: None }],
+        };
+        let err = execute(&mut ctx, &plan).unwrap_err();
+        match err {
+            ExecuteError::NotImplemented(msg) => assert!(
+                msg.contains("IndexLookup join strategy onto caller"),
+                "got: {msg}",
+            ),
+            other => panic!("expected NotImplemented, got {other:?}"),
+        }
     }
 }

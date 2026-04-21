@@ -23,6 +23,7 @@ pub fn plan(
     Ok(plan::ExecutionPlan {
         materializations: ctx.materializations,
         main,
+        bound_values: ctx.bound_values,
     })
 }
 

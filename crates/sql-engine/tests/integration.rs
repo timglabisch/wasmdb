@@ -929,3 +929,405 @@ fn prepared_limit_with_placeholder() {
     );
     assert_eq!(result[0].len(), 1);
 }
+
+// ── Caller-backed FROM sources (end-to-end P3 → P6) ─────────────────────────
+
+#[test]
+fn caller_source_end_to_end() {
+    use sql_engine::planner::requirement::{RequirementMeta, RequirementParamDef};
+
+    let mut db = make_db();
+    // Register a caller `users.by_owner` that takes one I64 param and feeds
+    // rows into the `users` row_table.
+    db.requirements.insert(
+        "users::by_owner".into(),
+        RequirementMeta {
+            row_table: "users".into(),
+            params: vec![RequirementParamDef {
+                name: "owner_id".into(),
+                data_type: DataType::I64,
+            }],
+        },
+    );
+
+    // Plan the SQL query. The P3 translator auto-platzhalterisiert the
+    // literal `2` as `__caller_0_arg_0` and stashes the Int(2) in bound_values.
+    let ast = parser::parse("SELECT users.id, users.name FROM users.by_owner(2)")
+        .expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    // Ensure bound_values flowed through the planner.
+    assert_eq!(plan.bound_values.len(), 1);
+    assert!(plan.bound_values.contains_key("__caller_0_arg_0"));
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            // Simulate: owner=2 returns users with id 2 and 3 (Bob, Carol).
+            let owner = match args.first() {
+                Some(sql_parser::ast::Value::Int(n)) => *n,
+                _ => return Err("expected Int owner".into()),
+            };
+            if owner == 2 {
+                Ok(vec![
+                    vec![sql_parser::ast::Value::Int(2)],
+                    vec![sql_parser::ast::Value::Int(3)],
+                ])
+            } else {
+                Ok(vec![])
+            }
+        }),
+    );
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(2), i(3)]);
+    assert_eq!(result[1], vec![s("Bob"), s("Carol")]);
+}
+
+#[test]
+fn caller_source_with_user_placeholder() {
+    use sql_engine::planner::requirement::{RequirementMeta, RequirementParamDef};
+
+    let mut db = make_db();
+    db.requirements.insert(
+        "users::by_owner".into(),
+        RequirementMeta {
+            row_table: "users".into(),
+            params: vec![RequirementParamDef {
+                name: "owner_id".into(),
+                data_type: DataType::I64,
+            }],
+        },
+    );
+
+    // The `:owner` is a user-supplied placeholder — not auto-platzhalterisiert.
+    // It stays as a pass-through `RequirementArg::Placeholder("owner")` and
+    // must resolve from ctx.params at execute-time.
+    let ast = parser::parse("SELECT users.id, users.name FROM users.by_owner(:owner)")
+        .expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    // No auto-bound_values for a user placeholder.
+    assert!(plan.bound_values.is_empty());
+
+    let params = HashMap::from([(
+        "owner".into(),
+        execute::ParamValue::Int(1),
+    )]);
+    let mut ctx = execute::ExecutionContext::with_params(&db.tables, params);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            let owner = match args.first() {
+                Some(sql_parser::ast::Value::Int(n)) => *n,
+                _ => return Err("expected Int".into()),
+            };
+            assert_eq!(owner, 1, "caller should receive resolved user-param value");
+            Ok(vec![vec![sql_parser::ast::Value::Int(1)]])
+        }),
+    );
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(1)]);
+    assert_eq!(result[1], vec![s("Alice")]);
+}
+
+// ── Caller-backed FROM sources — more literal + operator coverage ───────────
+
+/// Helper: register a users::by_owner caller that returns the echo of its
+/// single I64 arg (and that id + 2 if present). Reused across tests below.
+fn register_users_by_owner(ctx: &mut execute::ExecutionContext) {
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            let owner = match args.first() {
+                Some(sql_parser::ast::Value::Int(n)) => *n,
+                other => return Err(format!("expected Int, got {other:?}")),
+            };
+            let mut result = vec![vec![sql_parser::ast::Value::Int(owner)]];
+            if owner + 1 <= 4 {
+                result.push(vec![sql_parser::ast::Value::Int(owner + 1)]);
+            }
+            Ok(result)
+        }),
+    );
+}
+
+fn register_users_meta(db: &mut TestDb) {
+    use sql_engine::planner::requirement::{RequirementMeta, RequirementParamDef};
+    db.requirements.insert(
+        "users::by_owner".into(),
+        RequirementMeta {
+            row_table: "users".into(),
+            params: vec![RequirementParamDef {
+                name: "owner_id".into(),
+                data_type: DataType::I64,
+            }],
+        },
+    );
+}
+
+#[test]
+fn caller_source_with_text_literal_arg() {
+    use sql_engine::planner::requirement::{RequirementMeta, RequirementParamDef};
+
+    let mut db = make_db();
+    db.requirements.insert(
+        "users::by_name".into(),
+        RequirementMeta {
+            row_table: "users".into(),
+            params: vec![RequirementParamDef {
+                name: "name".into(),
+                data_type: DataType::String,
+            }],
+        },
+    );
+
+    let ast = parser::parse("SELECT users.id FROM users.by_name('Bob')")
+        .expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_name".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            match args.first() {
+                Some(sql_parser::ast::Value::Text(n)) if n == "Bob" =>
+                    Ok(vec![vec![sql_parser::ast::Value::Int(2)]]),
+                other => Err(format!("expected Text(Bob), got {other:?}")),
+            }
+        }),
+    );
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(2)]);
+}
+
+#[test]
+fn caller_source_with_null_literal_arg() {
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse("SELECT users.id FROM users.by_owner(NULL)")
+        .expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            match args.first() {
+                Some(sql_parser::ast::Value::Null) =>
+                    Ok(vec![vec![sql_parser::ast::Value::Int(1)]]),
+                other => Err(format!("expected Null, got {other:?}")),
+            }
+        }),
+    );
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(1)]);
+}
+
+#[test]
+fn caller_source_with_multiple_literal_args() {
+    use sql_engine::planner::requirement::{RequirementMeta, RequirementParamDef};
+
+    let mut db = make_db();
+    db.requirements.insert(
+        "users::by_age_range".into(),
+        RequirementMeta {
+            row_table: "users".into(),
+            params: vec![
+                RequirementParamDef { name: "min_age".into(), data_type: DataType::I64 },
+                RequirementParamDef { name: "max_age".into(), data_type: DataType::I64 },
+            ],
+        },
+    );
+
+    let ast = parser::parse(
+        "SELECT users.id, users.age FROM users.by_age_range(25, 32)"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    // Both literals auto-platzhalterisiert.
+    assert_eq!(plan.bound_values.len(), 2);
+    assert!(plan.bound_values.contains_key("__caller_0_arg_0"));
+    assert!(plan.bound_values.contains_key("__caller_0_arg_1"));
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_age_range".into(),
+        Box::new(|args: &[sql_parser::ast::Value]| {
+            assert_eq!(args.len(), 2);
+            match (&args[0], &args[1]) {
+                (sql_parser::ast::Value::Int(25), sql_parser::ast::Value::Int(32)) =>
+                    Ok(vec![vec![sql_parser::ast::Value::Int(1)], vec![sql_parser::ast::Value::Int(2)]]),
+                other => Err(format!("bad args: {other:?}")),
+            }
+        }),
+    );
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(1), i(2)]);
+    assert_eq!(result[1], vec![i(30), i(25)]);
+}
+
+#[test]
+fn caller_source_with_where_clause() {
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse(
+        "SELECT users.id, users.age FROM users.by_owner(1) WHERE users.age > 28"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|_| Ok(vec![
+            vec![sql_parser::ast::Value::Int(1)], // Alice, age 30
+            vec![sql_parser::ast::Value::Int(2)], // Bob, age 25 (filtered out)
+            vec![sql_parser::ast::Value::Int(3)], // Carol, age 35
+        ])),
+    );
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(1), i(3)]);
+    assert_eq!(result[1], vec![i(30), i(35)]);
+}
+
+#[test]
+fn caller_source_with_order_by() {
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse(
+        "SELECT users.name FROM users.by_owner(1) ORDER BY users.age DESC"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|_| Ok(vec![
+            vec![sql_parser::ast::Value::Int(1)], // Alice 30
+            vec![sql_parser::ast::Value::Int(2)], // Bob 25
+            vec![sql_parser::ast::Value::Int(3)], // Carol 35
+        ])),
+    );
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![s("Carol"), s("Alice"), s("Bob")]);
+}
+
+#[test]
+fn caller_source_with_limit() {
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse(
+        "SELECT users.id FROM users.by_owner(1) ORDER BY users.id ASC LIMIT 2"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    ctx.callers.insert(
+        "users::by_owner".into(),
+        Box::new(|_| Ok(vec![
+            vec![sql_parser::ast::Value::Int(3)],
+            vec![sql_parser::ast::Value::Int(1)],
+            vec![sql_parser::ast::Value::Int(2)],
+        ])),
+    );
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    assert_eq!(result[0], vec![i(1), i(2)]);
+}
+
+#[test]
+fn caller_source_with_group_by_and_aggregate() {
+    // Caller returns users; JOIN orders; GROUP BY age-bucket; COUNT orders.
+    // Covers Phase 2 join + Phase 4 aggregate on a caller-seeded scan.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse(
+        "SELECT users.name, COUNT(orders.amount) \
+         FROM users.by_owner(1) \
+         INNER JOIN orders ON users.id = orders.user_id \
+         GROUP BY users.name"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    register_users_by_owner(&mut ctx);
+
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    // by_owner(1) returns [1, 2] → Alice(2 orders) + Bob(1 order).
+    // Row order may depend on HashMap iteration of group keys, so sort.
+    let mut pairs: Vec<(CellValue, CellValue)> = result[0].iter()
+        .cloned()
+        .zip(result[1].iter().cloned())
+        .collect();
+    pairs.sort_by_key(|(n, _)| match n {
+        CellValue::Str(s) => s.clone(),
+        _ => String::new(),
+    });
+    assert_eq!(pairs, vec![
+        (s("Alice"), i(2)),
+        (s("Bob"), i(1)),
+    ]);
+}
+
+#[test]
+fn caller_source_joined_with_plain_table_end_to_end() {
+    // Caller first source + INNER JOIN orders via SQL. Covers Phase 2 executor
+    // path for Table joined onto a caller-seeded first RowSet.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse(
+        "SELECT users.name, orders.amount \
+         FROM users.by_owner(1) \
+         INNER JOIN orders ON users.id = orders.user_id \
+         ORDER BY orders.amount ASC"
+    ).expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements)
+        .expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    register_users_by_owner(&mut ctx);
+    let result = execute::execute_plan(&mut ctx, &plan).expect("execute");
+    // Alice(1) → 100, 200; Bob(2) → 50.
+    assert_eq!(result[0], vec![s("Bob"), s("Alice"), s("Alice")]);
+    assert_eq!(result[1], vec![i(50), i(100), i(200)]);
+}
+
+#[test]
+fn caller_source_unregistered_caller_runtime_errors() {
+    // Planner passes (registry has Meta) but no runtime closure is registered.
+    let mut db = make_db();
+    register_users_meta(&mut db);
+
+    let ast = parser::parse("SELECT users.id FROM users.by_owner(1)").expect("parse");
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements).expect("plan");
+
+    let mut ctx = execute::ExecutionContext::new(&db.tables);
+    // deliberately no ctx.callers.insert(...)
+    let err = execute::execute_plan(&mut ctx, &plan).unwrap_err();
+    match err {
+        execute::ExecuteError::CallerError(msg) => {
+            assert!(msg.contains("users::by_owner"), "got: {msg}");
+            assert!(msg.contains("not registered"), "got: {msg}");
+        }
+        other => panic!("expected CallerError, got {other:?}"),
+    }
+}

@@ -52,6 +52,18 @@ pub use rowset::{RowSet, NULL_ROW};
 pub type Column = Vec<CellValue>;
 pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 
+// ── Caller runtime ────────────────────────────────────────────────────────
+
+/// A registered caller: maps resolved positional args to the PK-tuples of
+/// rows the caller selects from its underlying row-table. Each returned
+/// `Vec<Value>` is one primary-key tuple (single element for single-column
+/// PK). The actual row data lives in the local `row_table` — callers are
+/// pure PK producers, not data sources.
+pub type CallerFn = Box<dyn Fn(&[Value]) -> Result<Vec<Vec<Value>>, String>>;
+
+/// Registry of caller implementations, keyed by `"{schema}::{function}"`.
+pub type CallerRuntime = HashMap<String, CallerFn>;
+
 // ── Execution context with span-based tracing ─────────────────────────────
 
 /// How a table scan was performed.
@@ -111,15 +123,30 @@ pub struct ExecutionContext<'execution> {
     pub params: Params,
     /// Which reactive condition indices were triggered (for SELECT reactive() output).
     pub triggered_conditions: Option<HashSet<usize>>,
+    /// Values for internal placeholders that the planner injected from
+    /// auto-platzhalterisierten Caller-Args. Populated from
+    /// `ExecutionPlan.bound_values` in `execute_plan`.
+    pub bound_values: HashMap<String, Value>,
+    /// Registered caller implementations. Empty by default — tests and
+    /// integration points install closures here.
+    pub callers: CallerRuntime,
 }
 
 impl<'execution> ExecutionContext<'execution> {
     pub fn new(db: &'execution HashMap<String, Table>) -> Self {
-        Self { db, stack: Vec::new(), spans: Vec::new(), params: HashMap::new(), triggered_conditions: None }
+        Self {
+            db, stack: Vec::new(), spans: Vec::new(),
+            params: HashMap::new(), triggered_conditions: None,
+            bound_values: HashMap::new(), callers: HashMap::new(),
+        }
     }
 
     pub fn with_params(db: &'execution HashMap<String, Table>, params: Params) -> Self {
-        Self { db, stack: Vec::new(), spans: Vec::new(), params, triggered_conditions: None }
+        Self {
+            db, stack: Vec::new(), spans: Vec::new(),
+            params, triggered_conditions: None,
+            bound_values: HashMap::new(), callers: HashMap::new(),
+        }
     }
 
     fn close_span(&mut self, op: SpanOperation) {
@@ -204,6 +231,9 @@ pub enum ExecuteError {
     MaterializeError(String),
     BindError(String),
     NotImplemented(String),
+    /// Caller wasn't registered, args didn't resolve, closure returned an
+    /// error, or a PK the caller produced isn't present in `row_table`.
+    CallerError(String),
 }
 
 impl std::fmt::Display for ExecuteError {
@@ -213,6 +243,7 @@ impl std::fmt::Display for ExecuteError {
             ExecuteError::MaterializeError(msg) => write!(f, "subquery materialization error: {msg}"),
             ExecuteError::BindError(msg) => write!(f, "bind error: {msg}"),
             ExecuteError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
+            ExecuteError::CallerError(msg) => write!(f, "caller error: {msg}"),
         }
     }
 }
