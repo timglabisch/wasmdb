@@ -9,6 +9,10 @@
 //! future requirement kinds (cache warmups, external lookups, …) can
 //! slot in without churn.
 
+pub mod registry;
+
+pub use registry::{RequirementMeta, RequirementParamDef, RequirementRegistry};
+
 use sql_parser::ast;
 
 use crate::planner::PlanError;
@@ -435,11 +439,12 @@ RequirementPlan (2 requirements)
         assert_eq!(req_plan.requirements.len(), 1);
 
         // (2) ExecutionPlan — SQL planner rejects call sources today.
-        let exec_err = sql::plan(&ast, &schemas).unwrap_err();
+        let empty_requirements = RequirementRegistry::new();
+        let exec_err = sql::plan(&ast, &schemas, &empty_requirements).unwrap_err();
 
         // (3) ReactivePlan — goes through the same SQL translation step, so
         // it rejects too (identical error surface).
-        let reactive_err = reactive::plan_reactive(&ast, &schemas).unwrap_err();
+        let reactive_err = reactive::plan_reactive(&ast, &schemas, &empty_requirements).unwrap_err();
 
         let rendered = format!(
             "=== RequirementPlan ===\n{}\

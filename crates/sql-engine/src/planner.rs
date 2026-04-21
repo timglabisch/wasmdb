@@ -6,8 +6,10 @@ pub mod requirement;
 use std::collections::HashMap;
 
 use sql_parser::ast;
+use sql_parser::ast::Value;
 use sql_parser::schema::{ColumnDef, Schema};
 use crate::schema::TableSchema;
+use requirement::RequirementRegistry;
 use shared::plan::*;
 use shared::translate;
 
@@ -16,8 +18,14 @@ use shared::translate;
 
 pub struct PlanContext<'a> {
     pub table_schemas: &'a HashMap<String, TableSchema>,
+    /// Caller metadata — parallel to `table_schemas`, describes which
+    /// `schema.function(args)` FROM sources can be resolved.
+    pub requirements: &'a RequirementRegistry,
     pub query_schemas: HashMap<String, Schema>,
     pub materializations: Vec<sql::plan::MaterializeStep>,
+    /// Values bound to internal placeholders. Requirement-args from SQL
+    /// (P3) land here so the plan stays value-free.
+    pub bound_values: HashMap<String, Value>,
 }
 
 fn derive_query_schema(table_name: &str, ts: &TableSchema) -> Schema {
@@ -37,14 +45,19 @@ impl<'a> PlanContext<'a> {
     }
 }
 
-pub(crate) fn make_plan_context<'a>(table_schemas: &'a HashMap<String, TableSchema>) -> PlanContext<'a> {
+pub(crate) fn make_plan_context<'a>(
+    table_schemas: &'a HashMap<String, TableSchema>,
+    requirements: &'a RequirementRegistry,
+) -> PlanContext<'a> {
     let query_schemas: HashMap<String, Schema> = table_schemas.iter()
         .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
         .collect();
     PlanContext {
         table_schemas,
+        requirements,
         query_schemas,
         materializations: Vec::new(),
+        bound_values: HashMap::new(),
     }
 }
 

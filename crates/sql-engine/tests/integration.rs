@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use sql_engine::execute::{self, Columns};
 use sql_engine::planner;
+use sql_engine::planner::requirement::RequirementRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
@@ -27,6 +28,7 @@ fn make_table_schema(name: &str, cols: &[(&str, DataType, bool)]) -> TableSchema
 struct TestDb {
     tables: HashMap<String, Table>,
     table_schemas: HashMap<String, TableSchema>,
+    requirements: RequirementRegistry,
 }
 
 impl TestDb {
@@ -34,6 +36,7 @@ impl TestDb {
         Self {
             tables: HashMap::new(),
             table_schemas: HashMap::new(),
+            requirements: RequirementRegistry::new(),
         }
     }
 
@@ -59,14 +62,14 @@ impl TestDb {
 
     fn run(&self, sql: &str) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements).expect("plan failed");
         let mut ctx = execute::ExecutionContext::new(&self.tables);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
 
     fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements).expect("plan failed");
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
@@ -816,7 +819,7 @@ fn prepared_reuse_plan_different_params() {
     let db = make_db();
     let sql = "SELECT users.name FROM users WHERE users.id = :id";
     let ast = parser::parse(sql).unwrap();
-    let plan = planner::sql::plan(&ast, &db.table_schemas).unwrap();
+    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.requirements).unwrap();
 
     // First execution
     let mut ctx1 = execute::ExecutionContext::with_params(

@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use sql_engine::planner;
+use sql_engine::planner::requirement::RequirementRegistry;
 use sql_parser::parser;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 
@@ -26,10 +27,11 @@ fn make_table_schema(name: &str, cols: &[(&str, DataType, bool)]) -> TableSchema
 
 struct TestDb {
     table_schemas: HashMap<String, TableSchema>,
+    requirements: RequirementRegistry,
 }
 
 impl TestDb {
-    fn new() -> Self { Self { table_schemas: HashMap::new() } }
+    fn new() -> Self { Self { table_schemas: HashMap::new(), requirements: RequirementRegistry::new() } }
 
     fn add_table(&mut self, name: &str, cols: &[(&str, DataType, bool)]) {
         let ts = make_table_schema(name, cols);
@@ -44,7 +46,7 @@ impl TestDb {
 
     fn plan(&self, sql: &str) -> String {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.requirements).expect("plan failed");
         plan.pretty_print()
     }
 }
