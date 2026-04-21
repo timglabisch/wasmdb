@@ -395,15 +395,15 @@ RequirementPlan (2 requirements)
     /// you can see how each one reacts to the same input:
     ///
     /// - `RequirementPlan` picks the caller up and lists it as external work.
-    /// - `ExecutionPlan` (SQL) rejects the call source — today the SQL
-    ///   pipeline has no TVF support, so the error surface is what callers
-    ///   must cope with.
+    /// - `ExecutionPlan` (SQL) resolves the caller against its
+    ///   `RequirementRegistry`; with an empty registry the planner
+    ///   rejects with `UnknownRequirement`.
     /// - `ReactivePlan` shares the SQL translation step and therefore
     ///   rejects with the same error.
     ///
     /// Asserting the exact outputs pins the current division of labor down:
-    /// callers are a `RequirementPlan` concern; the SQL/Reactive planners
-    /// intentionally know nothing about them yet.
+    /// the requirement layer owns caller metadata; the SQL/Reactive planners
+    /// look the caller up but produce no rows without a registered entry.
     #[test]
     fn complex_query_all_three_plans() {
         use std::collections::HashMap;
@@ -458,9 +458,9 @@ RequirementPlan (2 requirements)
 RequirementPlan (1 requirements)
   [0] Caller orders::fetch_by_user(42) row=orders
 === ExecutionPlan (error) ===
-unsupported expression: function-call source `orders.fetch_by_user(...)` not yet supported by the planner
+unknown requirement: orders::fetch_by_user
 === ReactivePlan (error) ===
-unsupported expression: function-call source `orders.fetch_by_user(...)` not yet supported by the planner
+unknown requirement: orders::fetch_by_user
 ";
         assert_eq!(rendered, expected);
     }

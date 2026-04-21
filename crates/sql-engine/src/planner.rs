@@ -69,6 +69,9 @@ pub enum PlanError {
     UnknownColumn { table: String, column: String },
     UnsupportedExpr(String),
     EmptySources,
+    UnknownRequirement(String),
+    CallerArgCountMismatch { id: String, expected: usize, got: usize },
+    CallerArgTypeMismatch { id: String, arg_idx: usize, expected: String, got: String },
 }
 
 impl std::fmt::Display for PlanError {
@@ -80,6 +83,15 @@ impl std::fmt::Display for PlanError {
             }
             PlanError::UnsupportedExpr(msg) => write!(f, "unsupported expression: {msg}"),
             PlanError::EmptySources => write!(f, "query has no sources"),
+            PlanError::UnknownRequirement(id) => write!(f, "unknown requirement: {id}"),
+            PlanError::CallerArgCountMismatch { id, expected, got } => write!(
+                f,
+                "caller `{id}` wrong number of args: expected {expected}, got {got}"
+            ),
+            PlanError::CallerArgTypeMismatch { id, arg_idx, expected, got } => write!(
+                f,
+                "caller `{id}` arg {arg_idx}: expected {expected}, got {got}"
+            ),
         }
     }
 }
@@ -460,15 +472,12 @@ mod tests {
         assert!(matches!(err, PlanError::EmptySources));
     }
 
-    // ── Guards for parser features not yet consumed by the planner ──
+    // ── Empty-registry smoketest for call sources and FROM aliases ──
     //
-    // These tests pin down the transitional state: the parser accepts
-    // `schema.fn(args)` call syntax and FROM-clause aliases, but the
-    // planner doesn't know what to do with them yet. Until the fetcher-
-    // registry work lands
-    // (see /Users/timglabisch/.claude/plans/fetcher-tables.md), the
-    // planner must *reject* them with a clear UnsupportedExpr instead
-    // of silently treating `foo.bar(...)` as a scan over table `bar`.
+    // The parser accepts `schema.fn(args)` call syntax and FROM-clause
+    // aliases. Callers are resolved against a `RequirementRegistry`;
+    // with an empty registry, the planner must reject calls with
+    // `UnknownRequirement`. FROM-AS is still globally unsupported.
 
     #[test]
     fn test_planner_rejects_call() {
@@ -490,13 +499,10 @@ mod tests {
         };
 
         let err = plan_select(&select, &table_schemas()).unwrap_err();
-        match err {
-            PlanError::UnsupportedExpr(msg) => {
-                assert!(msg.contains("customers"), "missing schema in error: {msg}");
-                assert!(msg.contains("by_owner"), "missing fn name in error: {msg}");
-            }
-            other => panic!("expected UnsupportedExpr for call, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, PlanError::UnknownRequirement(id) if id == "customers::by_owner"),
+            "expected UnknownRequirement, got {err:?}",
+        );
     }
 
     #[test]
@@ -567,8 +573,8 @@ mod tests {
 
         let err = plan_select(&select, &table_schemas()).unwrap_err();
         assert!(
-            matches!(&err, PlanError::UnsupportedExpr(msg) if msg.contains("for_user")),
-            "expected UnsupportedExpr mentioning the call, got {err:?}",
+            matches!(&err, PlanError::UnknownRequirement(id) if id == "orders::for_user"),
+            "expected UnknownRequirement, got {err:?}",
         );
     }
 
