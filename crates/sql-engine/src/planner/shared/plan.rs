@@ -163,11 +163,62 @@ pub enum PlanJoinStrategy {
 
 #[derive(Debug, Clone)]
 pub struct PlanSourceEntry {
-    pub table: String,
-    pub schema: Schema,
+    pub source: PlanSource,
     pub join: Option<PlanJoin>,
     pub pre_filter: PlanFilterPredicate,
-    pub scan_method: PlanScanMethod,
+}
+
+impl PlanSourceEntry {
+    /// Name under which columns of this source are referenced in the query.
+    /// For `Table`, the table name. For `Requirement`, the caller's schema-part
+    /// (or explicit `AS` alias once supported).
+    pub fn alias(&self) -> &str {
+        match &self.source {
+            PlanSource::Table { name, .. } => name,
+            PlanSource::Requirement { alias, .. } => alias,
+        }
+    }
+
+    /// Column-definition schema used for resolving `alias.col` references.
+    pub fn schema(&self) -> &Schema {
+        match &self.source {
+            PlanSource::Table { schema, .. } => schema,
+            PlanSource::Requirement { row_schema, .. } => row_schema,
+        }
+    }
+}
+
+/// What sits in a FROM slot. Either a plain table (scanned locally) or a
+/// caller invocation (rows delivered from outside, keyed into `row_table`).
+#[derive(Debug, Clone)]
+pub enum PlanSource {
+    Table {
+        name: String,
+        schema: Schema,
+        scan_method: PlanScanMethod,
+    },
+    Requirement {
+        /// Column-resolution alias (currently == `row_table`; future AS support lands here).
+        alias: String,
+        /// Shared base-table identity. All callers with the same `row_table`
+        /// feed rows into the same logical store (PK-deduped).
+        row_table: String,
+        /// Cached query-side schema for the base table — same shape callers see.
+        row_schema: Schema,
+        /// Wire identifier of the caller, shape `"{schema}::{function}"`.
+        caller_id: CallerId,
+        /// Positional arguments. Literals from SQL are auto-placeholderized
+        /// at translate-time so the plan is value-free.
+        args: Vec<RequirementArg>,
+    },
+}
+
+pub type CallerId = String;
+
+#[derive(Debug, Clone)]
+pub enum RequirementArg {
+    /// Name of a placeholder bound in `PlanContext.bound_values`.
+    Placeholder(String),
 }
 
 #[derive(Debug, Clone)]
@@ -191,8 +242,9 @@ impl PlanSelect {
 
         // Sources
         for (i, source) in self.sources.iter().enumerate() {
+            let alias = source.alias();
             if i == 0 {
-                out.push_str(&format!("{indent}Scan table={}", source.table));
+                out.push_str(&format!("{indent}Scan table={alias}"));
             } else if let Some(join) = &source.join {
                 let jt = match join.join_type {
                     JoinType::Inner => "Inner",
@@ -205,23 +257,32 @@ impl PlanSelect {
                         format!("IndexLookup({kind}{index_columns:?})")
                     }
                 };
-                out.push_str(&format!("{indent}Join type={jt} strategy={strategy} table={}", source.table));
+                out.push_str(&format!("{indent}Join type={jt} strategy={strategy} table={alias}"));
             } else {
-                out.push_str(&format!("{indent}CrossJoin table={}", source.table));
+                out.push_str(&format!("{indent}CrossJoin table={alias}"));
             }
 
-            // Scan method
-            match &source.scan_method {
-                PlanScanMethod::Full => out.push_str(" scan=Full"),
-                PlanScanMethod::Index { index_columns, prefix_len, is_hash, lookup, .. } => {
-                    let kind = if *is_hash { "Hash" } else { "BTree" };
-                    let lk = match lookup {
-                        PlanIndexLookup::FullKeyEq => "FullKeyEq",
-                        PlanIndexLookup::PrefixEq => "PrefixEq",
-                        PlanIndexLookup::PrefixRange => "PrefixRange",
-                        PlanIndexLookup::InMultiLookup => "InMultiLookup",
-                    };
-                    out.push_str(&format!(" scan={kind}({index_columns:?} prefix={prefix_len} lookup={lk})"));
+            // Source-specific trailing info
+            match &source.source {
+                PlanSource::Table { scan_method, .. } => match scan_method {
+                    PlanScanMethod::Full => out.push_str(" scan=Full"),
+                    PlanScanMethod::Index { index_columns, prefix_len, is_hash, lookup, .. } => {
+                        let kind = if *is_hash { "Hash" } else { "BTree" };
+                        let lk = match lookup {
+                            PlanIndexLookup::FullKeyEq => "FullKeyEq",
+                            PlanIndexLookup::PrefixEq => "PrefixEq",
+                            PlanIndexLookup::PrefixRange => "PrefixRange",
+                            PlanIndexLookup::InMultiLookup => "InMultiLookup",
+                        };
+                        out.push_str(&format!(" scan={kind}({index_columns:?} prefix={prefix_len} lookup={lk})"));
+                    }
+                },
+                PlanSource::Requirement { row_table, caller_id, args, .. } => {
+                    let arg_list = args.iter()
+                        .map(|a| match a { RequirementArg::Placeholder(n) => format!(":{n}") })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    out.push_str(&format!(" caller={caller_id} row={row_table} args=[{arg_list}]"));
                 }
             }
             out.push('\n');
@@ -243,7 +304,7 @@ impl PlanSelect {
             }
 
             // Index predicates
-            if let PlanScanMethod::Index { index_predicates, .. } = &source.scan_method {
+            if let PlanSource::Table { scan_method: PlanScanMethod::Index { index_predicates, .. }, .. } = &source.source {
                 if !index_predicates.is_empty() {
                     out.push_str(&format!("{}  index_preds: [", indent));
                     for (j, pred) in index_predicates.iter().enumerate() {
@@ -400,8 +461,8 @@ impl PlanFilterPredicate {
 
 pub fn col_name(col: &ColumnRef, sources: &[PlanSourceEntry]) -> String {
     if let Some(source) = sources.get(col.source) {
-        if let Some(cdef) = source.schema.columns.get(col.col) {
-            return format!("{}.{}", source.table, cdef.name);
+        if let Some(cdef) = source.schema().columns.get(col.col) {
+            return format!("{}.{}", source.alias(), cdef.name);
         }
     }
     format!("#{}.{}", col.source, col.col)

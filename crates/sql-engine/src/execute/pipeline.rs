@@ -18,16 +18,32 @@ fn execute_inner(
 ) -> Result<Columns, ExecuteError> {
     // Phase 1: Scan first source -> RowSet.
     let first = &plan.sources[0];
+    let first_name = match &first.source {
+        PlanSource::Table { name, .. } => name,
+        PlanSource::Requirement { caller_id, .. } => {
+            return Err(ExecuteError::NotImplemented(
+                format!("caller source `{caller_id}` not yet executable"),
+            ));
+        }
+    };
     let first_table = ctx.db
-        .get(&first.table)
-        .ok_or_else(|| ExecuteError::TableNotFound(first.table.clone()))?;
+        .get(first_name)
+        .ok_or_else(|| ExecuteError::TableNotFound(first_name.clone()))?;
     let mut rs = scan::scan(ctx, first_table, first);
 
     // Phase 2: Join remaining sources.
     for (source_idx, source) in plan.sources.iter().enumerate().skip(1) {
+        let name = match &source.source {
+            PlanSource::Table { name, .. } => name,
+            PlanSource::Requirement { caller_id, .. } => {
+                return Err(ExecuteError::NotImplemented(
+                    format!("caller source `{caller_id}` not yet executable"),
+                ));
+            }
+        };
         let table = ctx.db
-            .get(&source.table)
-            .ok_or_else(|| ExecuteError::TableNotFound(source.table.clone()))?;
+            .get(name)
+            .ok_or_else(|| ExecuteError::TableNotFound(name.clone()))?;
         match source.join.as_ref() {
             Some(j) => match &j.strategy {
                 PlanJoinStrategy::NestedLoop => {
@@ -169,9 +185,11 @@ mod tests {
         let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
-                table: "users".into(), schema: users_query_schema(),
+                source: PlanSource::Table {
+                    name: "users".into(), schema: users_query_schema(),
+                    scan_method: PlanScanMethod::Full,
+                },
                 join: None, pre_filter: PlanFilterPredicate::None,
-                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::GreaterThan { col: c(0, 2), value: Value::Int(28) },
             group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,
@@ -194,19 +212,23 @@ mod tests {
         let plan = PlanSelect {
             sources: vec![
                 PlanSourceEntry {
-                    table: "users".into(), schema: users_query_schema(),
+                    source: PlanSource::Table {
+                        name: "users".into(), schema: users_query_schema(),
+                        scan_method: PlanScanMethod::Full,
+                    },
                     join: None, pre_filter: PlanFilterPredicate::None,
-                    scan_method: PlanScanMethod::Full,
                 },
                 PlanSourceEntry {
-                    table: "orders".into(), schema: orders_query_schema(),
+                    source: PlanSource::Table {
+                        name: "orders".into(), schema: orders_query_schema(),
+                        scan_method: PlanScanMethod::Full,
+                    },
                     join: Some(PlanJoin {
                         join_type: JoinType::Inner,
                         on: PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(1, 1) },
                         strategy: PlanJoinStrategy::NestedLoop,
                     }),
                     pre_filter: PlanFilterPredicate::None,
-                    scan_method: PlanScanMethod::Full,
                 },
             ],
             filter: PlanFilterPredicate::None,
@@ -227,9 +249,11 @@ mod tests {
         let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
-                table: "users".into(), schema: users_query_schema(),
+                source: PlanSource::Table {
+                    name: "users".into(), schema: users_query_schema(),
+                    scan_method: PlanScanMethod::Full,
+                },
                 join: None, pre_filter: PlanFilterPredicate::None,
-                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::None,
             group_by: vec![c(0, 1)],
@@ -253,9 +277,11 @@ mod tests {
         let mut ctx = ExecutionContext::new(&db);
         let plan = PlanSelect {
             sources: vec![PlanSourceEntry {
-                table: "nonexistent".into(), schema: Schema::new(vec![]),
+                source: PlanSource::Table {
+                    name: "nonexistent".into(), schema: Schema::new(vec![]),
+                    scan_method: PlanScanMethod::Full,
+                },
                 join: None, pre_filter: PlanFilterPredicate::None,
-                scan_method: PlanScanMethod::Full,
             }],
             filter: PlanFilterPredicate::None,
             group_by: vec![], aggregates: vec![], order_by: vec![], limit: None,

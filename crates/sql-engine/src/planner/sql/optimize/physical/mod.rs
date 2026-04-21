@@ -18,23 +18,34 @@ use crate::planner::shared::plan::*;
 /// predicates not covered by the index — the executor always applies `pre_filter`.
 pub fn rewrite(plan: &mut PlanSelect, table_schemas: &HashMap<String, TableSchema>) {
     for source in &mut plan.sources {
+        let PlanSource::Table { name, scan_method, .. } = &mut source.source else {
+            // Requirement sources: physical scan choices don't apply.
+            continue;
+        };
+
         // If a previous run already split the predicates,
         // reconstruct the full pre_filter before re-choosing.
         let full_filter = reconstruct_full_filter(
-            std::mem::replace(&mut source.scan_method, PlanScanMethod::Full),
+            std::mem::replace(scan_method, PlanScanMethod::Full),
             std::mem::replace(&mut source.pre_filter, PlanFilterPredicate::None),
         );
         source.pre_filter = full_filter;
 
-        if let Some(ts) = table_schemas.get(&source.table) {
+        if let Some(ts) = table_schemas.get(name) {
             let (method, post_filter) = scan_method::choose(&source.pre_filter, ts);
-            source.scan_method = method;
+            if let PlanSource::Table { scan_method, .. } = &mut source.source {
+                *scan_method = method;
+            }
             source.pre_filter = post_filter;
         }
     }
     for i in 1..plan.sources.len() {
+        let PlanSource::Table { name, .. } = &plan.sources[i].source else {
+            continue;
+        };
+        let table_name = name.clone();
         if let Some(ref join) = plan.sources[i].join {
-            if let Some(ts) = table_schemas.get(&plan.sources[i].table) {
+            if let Some(ts) = table_schemas.get(&table_name) {
                 let strategy = join_strategy::choose(&join.on, i, ts);
                 plan.sources[i].join.as_mut().unwrap().strategy = strategy;
             }

@@ -1,4 +1,4 @@
-use crate::planner::shared::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSourceEntry};
+use crate::planner::shared::plan::{PlanFilterPredicate, PlanIndexLookup, PlanScanMethod, PlanSource, PlanSourceEntry};
 use crate::storage::{CellValue, RangeOp, Table};
 use super::value_to_cell;
 use super::{ExecutionContext, ScanMethod, SpanOperation};
@@ -6,10 +6,19 @@ use super::{ExecutionContext, ScanMethod, SpanOperation};
 use super::RowSet;
 
 /// Scan a source according to the plan's scan_method.
+///
+/// Requirement sources are rejected at the pipeline level before reaching
+/// here, so this function assumes the source is a `Table`.
 pub fn scan<'a>(ctx: &mut ExecutionContext, table: &'a Table, source: &PlanSourceEntry) -> RowSet<'a> {
+    let scan_method = match &source.source {
+        PlanSource::Table { scan_method, .. } => scan_method,
+        PlanSource::Requirement { .. } => {
+            unreachable!("Requirement sources are filtered out in the pipeline before scan()");
+        }
+    };
     let table_name = table.schema.name.clone();
     let row_ids = ctx.span_with(|ctx| {
-        let (ids, method) = match &source.scan_method {
+        let (ids, method) = match scan_method {
             PlanScanMethod::Full => {
                 if matches!(source.pre_filter, PlanFilterPredicate::None) {
                     (scan_row_ids(ctx, table), ScanMethod::Full)
@@ -132,11 +141,13 @@ mod tests {
     fn make_source(table: &str, pre_filter: PlanFilterPredicate, scan_method: PlanScanMethod) -> PlanSourceEntry {
         // Minimal PlanSourceEntry for scan tests — schema is not used by scan().
         PlanSourceEntry {
-            table: table.into(),
-            schema: Schema::new(vec![]),
+            source: PlanSource::Table {
+                name: table.into(),
+                schema: Schema::new(vec![]),
+                scan_method,
+            },
             join: None,
             pre_filter,
-            scan_method,
         }
     }
 

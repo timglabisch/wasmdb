@@ -203,6 +203,7 @@ pub enum ExecuteError {
     TableNotFound(String),
     MaterializeError(String),
     BindError(String),
+    NotImplemented(String),
 }
 
 impl std::fmt::Display for ExecuteError {
@@ -211,6 +212,7 @@ impl std::fmt::Display for ExecuteError {
             ExecuteError::TableNotFound(t) => write!(f, "table not found: {t}"),
             ExecuteError::MaterializeError(msg) => write!(f, "subquery materialization error: {msg}"),
             ExecuteError::BindError(msg) => write!(f, "bind error: {msg}"),
+            ExecuteError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
         }
     }
 }

@@ -41,11 +41,13 @@ pub fn build_raw_plan(
             .clone();
 
         sources.push(PlanSourceEntry {
-            table: table_name.clone(),
-            schema: table_schema,
+            source: PlanSource::Table {
+                name: table_name.clone(),
+                schema: table_schema,
+                scan_method: PlanScanMethod::Full,
+            },
             join: None,
             pre_filter: PlanFilterPredicate::None,
-            scan_method: PlanScanMethod::Full,
         });
 
         if let Some(jc) = &entry.join {
@@ -204,7 +206,7 @@ pub fn plan_expr_to_predicate(
 
 fn resolve_column_ref(col: &ast::AstColumnRef, sources: &[PlanSourceEntry]) -> Result<ColumnRef, PlanError> {
     for (source_idx, source) in sources.iter().enumerate() {
-        if let Some(col_idx) = source.schema.resolve(&col.table, &col.column) {
+        if let Some(col_idx) = source.schema().resolve(&col.table, &col.column) {
             return Ok(ColumnRef { source: source_idx, col: col_idx });
         }
     }

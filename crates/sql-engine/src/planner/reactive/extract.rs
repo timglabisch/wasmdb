@@ -100,7 +100,7 @@ fn decompose_condition(
     if let ast::AstExpr::Column(_) = expr {
         let cr = translate::resolve_to_column_ref(expr, sources)?;
         return Ok(ReactiveCondition {
-            table: sources[cr.source].table.clone(),
+            table: sources[cr.source].alias().to_string(),
             kind: ReactiveConditionKind::TableLevel,
             source_idx: cr.source,
         });
@@ -126,7 +126,7 @@ fn decompose_condition(
     let dummy_schemas = std::collections::HashMap::new();
     let query_schemas = sources
         .iter()
-        .map(|s| (s.table.clone(), s.schema.clone()))
+        .map(|s| (s.alias().to_string(), s.schema().clone()))
         .collect();
     let mut ctx = crate::planner::PlanContext {
         table_schemas: &dummy_schemas,
@@ -146,7 +146,7 @@ fn decompose_condition(
     let source_idx = col_refs[0].source;
 
     Ok(ReactiveCondition {
-        table: sources[source_idx].table.clone(),
+        table: sources[source_idx].alias().to_string(),
         kind: ReactiveConditionKind::Condition {
             filter: predicate,
         },
@@ -159,19 +159,21 @@ mod tests {
     use super::*;
     use sql_parser::ast::Value;
     use sql_parser::schema::{ColumnDef, Schema};
-    use crate::planner::shared::plan::{PlanFilterPredicate, PlanScanMethod};
+    use crate::planner::shared::plan::{PlanFilterPredicate, PlanScanMethod, PlanSource};
 
     fn users_sources() -> Vec<PlanSourceEntry> {
         vec![PlanSourceEntry {
-            table: "users".into(),
-            schema: Schema::new(vec![
-                ColumnDef { table: Some("users".into()), name: "id".into() },
-                ColumnDef { table: Some("users".into()), name: "name".into() },
-                ColumnDef { table: Some("users".into()), name: "age".into() },
-            ]),
+            source: PlanSource::Table {
+                name: "users".into(),
+                schema: Schema::new(vec![
+                    ColumnDef { table: Some("users".into()), name: "id".into() },
+                    ColumnDef { table: Some("users".into()), name: "name".into() },
+                    ColumnDef { table: Some("users".into()), name: "age".into() },
+                ]),
+                scan_method: PlanScanMethod::Full,
+            },
             join: None,
             pre_filter: PlanFilterPredicate::None,
-            scan_method: PlanScanMethod::Full,
         }]
     }
 

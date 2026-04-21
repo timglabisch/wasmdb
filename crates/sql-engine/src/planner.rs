@@ -579,6 +579,6 @@ mod tests {
         let plan = plan_select(&select, &table_schemas())
             .expect("plain table must plan successfully");
         assert_eq!(plan.sources.len(), 1);
-        assert_eq!(plan.sources[0].table, "users");
+        assert_eq!(plan.sources[0].alias(), "users");
     }
 }

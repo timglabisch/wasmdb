@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sql_engine::execute::filter_row::eval_predicate;
 use sql_engine::execute::{Params, resolve_filter};
-use sql_engine::planner::shared::plan::{ColumnRef, PlanFilterPredicate, PlanSourceEntry, PlanScanMethod};
+use sql_engine::planner::shared::plan::{ColumnRef, PlanFilterPredicate, PlanSource, PlanSourceEntry, PlanScanMethod};
 use sql_engine::planner::shared::translate::plan_expr_to_predicate;
 use sql_engine::planner::{PlanContext, PlanError};
 use sql_engine::schema::TableSchema;
@@ -32,11 +32,13 @@ pub(crate) fn build_predicate(
     );
 
     let source = PlanSourceEntry {
-        table: table_name.into(),
-        schema: query_schema,
+        source: PlanSource::Table {
+            name: table_name.into(),
+            schema: query_schema,
+            scan_method: PlanScanMethod::Full,
+        },
         join: None,
         pre_filter: PlanFilterPredicate::None,
-        scan_method: PlanScanMethod::Full,
     };
 
     let table_schemas: HashMap<String, TableSchema> = tables.iter()
