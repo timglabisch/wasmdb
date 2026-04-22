@@ -14,17 +14,27 @@ use sql_engine::{Caller, DbTable};
 use sql_parser::ast::Value;
 use tables_e2e::{AppCtx, Customer};
 
-use common::{run, run_err, setup_db};
+use common::{check_plans, run, run_err, setup_db};
 
 #[test]
 fn unknown_caller_id_at_plan_time() {
     let mut db = setup_db(AppCtx::with_default_fixtures());
-    let err = run_err(
-        &mut db,
-        "SELECT customer.name FROM customers.does_not_exist(1)",
-    );
+    let sql = "SELECT customer.name FROM customers.does_not_exist(1)";
+    let err = run_err(&mut db, sql);
     let msg = format!("{err:?}");
     assert!(msg.contains("UnknownRequirement"), "got {msg}");
+    check_plans(
+        &db,
+        sql,
+        "\
+=== RequirementPlan ===
+RequirementPlan (1 requirements)
+  [0] Caller customers::does_not_exist(1) row=customers
+=== ExecutionPlan ===
+error: UnknownRequirement(\"customers::does_not_exist\")
+=== ReactivePlan ===
+error: UnknownRequirement(\"customers::does_not_exist\")",
+    );
 }
 
 #[test]
@@ -57,13 +67,25 @@ fn caller_fetcher_that_returns_err_propagates() {
     });
     db.register_caller(Caller::new("customers::always_err", meta, fetcher));
 
-    let err = run_err(
-        &mut db,
-        "SELECT customer.name FROM customers.always_err(1)",
-    );
+    let sql = "SELECT customer.name FROM customers.always_err(1)";
+    let err = run_err(&mut db, sql);
     let msg = format!("{err:?}");
     assert!(msg.contains("boom"), "error not propagated: {msg}");
     let _ = RequirementsResult::default; // keep the import live if future code uses it
+    check_plans(
+        &db,
+        sql,
+        "\
+=== RequirementPlan ===
+RequirementPlan (1 requirements)
+  [0] Caller customers::always_err(1) row=customers
+=== ExecutionPlan ===
+Select
+  Scan table=customer caller=customers::always_err row=customer args=[:__caller_0_arg_0]
+  Output [customer.name]
+=== ReactivePlan ===
+ReactivePlan (no conditions)",
+    );
 }
 
 #[test]
@@ -87,10 +109,8 @@ fn caller_fetcher_wrong_column_count_errors() {
     });
     db.register_caller(Caller::new("customers::short_rows", meta, fetcher));
 
-    let err = run_err(
-        &mut db,
-        "SELECT customer.name FROM customers.short_rows(1)",
-    );
+    let sql = "SELECT customer.name FROM customers.short_rows(1)";
+    let err = run_err(&mut db, sql);
     let msg = format!("{err:?}");
     assert!(
         msg.to_lowercase().contains("column")
@@ -98,12 +118,41 @@ fn caller_fetcher_wrong_column_count_errors() {
             || msg.contains("ColumnCount"),
         "expected column-count error, got {msg}",
     );
+    check_plans(
+        &db,
+        sql,
+        "\
+=== RequirementPlan ===
+RequirementPlan (1 requirements)
+  [0] Caller customers::short_rows(1) row=customers
+=== ExecutionPlan ===
+Select
+  Scan table=customer caller=customers::short_rows row=customer args=[:__caller_0_arg_0]
+  Output [customer.name]
+=== ReactivePlan ===
+ReactivePlan (no conditions)",
+    );
 }
 
 // Sanity: the happy path still works in this module.
 #[test]
 fn happy_path_still_works_in_errors_suite() {
     let mut db = setup_db(AppCtx::with_default_fixtures());
-    let cols = run(&mut db, "SELECT customer.name FROM customers.by_owner(2)");
+    let sql = "SELECT customer.name FROM customers.by_owner(2)";
+    let cols = run(&mut db, sql);
     assert_eq!(cols[0].len(), 1);
+    check_plans(
+        &db,
+        sql,
+        "\
+=== RequirementPlan ===
+RequirementPlan (1 requirements)
+  [0] Caller customers::by_owner(2) row=customers
+=== ExecutionPlan ===
+Select
+  Scan table=customer caller=customers::by_owner row=customer args=[:__caller_0_arg_0]
+  Output [customer.name]
+=== ReactivePlan ===
+ReactivePlan (no conditions)",
+    );
 }

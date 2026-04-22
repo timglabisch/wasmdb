@@ -4,6 +4,7 @@ use std::sync::Arc;
 use sql_engine::execute::ExecuteError;
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::{CellValue, Table};
+use sql_engine::planner::requirement::RequirementRegistry;
 use sql_engine::{Caller, CallerRegistry, DbCaller, DbTable};
 use sql_parser::ast::Statement;
 
@@ -53,6 +54,14 @@ impl Database {
 
     pub fn table_names(&self) -> Vec<String> {
         self.tables.keys().cloned().collect()
+    }
+
+    /// Requirement registry — planner input for caller type-checking
+    /// and `PlanSource::Requirement` translation. Exposed so tests (and
+    /// external tools) can re-run the planners against the live registry
+    /// without executing.
+    pub fn requirements(&self) -> &RequirementRegistry {
+        &self.callers.requirements
     }
 
     pub fn table_schemas(&self) -> HashMap<String, TableSchema> {

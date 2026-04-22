@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use database::{Database, DbError};
 use sql_engine::execute::Params;
+use sql_engine::planner;
 use sql_engine::storage::CellValue;
 use tables_e2e::{AppCtx, Customer, Invoice, Product};
 
@@ -62,6 +63,75 @@ pub fn run_with_params(
 
 pub fn run_err(db: &mut Database, sql: &str) -> DbError {
     pollster::block_on(db.execute_async(sql)).expect_err("expected execute_async to fail")
+}
+
+// ── Plan snapshot helpers ───────────────────────────────────────────────
+//
+// `plans()` parses `sql` and prints RequirementPlan + ExecutionPlan +
+// ReactivePlan in a stable, snapshot-friendly form against the live
+// database state (table schemas + registered callers). Errors are
+// rendered inline so snapshots also cover plan-time rejections.
+//
+// `check_plans()` asserts equality with a hand-written expected string
+// and prints a full actual/expected diff on mismatch.
+
+pub fn plans(db: &Database, sql: &str) -> String {
+    let ast = match sql_parser::parser::parse(sql) {
+        Ok(a) => a,
+        Err(e) => return format!("=== parse error ===\n{e:?}\n"),
+    };
+    let schemas = db.table_schemas();
+    let reqs = db.requirements();
+
+    let mut out = String::new();
+
+    out.push_str("=== RequirementPlan ===\n");
+    match planner::requirement::plan_requirements(&ast) {
+        Ok(p) => out.push_str(&p.pretty_print()),
+        Err(e) => out.push_str(&format!("error: {e:?}\n")),
+    }
+
+    out.push_str("=== ExecutionPlan ===\n");
+    match planner::sql::plan(&ast, &schemas, reqs) {
+        Ok(p) => out.push_str(&p.pretty_print()),
+        Err(e) => out.push_str(&format!("error: {e:?}\n")),
+    }
+
+    out.push_str("=== ReactivePlan ===\n");
+    match planner::reactive::plan_reactive(&ast, &schemas, reqs) {
+        Ok(p) => out.push_str(&p.pretty_print()),
+        Err(e) => out.push_str(&format!("error: {e:?}\n")),
+    }
+
+    out
+}
+
+pub fn check_plans(db: &Database, sql: &str, expected: &str) {
+    let actual = plans(db, sql);
+    let actual_trim = actual.trim_end_matches('\n');
+
+    // Generator mode: when `GEN_SNAPS=1` is set, append the actual snapshot
+    // to `/tmp/tables_e2e_snaps.txt` with a begin/end marker and return
+    // without asserting. Used once during authoring to collect all 74
+    // expected strings; leave asserts live in normal test runs.
+    if std::env::var("GEN_SNAPS").is_ok() {
+        use std::io::Write;
+        let path = "/tmp/tables_e2e_snaps.txt";
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .expect("open snaps file");
+        writeln!(f, "<<<BEGIN {sql}>>>\n{actual_trim}\n<<<END>>>").unwrap();
+        return;
+    }
+
+    let expected_trim = expected.trim_matches('\n');
+    if actual_trim != expected_trim {
+        panic!(
+            "\n--- plan snapshot mismatch for SQL ---\n{sql}\n\n--- ACTUAL ---\n{actual_trim}\n\n--- EXPECTED ---\n{expected_trim}\n",
+        );
+    }
 }
 
 // ── Cell constructors (less noise in assertions) ────────────────────────
