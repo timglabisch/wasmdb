@@ -1,4 +1,7 @@
-.PHONY: clean sync sync-types sync-install sync-dev invoice invoice-types invoice-dev invoice-dev-server install kill-sync kill-invoice
+.PHONY: clean sync sync-types sync-install sync-dev invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-sync kill-invoice
+
+INVOICE_COMPOSE := examples/invoice-demo/docker-compose.yml
+INVOICE_SCHEMA  := examples/invoice-demo/sql/001_init.sql
 
 kill-sync:
 	@lsof -ti:3123 | xargs kill -9 2>/dev/null || true
@@ -42,8 +45,29 @@ invoice: invoice-types kill-invoice
 invoice-dev: invoice-types
 	wasm-pack build examples/invoice-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/invoice-demo/frontend && npm run dev
 
-invoice-dev-server: kill-invoice
+invoice-dev-server: kill-invoice invoice-db
 	cargo run -p invoice-demo-server --bin server
+
+# Bring up a fresh TiDB for invoice-demo. Idempotent by wiping everything:
+# `down -v` removes the volumes, so every invocation is a clean reset.
+invoice-db:
+	docker compose -f $(INVOICE_COMPOSE) down -v
+	docker compose -f $(INVOICE_COMPOSE) up -d
+	@echo "waiting for TiDB on :4000 ..."
+	@for i in $$(seq 1 60); do \
+		if docker run --rm mysql:8 mysqladmin ping -h host.docker.internal -P 4000 -u root --silent 2>/dev/null; then \
+			echo "TiDB ready"; \
+			exit 0; \
+		fi; \
+		sleep 2; \
+	done; \
+	echo "TiDB did not come up within 120s"; \
+	exit 1
+	docker run --rm -i mysql:8 mysql -h host.docker.internal -P 4000 -u root < $(INVOICE_SCHEMA)
+	@echo "schema applied — TiDB reset complete"
+
+invoice-db-down:
+	docker compose -f $(INVOICE_COMPOSE) down -v
 
 install:
 	npm install

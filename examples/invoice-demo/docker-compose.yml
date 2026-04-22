@@ -9,8 +9,10 @@ services:
   pd:
     image: pingcap/pd:v7.5.0
     container_name: invoice-demo-pd
-    ports:
-      - "2379:2379"
+    # PD only talks to TiKV/TiDB on the internal compose network — no host
+    # mapping for 2379/2380. Keeping them off-host avoids collisions with
+    # other local etcd-style services (Docker Desktop's stale reservations,
+    # k8s tooling, …).
     command:
       - --name=pd
       - --data-dir=/data/pd
