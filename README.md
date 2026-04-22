@@ -26,6 +26,40 @@ The protocol only ever sees the net Z-set. Rollback is negation. Server correcti
 
 ---
 
+## Live SQL, on both sides of the wire
+
+The same SQL engine powers the browser — so live queries are just SQL. Tables come from two sources: the local database (mutated by commands) and *callers*, server-hosted fetchers that the engine invokes transparently. `reactive(col)` markers tell the engine which columns carry the subscription's identity, so invalidation is condition-level, not table-level.
+
+```tsx
+// live query — plans and executes against the browser's SQL engine
+const invoices = useQuery(
+  `SELECT reactive(invoice.id),
+          invoice.id, invoice.total, invoice.status, customer.name
+     FROM invoices.by_customer(:customer_id) AS invoice
+     INNER JOIN customers.list() AS customer
+             ON customer.id = invoice.customer_id
+    WHERE invoice.status = :status
+    ORDER BY invoice.id DESC
+    LIMIT 50`,
+  { customer_id: 42, status: 'open' },
+  row => ({ id: row[1], total: row[2], status: row[3], customer: row[4] }),
+);
+
+// fire a command — same Rust code that runs authoritatively on the server
+await execute({ type: 'AddPosition', invoice_id: 17, product_id: 3, qty: 2 });
+```
+
+What the engine does:
+
+1. **First render.** `invoices.by_customer(42)` and `customers.list()` are callers. The engine resolves them with one HTTP fetch, lands the rows in the local DB, then plans and runs the query locally.
+2. **Command fires.** `AddPosition` runs against the local DB, producing a Z-set. The reactive index sees "invoice 17 changed"; the query re-runs; the UI updates in the next microtask.
+3. **Server confirms.** The same Rust code runs against the server's database. Its Z-set — possibly with a corrected total — comes back and applies cleanly. One more reactive hit, one more render, authoritative state.
+4. **On rejection.** The optimistic Z-set is negated; the subscription re-fires once with the pre-command state.
+
+UI code never calls a fetch, never invalidates a cache, never handles a conflict. It subscribes to SQL; SQL updates.
+
+---
+
 ## Four pillars
 
 **Reactive SQL.** Subscribe to `SELECT` queries; re-render only when a mutation actually affects the result. Condition-level invalidation, not table-level. The incremental view-maintenance runtime runs in the browser.
