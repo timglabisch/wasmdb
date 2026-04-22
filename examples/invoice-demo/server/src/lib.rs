@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::routing::post;
 use invoice_demo_tables_storage::{register_all, AppCtx};
-use sql_engine::schema::TableSchema;
 use tables_storage::Registry;
 use tower_http::services::ServeDir;
 
@@ -12,12 +10,9 @@ pub mod handler;
 
 /// Stateless invoice-demo server: TiDB is the single source of truth. The
 /// `pool` inside `ctx` is cloned into the per-request `MysqlRunner`.
-/// `schemas` drives both the ZSet synthesis in the runner and the boot-
-/// time drift check in `assert_mysql_matches`.
 pub struct AppState {
     pub registry: Registry<AppCtx>,
     pub ctx: AppCtx,
-    pub schemas: Arc<HashMap<String, TableSchema>>,
 }
 
 pub async fn run() {
@@ -28,8 +23,7 @@ pub async fn run() {
         .await
         .expect("connect to database");
 
-    let schemas = schema::build_table_schemas();
-    schema::assert_mysql_matches(&pool, &schemas)
+    schema::assert_mysql_matches(&pool, &schema::build_table_schemas())
         .await
         .expect("TiDB schema does not match expected TableSchema — run sql/001_init.sql");
 
@@ -39,7 +33,6 @@ pub async fn run() {
     let state = Arc::new(AppState {
         registry,
         ctx: AppCtx { pool },
-        schemas: Arc::new(schemas),
     });
 
     let static_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist");

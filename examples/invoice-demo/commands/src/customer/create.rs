@@ -68,9 +68,7 @@ impl Command for CreateCustomer {
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;
-    use std::collections::HashMap;
     use async_trait::async_trait;
-    use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
     use sync_server_mysql::ServerCommand;
 
@@ -80,7 +78,6 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \

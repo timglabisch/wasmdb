@@ -53,7 +53,7 @@ pub async fn handle_command(
 
         let verdict = match request
             .command
-            .execute_server(&mut tx, &request.client_zset, &state.schemas)
+            .execute_server(&mut tx, &request.client_zset)
             .await
         {
             Ok(server_zset) => Verdict::Confirmed { server_zset },

@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-
 use async_trait::async_trait;
-use sql_engine::schema::TableSchema;
-use sql_engine::storage::ZSet;
 use sqlx::{MySql, Transaction};
 use sync::command::{Command, CommandError};
+use sync::zset::ZSet;
 
 /// Server-side counterpart of [`Command`]. Every command implements
 /// `execute_server` to run its SQL directly inside the sqlx transaction —
@@ -22,6 +19,5 @@ pub trait ServerCommand: Command {
         &self,
         tx: &mut Transaction<'static, MySql>,
         client_zset: &ZSet,
-        schemas: &HashMap<String, TableSchema>,
     ) -> Result<ZSet, CommandError>;
 }

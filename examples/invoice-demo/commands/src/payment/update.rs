@@ -39,9 +39,7 @@ impl Command for UpdatePayment {
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;
-    use std::collections::HashMap;
     use async_trait::async_trait;
-    use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
     use sync_server_mysql::ServerCommand;
 
@@ -51,7 +49,6 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "UPDATE payments SET amount = ?, paid_at = ?, method = ?, reference = ?, note = ? WHERE payments.id = ?",

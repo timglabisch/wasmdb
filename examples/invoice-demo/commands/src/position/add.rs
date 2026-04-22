@@ -54,9 +54,7 @@ impl Command for AddPosition {
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;
-    use std::collections::HashMap;
     use async_trait::async_trait;
-    use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
     use sync_server_mysql::ServerCommand;
 
@@ -66,7 +64,6 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \

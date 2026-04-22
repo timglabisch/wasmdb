@@ -145,9 +145,7 @@ impl Command for InvoiceCommand {
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;
-    use std::collections::HashMap;
     use async_trait::async_trait;
-    use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
     use sync_server_mysql::ServerCommand;
 
@@ -157,41 +155,40 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             use InvoiceCommand::*;
             match self {
-                CreateCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteCustomerCascade(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreateContact(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateContact(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteContact(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreateInvoice(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateInvoiceHeader(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteInvoice(c) => c.execute_server(tx, client_zset, schemas).await,
-                AddPosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdatePosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeletePosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                MovePosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreatePayment(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdatePayment(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeletePayment(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreateProduct(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateProduct(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteProduct(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreateSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
-                CreateRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
-                AddRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                UpdateRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                DeleteRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
-                RunRecurringOnce(c) => c.execute_server(tx, client_zset, schemas).await,
-                LogActivity(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateCustomer(c) => c.execute_server(tx, client_zset).await,
+                UpdateCustomer(c) => c.execute_server(tx, client_zset).await,
+                DeleteCustomer(c) => c.execute_server(tx, client_zset).await,
+                DeleteCustomerCascade(c) => c.execute_server(tx, client_zset).await,
+                CreateContact(c) => c.execute_server(tx, client_zset).await,
+                UpdateContact(c) => c.execute_server(tx, client_zset).await,
+                DeleteContact(c) => c.execute_server(tx, client_zset).await,
+                CreateInvoice(c) => c.execute_server(tx, client_zset).await,
+                UpdateInvoiceHeader(c) => c.execute_server(tx, client_zset).await,
+                DeleteInvoice(c) => c.execute_server(tx, client_zset).await,
+                AddPosition(c) => c.execute_server(tx, client_zset).await,
+                UpdatePosition(c) => c.execute_server(tx, client_zset).await,
+                DeletePosition(c) => c.execute_server(tx, client_zset).await,
+                MovePosition(c) => c.execute_server(tx, client_zset).await,
+                CreatePayment(c) => c.execute_server(tx, client_zset).await,
+                UpdatePayment(c) => c.execute_server(tx, client_zset).await,
+                DeletePayment(c) => c.execute_server(tx, client_zset).await,
+                CreateProduct(c) => c.execute_server(tx, client_zset).await,
+                UpdateProduct(c) => c.execute_server(tx, client_zset).await,
+                DeleteProduct(c) => c.execute_server(tx, client_zset).await,
+                CreateSepaMandate(c) => c.execute_server(tx, client_zset).await,
+                UpdateSepaMandate(c) => c.execute_server(tx, client_zset).await,
+                DeleteSepaMandate(c) => c.execute_server(tx, client_zset).await,
+                CreateRecurring(c) => c.execute_server(tx, client_zset).await,
+                UpdateRecurring(c) => c.execute_server(tx, client_zset).await,
+                DeleteRecurring(c) => c.execute_server(tx, client_zset).await,
+                AddRecurringPosition(c) => c.execute_server(tx, client_zset).await,
+                UpdateRecurringPosition(c) => c.execute_server(tx, client_zset).await,
+                DeleteRecurringPosition(c) => c.execute_server(tx, client_zset).await,
+                RunRecurringOnce(c) => c.execute_server(tx, client_zset).await,
+                LogActivity(c) => c.execute_server(tx, client_zset).await,
             }
         }
     }

@@ -1922,7 +1922,6 @@ name = "sync-server-mysql"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "sql-engine",
  "sqlx",
  "sync",
 ]

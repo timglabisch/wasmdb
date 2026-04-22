@@ -63,9 +63,7 @@ impl Command for CreateInvoice {
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;
-    use std::collections::HashMap;
     use async_trait::async_trait;
-    use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
     use sync_server_mysql::ServerCommand;
 
@@ -75,7 +73,6 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
