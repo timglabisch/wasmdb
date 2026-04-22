@@ -7,7 +7,6 @@ use axum::routing::post;
 use borsh::BorshDeserialize;
 use database::Database;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
-use sync::command::Command;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server::state::ServerState;
 use sync_demo_commands::UserCommand;
@@ -52,33 +51,27 @@ async fn handle_command(
         }
     };
 
-    let mut db = state.db.lock().unwrap();
+    let mut db = state.db.lock().await;
 
-    let responses: Vec<CommandResponse> = batch
-        .requests
-        .into_iter()
-        .map(|request| {
-            match request.command.execute(&mut db) {
-                Ok(server_zset) => {
-                    let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
-                    eprintln!("[server] confirmed seq={} | total users: {:?}", request.seq_no.0, count[0]);
-                    CommandResponse {
-                        stream_id: request.stream_id,
-                        seq_no: request.seq_no,
-                        verdict: Verdict::Confirmed { server_zset },
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[server] rejected seq={}: {}", request.seq_no.0, e);
-                    CommandResponse {
-                        stream_id: request.stream_id,
-                        seq_no: request.seq_no,
-                        verdict: Verdict::Rejected { reason: e.to_string() },
-                    }
-                }
+    let mut responses: Vec<CommandResponse> = Vec::with_capacity(batch.requests.len());
+    for request in batch.requests {
+        let verdict = match db.apply_zset(&request.client_zset) {
+            Ok(()) => {
+                let count = db.execute("SELECT COUNT(users.id) FROM users").unwrap();
+                eprintln!("[server] confirmed seq={} | total users: {:?}", request.seq_no.0, count[0]);
+                Verdict::Confirmed { server_zset: request.client_zset }
             }
-        })
-        .collect();
+            Err(e) => {
+                eprintln!("[server] rejected seq={}: {}", request.seq_no.0, e);
+                Verdict::Rejected { reason: e.to_string() }
+            }
+        };
+        responses.push(CommandResponse {
+            stream_id: request.stream_id,
+            seq_no: request.seq_no,
+            verdict,
+        });
+    }
 
     let batch_response = BatchCommandResponse { responses };
     let bytes = borsh::to_vec(&batch_response).expect("serialize batch response");

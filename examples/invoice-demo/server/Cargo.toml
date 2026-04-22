@@ -5,12 +5,11 @@ edition = "2021"
 
 [dependencies]
 sync = { path = "../../../crates/sync" }
-sync-server = { path = "../../../crates/sync-server" }
-invoice-demo-commands = { path = "../commands" }
+sync-server-mysql = { path = "../../../crates/sync-server-mysql" }
+invoice-demo-commands = { path = "../commands", features = ["server"] }
 invoice-demo-tables-storage = { path = "../tables-storage" }
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
-database = { path = "../../../crates/database", features = ["borsh"] }
 sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }

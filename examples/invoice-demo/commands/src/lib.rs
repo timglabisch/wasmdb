@@ -1,7 +1,7 @@
 use borsh::{BorshSerialize, BorshDeserialize};
+use database::Database;
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
-use database::Database;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
@@ -99,40 +99,100 @@ pub enum InvoiceCommand {
 }
 
 impl Command for InvoiceCommand {
-    fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         use InvoiceCommand::*;
         match self {
-            CreateCustomer(c) => c.execute(db),
-            UpdateCustomer(c) => c.execute(db),
-            DeleteCustomer(c) => c.execute(db),
-            DeleteCustomerCascade(c) => c.execute(db),
-            CreateContact(c) => c.execute(db),
-            UpdateContact(c) => c.execute(db),
-            DeleteContact(c) => c.execute(db),
-            CreateInvoice(c) => c.execute(db),
-            UpdateInvoiceHeader(c) => c.execute(db),
-            DeleteInvoice(c) => c.execute(db),
-            AddPosition(c) => c.execute(db),
-            UpdatePosition(c) => c.execute(db),
-            DeletePosition(c) => c.execute(db),
-            MovePosition(c) => c.execute(db),
-            CreatePayment(c) => c.execute(db),
-            UpdatePayment(c) => c.execute(db),
-            DeletePayment(c) => c.execute(db),
-            CreateProduct(c) => c.execute(db),
-            UpdateProduct(c) => c.execute(db),
-            DeleteProduct(c) => c.execute(db),
-            CreateSepaMandate(c) => c.execute(db),
-            UpdateSepaMandate(c) => c.execute(db),
-            DeleteSepaMandate(c) => c.execute(db),
-            CreateRecurring(c) => c.execute(db),
-            UpdateRecurring(c) => c.execute(db),
-            DeleteRecurring(c) => c.execute(db),
-            AddRecurringPosition(c) => c.execute(db),
-            UpdateRecurringPosition(c) => c.execute(db),
-            DeleteRecurringPosition(c) => c.execute(db),
-            RunRecurringOnce(c) => c.execute(db),
-            LogActivity(c) => c.execute(db),
+            CreateCustomer(c) => c.execute_optimistic(db),
+            UpdateCustomer(c) => c.execute_optimistic(db),
+            DeleteCustomer(c) => c.execute_optimistic(db),
+            DeleteCustomerCascade(c) => c.execute_optimistic(db),
+            CreateContact(c) => c.execute_optimistic(db),
+            UpdateContact(c) => c.execute_optimistic(db),
+            DeleteContact(c) => c.execute_optimistic(db),
+            CreateInvoice(c) => c.execute_optimistic(db),
+            UpdateInvoiceHeader(c) => c.execute_optimistic(db),
+            DeleteInvoice(c) => c.execute_optimistic(db),
+            AddPosition(c) => c.execute_optimistic(db),
+            UpdatePosition(c) => c.execute_optimistic(db),
+            DeletePosition(c) => c.execute_optimistic(db),
+            MovePosition(c) => c.execute_optimistic(db),
+            CreatePayment(c) => c.execute_optimistic(db),
+            UpdatePayment(c) => c.execute_optimistic(db),
+            DeletePayment(c) => c.execute_optimistic(db),
+            CreateProduct(c) => c.execute_optimistic(db),
+            UpdateProduct(c) => c.execute_optimistic(db),
+            DeleteProduct(c) => c.execute_optimistic(db),
+            CreateSepaMandate(c) => c.execute_optimistic(db),
+            UpdateSepaMandate(c) => c.execute_optimistic(db),
+            DeleteSepaMandate(c) => c.execute_optimistic(db),
+            CreateRecurring(c) => c.execute_optimistic(db),
+            UpdateRecurring(c) => c.execute_optimistic(db),
+            DeleteRecurring(c) => c.execute_optimistic(db),
+            AddRecurringPosition(c) => c.execute_optimistic(db),
+            UpdateRecurringPosition(c) => c.execute_optimistic(db),
+            DeleteRecurringPosition(c) => c.execute_optimistic(db),
+            RunRecurringOnce(c) => c.execute_optimistic(db),
+            LogActivity(c) => c.execute_optimistic(db),
+        }
+    }
+}
+
+/// Wire-enum-level `ServerCommand` dispatcher. Exhaustive on purpose: every
+/// variant has its own `impl ServerCommand` (most delegate to `apply_zset`,
+/// `CreatePayment` runs an authoritative balance check). Dropping the
+/// catch-all arm means adding a new variant forces a compile-time decision
+/// about its server-side policy.
+#[cfg(feature = "server")]
+mod server_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use async_trait::async_trait;
+    use sql_engine::schema::TableSchema;
+    use sqlx::{MySql, Transaction};
+    use sync_server_mysql::ServerCommand;
+
+    #[async_trait]
+    impl ServerCommand for InvoiceCommand {
+        async fn execute_server(
+            &self,
+            tx: &mut Transaction<'static, MySql>,
+            client_zset: &ZSet,
+            schemas: &HashMap<String, TableSchema>,
+        ) -> Result<ZSet, CommandError> {
+            use InvoiceCommand::*;
+            match self {
+                CreateCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteCustomer(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteCustomerCascade(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateContact(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateContact(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteContact(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateInvoice(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateInvoiceHeader(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteInvoice(c) => c.execute_server(tx, client_zset, schemas).await,
+                AddPosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdatePosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeletePosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                MovePosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreatePayment(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdatePayment(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeletePayment(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateProduct(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateProduct(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteProduct(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteSepaMandate(c) => c.execute_server(tx, client_zset, schemas).await,
+                CreateRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteRecurring(c) => c.execute_server(tx, client_zset, schemas).await,
+                AddRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                UpdateRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                DeleteRecurringPosition(c) => c.execute_server(tx, client_zset, schemas).await,
+                RunRecurringOnce(c) => c.execute_server(tx, client_zset, schemas).await,
+                LogActivity(c) => c.execute_server(tx, client_zset, schemas).await,
+            }
         }
     }
 }

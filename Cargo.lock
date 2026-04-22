@@ -810,11 +810,14 @@ dependencies = [
 name = "invoice-demo-commands"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "borsh",
  "database",
  "serde",
  "sql-engine",
+ "sqlx",
  "sync",
+ "sync-server-mysql",
  "ts-rs",
 ]
 
@@ -824,13 +827,12 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "borsh",
- "database",
  "invoice-demo-commands",
  "invoice-demo-tables-storage",
  "sql-engine",
  "sqlx",
  "sync",
- "sync-server",
+ "sync-server-mysql",
  "tables",
  "tables-storage",
  "tokio",
@@ -1913,6 +1915,16 @@ dependencies = [
  "sync",
  "sync-client",
  "tokio",
+]
+
+[[package]]
+name = "sync-server-mysql"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sql-engine",
+ "sqlx",
+ "sync",
 ]
 
 [[package]]

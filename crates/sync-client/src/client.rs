@@ -150,7 +150,7 @@ impl<C: Command> SyncClient<C> {
         self.optimistic_db.replace_data(&self.confirmed_db);
         for stream in self.streams.values() {
             for cmd in stream.pending_commands() {
-                let _ = cmd.execute(self.optimistic_db.db_mut_raw());
+                let _ = cmd.execute_optimistic(self.optimistic_db.db_mut_raw());
             }
         }
         self.optimistic_db.notify_all();

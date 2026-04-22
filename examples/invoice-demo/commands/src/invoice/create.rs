@@ -2,7 +2,7 @@ use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
 use database::Database;
-use sync::command::CommandError;
+use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use crate::helpers::execute_sql;
 use super::params::invoice_params;
@@ -38,8 +38,11 @@ pub struct CreateInvoice {
     pub shipping_country: String,
 }
 
-impl CreateInvoice {
-    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+impl Command for CreateInvoice {
+    fn execute_optimistic(
+        &self,
+        db: &mut Database,
+    ) -> Result<ZSet, CommandError> {
         let params = invoice_params(
             self.id, Some(self.customer_id),
             &self.number, &self.status, &self.date_issued, &self.date_due, &self.notes,
@@ -54,5 +57,28 @@ impl CreateInvoice {
             "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
              VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
             params)
+    }
+}
+
+#[cfg(feature = "server")]
+mod server_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use async_trait::async_trait;
+    use sql_engine::schema::TableSchema;
+    use sqlx::{MySql, Transaction};
+    use sync_server_mysql::{apply_zset, ServerCommand};
+
+    #[async_trait]
+    impl ServerCommand for CreateInvoice {
+        async fn execute_server(
+            &self,
+            tx: &mut Transaction<'static, MySql>,
+            client_zset: &ZSet,
+            schemas: &HashMap<String, TableSchema>,
+        ) -> Result<ZSet, CommandError> {
+            apply_zset(tx, client_zset, schemas).await?;
+            Ok(client_zset.clone())
+        }
     }
 }

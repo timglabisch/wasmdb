@@ -1,7 +1,7 @@
 use borsh::{BorshSerialize, BorshDeserialize};
+use database::{Database, MutResult};
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
-use database::{Database, MutResult};
 use sql_engine::execute::{Params, ParamValue};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
@@ -17,16 +17,20 @@ pub enum UserCommand {
     DeleteOrders { ids: Vec<i64> },
 }
 
-fn execute_sql(db: &mut Database, sql: &str, params: Params) -> Result<ZSet, CommandError> {
+fn execute_sql(
+    db: &mut Database,
+    sql: &str,
+    params: Params,
+) -> Result<ZSet, CommandError> {
     match db.execute_mut_with_params(sql, params) {
-        Ok(MutResult::Mutation(zset)) => Ok(zset),
-        Ok(_) => Ok(ZSet::new()),
+        Ok(MutResult::Mutation(z)) => Ok(z),
+        Ok(MutResult::Rows(_)) | Ok(MutResult::Ddl) => Ok(ZSet::new()),
         Err(e) => Err(CommandError::ExecutionFailed(e.to_string())),
     }
 }
 
 impl Command for UserCommand {
-    fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         match self {
             UserCommand::InsertUser { id, name, age } => {
                 let params = Params::from([

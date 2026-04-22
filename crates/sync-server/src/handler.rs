@@ -9,8 +9,12 @@ use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse,
 use crate::state::ServerState;
 
 /// POST /command
-/// Receives a borsh-encoded BatchCommandRequest, executes all commands in order,
-/// and returns a borsh-encoded BatchCommandResponse.
+///
+/// Receives a borsh-encoded `BatchCommandRequest`, applies every command's
+/// `client_zset` to the in-memory `Database`, and echoes it back as
+/// `server_zset`. The in-memory backend trusts the client's optimistic
+/// delta — customization hooks live in backend-specific server crates
+/// (e.g. `sync-server-mysql`).
 pub async fn handle_command<C>(
     State(state): State<Arc<ServerState<C>>>,
     body: Bytes,
@@ -25,26 +29,22 @@ where
         }
     };
 
-    let mut db = state.db.lock().unwrap();
+    let mut db = state.db.lock().await;
 
-    let responses: Vec<CommandResponse> = batch
-        .requests
-        .into_iter()
-        .map(|request| match request.command.execute(&mut db) {
-            Ok(server_zset) => CommandResponse {
-                stream_id: request.stream_id,
-                seq_no: request.seq_no,
-                verdict: Verdict::Confirmed { server_zset },
+    let mut responses: Vec<CommandResponse> = Vec::with_capacity(batch.requests.len());
+    for request in batch.requests {
+        let verdict = match db.apply_zset(&request.client_zset) {
+            Ok(()) => Verdict::Confirmed {
+                server_zset: request.client_zset,
             },
-            Err(e) => CommandResponse {
-                stream_id: request.stream_id,
-                seq_no: request.seq_no,
-                verdict: Verdict::Rejected {
-                    reason: e.to_string(),
-                },
-            },
-        })
-        .collect();
+            Err(e) => Verdict::Rejected { reason: e.to_string() },
+        };
+        responses.push(CommandResponse {
+            stream_id: request.stream_id,
+            seq_no: request.seq_no,
+            verdict,
+        });
+    }
 
     let batch_response = BatchCommandResponse { responses };
     let bytes = borsh::to_vec(&batch_response).expect("failed to serialize batch response");

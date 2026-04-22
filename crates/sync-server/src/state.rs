@@ -1,6 +1,6 @@
-use std::sync::Mutex;
 use database::Database;
 use sync::command::Command;
+use tokio::sync::Mutex;
 
 pub struct ServerState<C: Command> {
     pub db: Mutex<Database>,

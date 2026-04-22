@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
-use sync::command::CommandError;
+use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int, p_str};
 
@@ -18,20 +18,77 @@ pub struct CreatePayment {
     pub note: String,
 }
 
-impl CreatePayment {
-    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_int("id", self.id),
-            p_int("invoice_id", self.invoice_id),
-            p_int("amount", self.amount),
-            p_str("paid_at", &self.paid_at),
-            p_str("method", &self.method),
-            p_str("reference", &self.reference),
-            p_str("note", &self.note),
-        ]);
-        execute_sql(db,
+impl Command for CreatePayment {
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+        execute_sql(
+            db,
             "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
              VALUES (:id, :invoice_id, :amount, :paid_at, :method, :reference, :note)",
-            params)
+            Params::from([
+                p_int("id", self.id),
+                p_int("invoice_id", self.invoice_id),
+                p_int("amount", self.amount),
+                p_str("paid_at", &self.paid_at),
+                p_str("method", &self.method),
+                p_str("reference", &self.reference),
+                p_str("note", &self.note),
+            ]),
+        )
+    }
+}
+
+/// Server-authoritative balance check. Two clients' optimistic checks can
+/// each pass locally and still together overpay the invoice — re-verifying
+/// inside the TiDB transaction resolves the race.
+#[cfg(feature = "server")]
+mod server_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use async_trait::async_trait;
+    use sql_engine::schema::TableSchema;
+    use sqlx::{MySql, Transaction};
+    use sync_server_mysql::{apply_zset, ServerCommand};
+
+    #[async_trait]
+    impl ServerCommand for CreatePayment {
+        async fn execute_server(
+            &self,
+            tx: &mut Transaction<'static, MySql>,
+            client_zset: &ZSet,
+            schemas: &HashMap<String, TableSchema>,
+        ) -> Result<ZSet, CommandError> {
+            if self.amount <= 0 {
+                return Err(CommandError::ExecutionFailed(format!(
+                    "payment amount must be positive, got {}",
+                    self.amount,
+                )));
+            }
+
+            // `CAST(... AS SIGNED)` pins MySQL's DECIMAL SUM back to i64.
+            let remaining: i64 = sqlx::query_scalar(
+                "SELECT CAST( \
+                   COALESCE((SELECT SUM(quantity*unit_price) FROM positions WHERE invoice_id=?), 0) \
+                 - COALESCE((SELECT SUM(amount)              FROM payments  WHERE invoice_id=?), 0) \
+                 AS SIGNED)",
+            )
+            .bind(self.invoice_id)
+            .bind(self.invoice_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "balance lookup for invoice {}: {e}",
+                self.invoice_id,
+            )))?;
+
+            if self.amount > remaining {
+                return Err(CommandError::ExecutionFailed(format!(
+                    "overpayment: invoice {} has {} remaining, got {}",
+                    self.invoice_id, remaining, self.amount,
+                )));
+            }
+
+            apply_zset(tx, client_zset, schemas).await?;
+            Ok(client_zset.clone())
+        }
     }
 }

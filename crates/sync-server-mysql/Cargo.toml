@@ -1,0 +1,10 @@
+[package]
+name = "sync-server-mysql"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sync = { path = "../sync" }
+sql-engine = { path = "../sql-engine", features = ["borsh"] }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
+async-trait = "0.1"

@@ -1,11 +1,11 @@
-use database::Database;
+use std::collections::HashMap;
+
 use sql_engine::schema::{IndexSchema, IndexType, TableSchema};
 use super::cols::{i64_col, str_col};
 
-/// Invoices + positions + payments — tied together by invoice_id FKs, so they
-/// live in the same schema module.
-pub fn create(db: &mut Database) {
-    db.create_table(TableSchema {
+/// Invoices + positions + payments — tied together by invoice_id FKs.
+pub fn register(schemas: &mut HashMap<String, TableSchema>) {
+    schemas.insert("invoices".into(), TableSchema {
         name: "invoices".into(),
         columns: vec![
             i64_col("id"), i64_col("customer_id"),
@@ -26,9 +26,9 @@ pub fn create(db: &mut Database) {
         indexes: vec![
             IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
         ],
-    }).unwrap();
+    });
 
-    db.create_table(TableSchema {
+    schemas.insert("positions".into(), TableSchema {
         name: "positions".into(),
         columns: vec![
             i64_col("id"), i64_col("invoice_id"), i64_col("position_nr"),
@@ -43,9 +43,9 @@ pub fn create(db: &mut Database) {
         indexes: vec![
             IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
         ],
-    }).unwrap();
+    });
 
-    db.create_table(TableSchema {
+    schemas.insert("payments".into(), TableSchema {
         name: "payments".into(),
         columns: vec![
             i64_col("id"), i64_col("invoice_id"),
@@ -56,5 +56,5 @@ pub fn create(db: &mut Database) {
         indexes: vec![
             IndexSchema { name: None, columns: vec![1], index_type: IndexType::BTree },
         ],
-    }).unwrap();
+    });
 }

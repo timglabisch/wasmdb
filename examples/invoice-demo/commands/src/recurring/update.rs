@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
-use sync::command::CommandError;
+use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int, p_str};
 
@@ -19,8 +19,11 @@ pub struct UpdateRecurring {
     pub notes_template: String,
 }
 
-impl UpdateRecurring {
-    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+impl Command for UpdateRecurring {
+    fn execute_optimistic(
+        &self,
+        db: &mut Database,
+    ) -> Result<ZSet, CommandError> {
         let params = Params::from([
             p_int("id", self.id),
             p_str("template_name", &self.template_name),
@@ -34,5 +37,28 @@ impl UpdateRecurring {
         execute_sql(db,
             "UPDATE recurring_invoices SET template_name = :template_name, interval_unit = :interval_unit, interval_value = :interval_value, next_run = :next_run, enabled = :enabled, status_template = :status_template, notes_template = :notes_template WHERE recurring_invoices.id = :id",
             params)
+    }
+}
+
+#[cfg(feature = "server")]
+mod server_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use async_trait::async_trait;
+    use sql_engine::schema::TableSchema;
+    use sqlx::{MySql, Transaction};
+    use sync_server_mysql::{apply_zset, ServerCommand};
+
+    #[async_trait]
+    impl ServerCommand for UpdateRecurring {
+        async fn execute_server(
+            &self,
+            tx: &mut Transaction<'static, MySql>,
+            client_zset: &ZSet,
+            schemas: &HashMap<String, TableSchema>,
+        ) -> Result<ZSet, CommandError> {
+            apply_zset(tx, client_zset, schemas).await?;
+            Ok(client_zset.clone())
+        }
     }
 }

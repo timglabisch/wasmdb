@@ -3,6 +3,12 @@ name = "invoice-demo-commands"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Server-side sqlx + ServerCommand impls. Off by default so the WASM
+# client build (which only needs optimistic execution against `Database`)
+# doesn't drag in sqlx/tokio. The invoice-demo-server crate turns this on.
+server = ["dep:sync-server-mysql", "dep:sqlx", "dep:async-trait"]
+
 [dependencies]
 sync = { path = "../../../crates/sync" }
 database = { path = "../../../crates/database", features = ["borsh"] }
@@ -10,3 +16,7 @@ sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
+
+sync-server-mysql = { path = "../../../crates/sync-server-mysql", optional = true }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"], optional = true }
+async-trait = { version = "0.1", optional = true }

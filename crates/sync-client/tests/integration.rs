@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use borsh::{BorshSerialize, BorshDeserialize};
-use database::Database;
+use database::{Database, MutResult};
+use sql_engine::execute::ParamValue;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 use sql_engine::storage::CellValue;
 use sync::command::{Command, CommandError};
@@ -14,21 +17,23 @@ enum TestCommand {
 }
 
 impl Command for TestCommand {
-    fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let mut zset = ZSet::new();
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         match self {
             TestCommand::InsertUser { id, name, age } => {
-                let row = vec![
-                    CellValue::I64(*id),
-                    CellValue::Str(name.clone()),
-                    CellValue::I64(*age),
-                ];
-                db.insert("users", &row)
-                    .map_err(|e| CommandError::ExecutionFailed(e.to_string()))?;
-                zset.insert("users".into(), row);
+                let mut params: HashMap<String, ParamValue> = HashMap::new();
+                params.insert("id".into(), ParamValue::Int(*id));
+                params.insert("name".into(), ParamValue::Text(name.clone()));
+                params.insert("age".into(), ParamValue::Int(*age));
+                match db.execute_mut_with_params(
+                    "INSERT INTO users (id, name, age) VALUES (:id, :name, :age)",
+                    params,
+                ) {
+                    Ok(MutResult::Mutation(z)) => Ok(z),
+                    Ok(_) => Ok(ZSet::new()),
+                    Err(e) => Err(CommandError::ExecutionFailed(e.to_string())),
+                }
             }
         }
-        Ok(zset)
     }
 }
 
@@ -48,16 +53,17 @@ fn make_db() -> Database {
     db
 }
 
-/// Simulate server execution: run the command on a separate DB, return the response.
+/// Simulate the server's default replay path: apply the client's optimistic
+/// zset to the server-side `Database` and return it verbatim in the response.
 fn simulate_server(
     server_db: &mut Database,
     request: &sync::protocol::CommandRequest<TestCommand>,
 ) -> CommandResponse {
-    match request.command.execute(server_db) {
-        Ok(server_zset) => CommandResponse {
+    match server_db.apply_zset(&request.client_zset) {
+        Ok(()) => CommandResponse {
             stream_id: request.stream_id,
             seq_no: request.seq_no,
-            verdict: Verdict::Confirmed { server_zset },
+            verdict: Verdict::Confirmed { server_zset: request.client_zset.clone() },
         },
         Err(e) => CommandResponse {
             stream_id: request.stream_id,

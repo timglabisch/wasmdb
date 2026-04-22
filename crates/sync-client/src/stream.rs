@@ -57,7 +57,7 @@ impl<C: Command> Stream<C> {
         let seq_no = SeqNo(self.next_seq_no);
         self.next_seq_no += 1;
 
-        let zset = command.execute(db)?;
+        let zset = command.execute_optimistic(db)?;
 
         let request = CommandRequest {
             stream_id: self.id,

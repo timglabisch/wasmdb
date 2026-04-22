@@ -1,9 +1,10 @@
-use database::Database;
+use std::collections::HashMap;
+
 use sql_engine::schema::TableSchema;
 use super::cols::{i64_col, str_col};
 
-pub fn create(db: &mut Database) {
-    db.create_table(TableSchema {
+pub fn register(schemas: &mut HashMap<String, TableSchema>) {
+    schemas.insert("products".into(), TableSchema {
         name: "products".into(),
         columns: vec![
             i64_col("id"),
@@ -14,5 +15,5 @@ pub fn create(db: &mut Database) {
         ],
         primary_key: vec![0],
         indexes: vec![],
-    }).unwrap();
+    });
 }

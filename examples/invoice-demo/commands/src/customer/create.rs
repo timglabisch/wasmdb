@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
-use sync::command::CommandError;
+use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int, p_str};
 
@@ -31,8 +31,11 @@ pub struct CreateCustomer {
     pub notes: String,
 }
 
-impl CreateCustomer {
-    pub fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+impl Command for CreateCustomer {
+    fn execute_optimistic(
+        &self,
+        db: &mut Database,
+    ) -> Result<ZSet, CommandError> {
         let params = Params::from([
             p_int("id", self.id),
             p_str("name", &self.name),
@@ -59,5 +62,28 @@ impl CreateCustomer {
             "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
              VALUES (:id, :name, :email, :created_at, :company_type, :tax_id, :vat_id, :payment_terms_days, :default_discount_pct, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country, :default_iban, :default_bic, :notes)",
             params)
+    }
+}
+
+#[cfg(feature = "server")]
+mod server_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use async_trait::async_trait;
+    use sql_engine::schema::TableSchema;
+    use sqlx::{MySql, Transaction};
+    use sync_server_mysql::{apply_zset, ServerCommand};
+
+    #[async_trait]
+    impl ServerCommand for CreateCustomer {
+        async fn execute_server(
+            &self,
+            tx: &mut Transaction<'static, MySql>,
+            client_zset: &ZSet,
+            schemas: &HashMap<String, TableSchema>,
+        ) -> Result<ZSet, CommandError> {
+            apply_zset(tx, client_zset, schemas).await?;
+            Ok(client_zset.clone())
+        }
     }
 }

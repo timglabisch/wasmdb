@@ -15,6 +15,7 @@ members = [
     "crates/tables-macros",
     "crates/tables-storage",
     "crates/sync-server",
+    "crates/sync-server-mysql",
     "crates/wasmdb-debug",
     "examples/sync-demo/server",
     "examples/sync-demo/commands",

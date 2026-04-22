@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use borsh::{BorshSerialize, BorshDeserialize};
-use database::Database;
+use database::{Database, MutResult};
+use sql_engine::execute::ParamValue;
 use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
 use sql_engine::storage::CellValue;
 use sync::command::{Command, CommandError};
@@ -15,21 +18,23 @@ enum TestCommand {
 }
 
 impl Command for TestCommand {
-    fn execute(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let mut zset = ZSet::new();
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         match self {
             TestCommand::InsertUser { id, name, age } => {
-                let row = vec![
-                    CellValue::I64(*id),
-                    CellValue::Str(name.clone()),
-                    CellValue::I64(*age),
-                ];
-                db.insert("users", &row)
-                    .map_err(|e| CommandError::ExecutionFailed(e.to_string()))?;
-                zset.insert("users".into(), row);
+                let mut params: HashMap<String, ParamValue> = HashMap::new();
+                params.insert("id".into(), ParamValue::Int(*id));
+                params.insert("name".into(), ParamValue::Text(name.clone()));
+                params.insert("age".into(), ParamValue::Int(*age));
+                match db.execute_mut_with_params(
+                    "INSERT INTO users (id, name, age) VALUES (:id, :name, :age)",
+                    params,
+                ) {
+                    Ok(MutResult::Mutation(z)) => Ok(z),
+                    Ok(_) => Ok(ZSet::new()),
+                    Err(e) => Err(CommandError::ExecutionFailed(e.to_string())),
+                }
             }
         }
-        Ok(zset)
     }
 }
 
@@ -52,22 +57,22 @@ fn make_db() -> Database {
     db
 }
 
-/// Simulate the server handler without HTTP: borsh-encode request,
-/// pass through handler logic, borsh-decode response.
-fn server_roundtrip(
+/// Simulate the server handler without HTTP: apply the client's optimistic
+/// zset against the server-side `Database` and echo it back on success.
+async fn server_roundtrip(
     state: &ServerState<TestCommand>,
     request_bytes: &[u8],
 ) -> CommandResponse {
     use sync::protocol::CommandRequest;
 
     let request: CommandRequest<TestCommand> = borsh::from_slice(request_bytes).unwrap();
-    let mut db = state.db.lock().unwrap();
+    let mut db = state.db.lock().await;
 
-    match request.command.execute(&mut db) {
-        Ok(server_zset) => CommandResponse {
+    match db.apply_zset(&request.client_zset) {
+        Ok(()) => CommandResponse {
             stream_id: request.stream_id,
             seq_no: request.seq_no,
-            verdict: Verdict::Confirmed { server_zset },
+            verdict: Verdict::Confirmed { server_zset: request.client_zset },
         },
         Err(e) => CommandResponse {
             stream_id: request.stream_id,
@@ -77,8 +82,8 @@ fn server_roundtrip(
     }
 }
 
-#[test]
-fn e2e_single_command() {
+#[tokio::test]
+async fn e2e_single_command() {
     let mut client = SyncClient::<TestCommand>::new(make_db());
     let server = ServerState::<TestCommand>::new(make_db());
     let stream = client.create_stream();
@@ -89,7 +94,7 @@ fn e2e_single_command() {
 
     // Serialize, send to server, get response
     let request_bytes = borsh::to_vec(&request).unwrap();
-    let response = server_roundtrip(&server, &request_bytes);
+    let response = server_roundtrip(&server, &request_bytes).await;
 
     // Client processes response
     let action = client.receive_response(response).unwrap();
@@ -97,13 +102,13 @@ fn e2e_single_command() {
 
     // Both databases should have the same data
     let client_result = client.db_mut().execute("SELECT users.name FROM users").unwrap();
-    let server_result = server.db.lock().unwrap().execute("SELECT users.name FROM users").unwrap();
+    let server_result = server.db.lock().await.execute("SELECT users.name FROM users").unwrap();
     assert_eq!(client_result, server_result);
     assert_eq!(client_result[0], vec![CellValue::Str("Alice".into())]);
 }
 
-#[test]
-fn e2e_multiple_commands_same_stream() {
+#[tokio::test]
+async fn e2e_multiple_commands_same_stream() {
     let mut client = SyncClient::<TestCommand>::new(make_db());
     let server = ServerState::<TestCommand>::new(make_db());
     let stream = client.create_stream();
@@ -117,9 +122,9 @@ fn e2e_multiple_commands_same_stream() {
     let req3 = client.execute(stream, cmd3).unwrap();
 
     // Server processes all
-    let resp1 = server_roundtrip(&server, &borsh::to_vec(&req1).unwrap());
-    let resp2 = server_roundtrip(&server, &borsh::to_vec(&req2).unwrap());
-    let resp3 = server_roundtrip(&server, &borsh::to_vec(&req3).unwrap());
+    let resp1 = server_roundtrip(&server, &borsh::to_vec(&req1).unwrap()).await;
+    let resp2 = server_roundtrip(&server, &borsh::to_vec(&req2).unwrap()).await;
+    let resp3 = server_roundtrip(&server, &borsh::to_vec(&req3).unwrap()).await;
 
     // Client receives out of order
     let action = client.receive_response(resp3).unwrap();
@@ -133,13 +138,13 @@ fn e2e_multiple_commands_same_stream() {
 
     // Verify identical state
     let client_result = client.db_mut().execute("SELECT users.name FROM users").unwrap();
-    let server_result = server.db.lock().unwrap().execute("SELECT users.name FROM users").unwrap();
+    let server_result = server.db.lock().await.execute("SELECT users.name FROM users").unwrap();
     assert_eq!(client_result, server_result);
     assert_eq!(client_result[0].len(), 3);
 }
 
-#[test]
-fn e2e_two_streams_one_rejected() {
+#[tokio::test]
+async fn e2e_two_streams_one_rejected() {
     let mut client = SyncClient::<TestCommand>::new(make_db());
     let server = ServerState::<TestCommand>::new(make_db());
     let stream_a = client.create_stream();
@@ -152,7 +157,7 @@ fn e2e_two_streams_one_rejected() {
     let req_b = client.execute(stream_b, cmd_b).unwrap();
 
     // Server confirms B but rejects A
-    let resp_b = server_roundtrip(&server, &borsh::to_vec(&req_b).unwrap());
+    let resp_b = server_roundtrip(&server, &borsh::to_vec(&req_b).unwrap()).await;
     let resp_a = CommandResponse {
         stream_id: req_a.stream_id,
         seq_no: req_a.seq_no,
