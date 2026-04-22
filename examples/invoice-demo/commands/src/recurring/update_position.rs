@@ -47,7 +47,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for UpdateRecurringPosition {
@@ -55,9 +55,25 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "UPDATE recurring_positions SET description = ?, quantity = ?, unit_price = ?, tax_rate = ?, unit = ?, item_number = ?, discount_pct = ? WHERE id = ?",
+            )
+                .bind(&self.description)
+                .bind(self.quantity)
+                .bind(self.unit_price)
+                .bind(self.tax_rate)
+                .bind(&self.unit)
+                .bind(&self.item_number)
+                .bind(self.discount_pct)
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE recurring_position {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

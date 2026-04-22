@@ -40,7 +40,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for DeleteInvoice {
@@ -48,9 +48,32 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query("DELETE FROM payments WHERE invoice_id = ?")
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE payments for invoice {}: {e}",
+                    self.id,
+                )))?;
+            sqlx::query("DELETE FROM positions WHERE invoice_id = ?")
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE positions for invoice {}: {e}",
+                    self.id,
+                )))?;
+            sqlx::query("DELETE FROM invoices WHERE id = ?")
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE invoice {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

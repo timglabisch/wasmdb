@@ -47,7 +47,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for UpdateRecurring {
@@ -55,9 +55,25 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "UPDATE recurring_invoices SET template_name = ?, interval_unit = ?, interval_value = ?, next_run = ?, enabled = ?, status_template = ?, notes_template = ? WHERE id = ?",
+            )
+                .bind(&self.template_name)
+                .bind(&self.interval_unit)
+                .bind(self.interval_value)
+                .bind(&self.next_run)
+                .bind(self.enabled)
+                .bind(&self.status_template)
+                .bind(&self.notes_template)
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE recurring_invoice {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

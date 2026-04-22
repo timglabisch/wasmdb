@@ -138,10 +138,10 @@ impl Command for InvoiceCommand {
 }
 
 /// Wire-enum-level `ServerCommand` dispatcher. Exhaustive on purpose: every
-/// variant has its own `impl ServerCommand` (most delegate to `apply_zset`,
-/// `CreatePayment` runs an authoritative balance check). Dropping the
-/// catch-all arm means adding a new variant forces a compile-time decision
-/// about its server-side policy.
+/// variant has its own `impl ServerCommand` that runs its SQL directly
+/// against TiDB; `CreatePayment` additionally enforces an authoritative
+/// balance check. Dropping the catch-all arm means adding a new variant
+/// forces a compile-time decision about its server-side policy.
 #[cfg(feature = "server")]
 mod server_impl {
     use super::*;

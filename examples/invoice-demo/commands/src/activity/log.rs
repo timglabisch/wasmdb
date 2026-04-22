@@ -46,7 +46,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for LogActivity {
@@ -54,9 +54,25 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(self.id)
+            .bind(&self.timestamp)
+            .bind(&self.entity_type)
+            .bind(self.entity_id)
+            .bind(&self.action)
+            .bind(&self.actor)
+            .bind(&self.detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}",
+                self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

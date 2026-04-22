@@ -46,7 +46,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for CreateContact {
@@ -54,9 +54,25 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(self.id)
+            .bind(self.customer_id)
+            .bind(&self.name)
+            .bind(&self.email)
+            .bind(&self.phone)
+            .bind(&self.role)
+            .bind(self.is_primary)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT contact {}: {e}",
+                self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

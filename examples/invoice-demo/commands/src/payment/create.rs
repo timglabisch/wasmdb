@@ -47,7 +47,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for CreatePayment {
@@ -55,7 +55,7 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
             if self.amount <= 0 {
                 return Err(CommandError::ExecutionFailed(format!(
@@ -87,7 +87,22 @@ mod server_impl {
                 )));
             }
 
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(self.id)
+            .bind(self.invoice_id)
+            .bind(self.amount)
+            .bind(&self.paid_at)
+            .bind(&self.method)
+            .bind(&self.reference)
+            .bind(&self.note)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT payment {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

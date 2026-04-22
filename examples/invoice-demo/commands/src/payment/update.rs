@@ -43,7 +43,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for UpdatePayment {
@@ -51,9 +51,23 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "UPDATE payments SET amount = ?, paid_at = ?, method = ?, reference = ?, note = ? WHERE payments.id = ?",
+            )
+                .bind(self.amount)
+                .bind(&self.paid_at)
+                .bind(&self.method)
+                .bind(&self.reference)
+                .bind(&self.note)
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE payment {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

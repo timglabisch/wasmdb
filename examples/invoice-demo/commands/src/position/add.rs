@@ -58,7 +58,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for AddPosition {
@@ -66,9 +66,31 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            )
+                .bind(self.id)
+                .bind(self.invoice_id)
+                .bind(self.position_nr)
+                .bind(&self.description)
+                .bind(self.quantity)
+                .bind(self.unit_price)
+                .bind(self.tax_rate)
+                .bind(self.product_id)
+                .bind(&self.item_number)
+                .bind(&self.unit)
+                .bind(self.discount_pct)
+                .bind(self.cost_price)
+                .bind(&self.position_type)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT position id={} position_nr={}: {e}",
+                    self.id, self.position_nr,
+                )))?;
             Ok(client_zset.clone())
         }
     }

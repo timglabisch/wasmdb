@@ -137,7 +137,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for RunRecurringOnce {
@@ -145,9 +145,132 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            let recurring_id = self.recurring_id;
+            let new_invoice_id = self.new_invoice_id;
+
+            let (customer_id, status_template, notes_template): (i64, String, String) =
+                sqlx::query_as(
+                    "SELECT customer_id, status_template, notes_template \
+                     FROM recurring_invoices WHERE id = ?",
+                )
+                .bind(recurring_id)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup recurring_invoice {recurring_id}: {e}",
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "recurring #{recurring_id} not found",
+                )))?;
+
+            let status = if status_template.is_empty() { "draft".to_string() } else { status_template };
+            let notes = notes_template;
+
+            #[derive(sqlx::FromRow)]
+            struct PosRow {
+                description: String,
+                quantity: i64,
+                unit_price: i64,
+                tax_rate: i64,
+                unit: String,
+                item_number: String,
+                discount_pct: i64,
+            }
+            let positions: Vec<PosRow> = sqlx::query_as(
+                "SELECT description, quantity, unit_price, tax_rate, unit, item_number, discount_pct \
+                 FROM recurring_positions WHERE recurring_id = ? ORDER BY position_nr",
+            )
+            .bind(recurring_id)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "lookup recurring_positions for {recurring_id}: {e}",
+            )))?;
+
+            if positions.len() != self.position_ids.len() {
+                return Err(CommandError::ExecutionFailed(format!(
+                    "RunRecurringOnce: template has {} positions but got {} ids",
+                    positions.len(), self.position_ids.len(),
+                )));
+            }
+
+            sqlx::query(
+                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(new_invoice_id)
+            .bind(customer_id)
+            .bind(&self.new_number)
+            .bind(&status)
+            .bind(&self.issue_date)
+            .bind(&self.due_date)
+            .bind(&notes)
+            .bind("invoice")
+            .bind(0_i64)
+            .bind("")
+            .bind(0_i64)
+            .bind(0_i64)
+            .bind(0_i64)
+            .bind("transfer")
+            .bind(0_i64)
+            .bind("EUR")
+            .bind("de")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .bind("")
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT invoice {new_invoice_id}: {e}",
+            )))?;
+
+            for (i, pid) in self.position_ids.iter().enumerate() {
+                let pos = &positions[i];
+                sqlx::query(
+                    "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(*pid)
+                .bind(new_invoice_id)
+                .bind((i as i64 + 1) * 1000)
+                .bind(&pos.description)
+                .bind(pos.quantity)
+                .bind(pos.unit_price)
+                .bind(pos.tax_rate)
+                .bind(0_i64)
+                .bind(&pos.item_number)
+                .bind(&pos.unit)
+                .bind(pos.discount_pct)
+                .bind(0_i64)
+                .bind("service")
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT position {pid} for invoice {new_invoice_id}: {e}",
+                )))?;
+            }
+
+            sqlx::query(
+                "UPDATE recurring_invoices SET last_run = ?, next_run = ? WHERE id = ?",
+            )
+            .bind(&self.issue_date)
+            .bind(&self.new_next_run)
+            .bind(recurring_id)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE recurring {recurring_id} last_run/next_run: {e}",
+            )))?;
+
             Ok(client_zset.clone())
         }
     }

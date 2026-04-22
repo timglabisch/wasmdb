@@ -37,7 +37,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for DeleteRecurring {
@@ -45,9 +45,24 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query("DELETE FROM recurring_positions WHERE recurring_id = ?")
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE recurring_positions for recurring_id {}: {e}",
+                    self.id,
+                )))?;
+            sqlx::query("DELETE FROM recurring_invoices WHERE id = ?")
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE recurring_invoice {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

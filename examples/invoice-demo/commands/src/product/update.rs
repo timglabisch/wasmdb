@@ -49,7 +49,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for UpdateProduct {
@@ -57,9 +57,25 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "UPDATE products SET sku = ?, name = ?, description = ?, unit = ?, unit_price = ?, tax_rate = ?, cost_price = ?, active = ? WHERE id = ?")
+                .bind(&self.sku)
+                .bind(&self.name)
+                .bind(&self.description)
+                .bind(&self.unit)
+                .bind(self.unit_price)
+                .bind(self.tax_rate)
+                .bind(self.cost_price)
+                .bind(self.active)
+                .bind(self.id)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE product id={}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

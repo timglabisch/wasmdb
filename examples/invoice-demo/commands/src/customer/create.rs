@@ -72,7 +72,7 @@ mod server_impl {
     use async_trait::async_trait;
     use sql_engine::schema::TableSchema;
     use sqlx::{MySql, Transaction};
-    use sync_server_mysql::{apply_zset, ServerCommand};
+    use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for CreateCustomer {
@@ -80,9 +80,38 @@ mod server_impl {
             &self,
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
-            schemas: &HashMap<String, TableSchema>,
+            _schemas: &HashMap<String, TableSchema>,
         ) -> Result<ZSet, CommandError> {
-            apply_zset(tx, client_zset, schemas).await?;
+            sqlx::query(
+                "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+                .bind(self.id)
+                .bind(&self.name)
+                .bind(&self.email)
+                .bind(&self.created_at)
+                .bind(&self.company_type)
+                .bind(&self.tax_id)
+                .bind(&self.vat_id)
+                .bind(self.payment_terms_days)
+                .bind(self.default_discount_pct)
+                .bind(&self.billing_street)
+                .bind(&self.billing_zip)
+                .bind(&self.billing_city)
+                .bind(&self.billing_country)
+                .bind(&self.shipping_street)
+                .bind(&self.shipping_zip)
+                .bind(&self.shipping_city)
+                .bind(&self.shipping_country)
+                .bind(&self.default_iban)
+                .bind(&self.default_bic)
+                .bind(&self.notes)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT customer {}: {e}",
+                    self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }
