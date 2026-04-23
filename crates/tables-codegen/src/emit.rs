@@ -108,7 +108,12 @@ fn emit_client_row(row: &Row) -> Result<TokenStream, CodegenError> {
         let ident = format_ident!("{n}");
         quote! { pub #ident: #t }
     });
-    let dbtable_impl = emit_dbtable_impl(&row.name, &row.fields, &row.pk_name)?;
+    let dbtable_impl = emit_dbtable_impl(
+        &row.name,
+        &row.fields,
+        &row.pk_name,
+        row.table_name.as_deref(),
+    )?;
 
     Ok(quote! {
         #[derive(
@@ -142,9 +147,12 @@ fn emit_dbtable_impl(
     struct_name: &str,
     fields: &[(String, Type)],
     pk_name: &str,
+    table_name: Option<&str>,
 ) -> Result<TokenStream, CodegenError> {
     let name = format_ident!("{}", struct_name);
-    let table_lit = pascal_to_snake(struct_name);
+    let table_lit = table_name
+        .map(ToString::to_string)
+        .unwrap_or_else(|| pascal_to_snake(struct_name));
 
     let mut column_defs = Vec::with_capacity(fields.len());
     let mut cell_pushes = Vec::with_capacity(fields.len());
@@ -278,6 +286,7 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
             }
 
             fn call(
+                #[allow(unused_variables)]
                 args: ::std::vec::Vec<::sql_parser::ast::Value>,
                 _ctx: ::std::sync::Arc<Self::Ctx>,
             ) -> ::sql_engine::execute::FetcherFuture {
@@ -387,6 +396,7 @@ fn emit_server_query(
             }
 
             fn call(
+                #[allow(unused_variables)]
                 args: ::std::vec::Vec<::sql_parser::ast::Value>,
                 ctx: ::std::sync::Arc<Self::Ctx>,
             ) -> ::sql_engine::execute::FetcherFuture {
@@ -402,7 +412,7 @@ fn emit_server_query(
         }
 
         pub fn #register_ident(registry: &mut ::tables_storage::Registry<#ctx_ty>) {
-            registry.register::<#marker>(|params, ctx| {
+            registry.register::<#marker>(|#[allow(unused_variables)] params, ctx| {
                 ::std::boxed::Box::pin(async move {
                     #user_mod::#fn_name(#(params.#param_idents,)* ctx).await
                         .map_err(|e| ::tables_storage::StorageError::Storage(

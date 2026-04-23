@@ -1,9 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
 
 use database_reactive::SubscriptionHandle;
 use invoice_demo_commands::InvoiceCommand;
+#[cfg(target_arch = "wasm32")]
+use invoice_demo_tables_client_generated::customers as gen_customers;
 use sql_engine::storage::CellValue;
 use sync::protocol::StreamId;
 use sync_client::client::SyncClient;
@@ -15,7 +19,14 @@ use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle
 
 #[wasm_bindgen]
 pub fn init() {
-    let mut client = SyncClient::new(make_db());
+    #[allow(unused_mut)]
+    let mut db = make_db();
+    // `DbCaller` impls on generated markers are `#[cfg(target_arch = "wasm32")]`
+    // because the HTTP fetcher uses `JsFuture` (`!Send`); gate registration
+    // the same way so native `cargo check` stays green.
+    #[cfg(target_arch = "wasm32")]
+    db.register_caller_of::<gen_customers::All>(Arc::new(()));
+    let mut client = SyncClient::new(db);
     let stream_id_val = client.create_stream().0;
     install_client(client);
     STREAM_HANDLES.with(|sh| {
@@ -217,23 +228,6 @@ pub fn flush_stream(stream_id: f64) -> js_sys::Promise {
     promise
 }
 
-/// Dogfood: call a generated fetcher directly from Rust (not via the
-/// generated `#[wasm_bindgen]` wrapper). Shape the user would write
-/// when composing fetches on the client side.
-#[wasm_bindgen]
-pub async fn demo_customers_by_owner(owner_id: f64) -> Result<JsValue, JsError> {
-    let rows: Vec<invoice_demo_tables_client_generated::customers::Customer> =
-        invoice_demo_tables_client_generated::customers::by_owner(owner_id as i64)
-            .await
-            .map_err(|e| JsError::new(&e.to_string()))?;
-
-    let first_name: Option<String> = rows.first().map(|c| c.name.clone());
-    let _pk_check: Option<i64> = rows.first().map(|c| c.id);
-
-    serde_wasm_bindgen::to_value(&(rows.len(), first_name))
-        .map_err(|e| JsError::new(&e.to_string()))
-}
-
 #[wasm_bindgen]
 pub fn query(sql: &str) -> Result<JsValue, JsError> {
     with_client(|client| {
@@ -245,6 +239,41 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
         record_query(sql, "optimistic", spans, rows.len());
         serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
     })
+}
+
+/// Async sibling of [`query`] — use whenever the SQL may contain a
+/// `schema.fn(args)` source, which triggers an HTTP roundtrip to
+/// `/table-fetch` during Phase 0. Plain SELECTs also work but pay the
+/// async overhead, so the JS client reserves this for the fetcher path.
+///
+/// Fetch/execute-split: `with_client` holds the client only during the
+/// sync prepare (phase 0a) and the sync apply+execute (phases 0c+1). The
+/// HTTP roundtrip in between runs without any client borrow — parallel
+/// `query_async` calls overlap their fetches and never double-borrow.
+#[wasm_bindgen]
+pub async fn query_async(sql: String) -> Result<JsValue, JsError> {
+    use std::collections::HashMap;
+
+    let (prepared, fetchers) = with_client(|client| {
+        let db = client.db_mut().db_mut_raw();
+        let prepared = db.prepare_select(&sql, HashMap::new())
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok::<_, JsError>((prepared, db.fetchers()))
+    })?;
+
+    let fetched = database::fetch_for(&prepared, &fetchers).await
+        .map_err(|e| JsError::new(&e.to_string()))?;
+
+    let columns = with_client(|client| {
+        client.db_mut().db_mut_raw().apply_and_execute_select(prepared, fetched)
+            .map_err(|e| JsError::new(&e.to_string()))
+    })?;
+
+    let rows = columns_to_rows(columns);
+    // No per-step spans from the async path yet — record a zero-span row
+    // so the debug panel still sees the query.
+    record_query(&sql, "optimistic", vec![], rows.len());
+    serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]

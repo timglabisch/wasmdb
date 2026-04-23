@@ -18,7 +18,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { PageBody, PageHeader } from '@/shared/layout/AppShell';
-import { useQuery, createStream, executeOnStream, flushStream } from '@/wasm';
+import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
 import { selectById } from '@/queries';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { logActivity } from '@/commands/activity/logActivity';
@@ -36,8 +36,8 @@ interface IdRow {
 
 export default function CustomersTab() {
   const [search, setSearch] = React.useState('');
-  const rows = useQuery(
-    'SELECT customers.id, customers.name, customers.email FROM customers ORDER BY customers.name',
+  const rows = useAsyncQuery(
+    'SELECT customers.id, customers.name, customers.email FROM customers.all() ORDER BY customers.name',
     ([id, name, email]) => ({
       id: id as number,
       nameKey: ((name as string) ?? '').toLowerCase(),

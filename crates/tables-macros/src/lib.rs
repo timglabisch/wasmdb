@@ -32,20 +32,34 @@ use tables_fieldtypes::{classify, pascal_to_snake, FieldKind};
 
 #[proc_macro_attribute]
 pub fn row(args: TokenStream, input: TokenStream) -> TokenStream {
-    if !args.is_empty() {
-        let args2: TokenStream2 = args.into();
-        return Error::new_spanned(args2, "#[row] takes no arguments — use #[pk] on a field")
-            .to_compile_error()
-            .into();
-    }
+    let row_args = parse_macro_input!(args as RowArgs);
     let input = parse_macro_input!(input as DeriveInput);
-    match expand_row(input) {
+    match expand_row(input, row_args) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }
 }
 
-fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
+struct RowArgs {
+    table: Option<String>,
+}
+
+impl Parse for RowArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.is_empty() {
+            return Ok(Self { table: None });
+        }
+        let ident: Ident = input.parse()?;
+        if ident != "table" {
+            return Err(syn::Error::new(ident.span(), "expected `table = \"...\"`"));
+        }
+        let _eq: Token![=] = input.parse()?;
+        let lit: LitStr = input.parse()?;
+        Ok(Self { table: Some(lit.value()) })
+    }
+}
+
+fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2> {
     let name = input.ident.clone();
 
     let Data::Struct(ds) = &mut input.data else {
@@ -102,7 +116,9 @@ fn expand_row(mut input: DeriveInput) -> syn::Result<TokenStream2> {
     let pk_name = fields[pk_idx].ident.clone();
     let pk_ty = fields[pk_idx].ty.clone();
 
-    let table_lit = pascal_to_snake(&name.to_string());
+    let table_lit = args
+        .table
+        .unwrap_or_else(|| pascal_to_snake(&name.to_string()));
 
     let column_defs = fields.iter().map(|f| {
         let col_name = f.ident.to_string();
@@ -221,10 +237,10 @@ fn expand_query(mut input: ItemFn) -> syn::Result<TokenStream2> {
     }
 
     let args: Vec<&FnArg> = input.sig.inputs.iter().collect();
-    if args.len() < 2 {
+    if args.is_empty() {
         return Err(Error::new_spanned(
             &input.sig,
-            "#[query] needs at least one param before the ctx arg",
+            "#[query] needs a ctx arg",
         ));
     }
 

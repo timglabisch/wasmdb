@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use database::Database;
 use invoice_demo_commands::InvoiceCommand;
+use invoice_demo_tables_client_generated::customers::Customer;
 use sql_engine::schema::{ColumnSchema, DataType, IndexSchema, IndexType, TableSchema};
 use sync_client::client::SyncClient;
 
@@ -32,20 +33,11 @@ fn i64_col(name: &str) -> ColumnSchema { col(name, DataType::I64) }
 pub(crate) fn make_db() -> Database {
     let mut db = Database::new();
 
-    db.create_table(TableSchema {
-        name: "customers".into(),
-        columns: vec![
-            i64_col("id"),
-            str_col("name"), str_col("email"), str_col("created_at"),
-            str_col("company_type"), str_col("tax_id"), str_col("vat_id"),
-            i64_col("payment_terms_days"), i64_col("default_discount_pct"),
-            str_col("billing_street"), str_col("billing_zip"), str_col("billing_city"), str_col("billing_country"),
-            str_col("shipping_street"), str_col("shipping_zip"), str_col("shipping_city"), str_col("shipping_country"),
-            str_col("default_iban"), str_col("default_bic"), str_col("notes"),
-        ],
-        primary_key: vec![0],
-        indexes: vec![],
-    }).unwrap();
+    // `customers` schema is the one source of truth in
+    // `examples/invoice-demo/tables-storage/src/customers.rs`; registering
+    // it via the `DbTable` impl keeps the client and the `customers::all`
+    // fetcher's row layout in lockstep automatically.
+    db.register_table::<Customer>().unwrap();
 
     db.create_table(TableSchema {
         name: "contacts".into(),

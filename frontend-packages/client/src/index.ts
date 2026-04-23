@@ -22,6 +22,13 @@ export interface WasmSyncApi {
   flush_stream(streamId: number): Promise<void>;
   query(sql: string): any[][];
   /**
+   * Async sibling of `query`. Required when the SQL contains a
+   * `schema.fn(args)` source — the sync path refuses those because it
+   * would have to await an HTTP roundtrip. Optional in the shape because
+   * not every demo wires it up (sync-demo doesn't need fetchers).
+   */
+  query_async?(sql: string): Promise<any[][]>;
+  /**
    * `triggered` is a `number[]` (e.g. from `DirtyNotification.triggered`).
    * Pass `undefined` or `[]` for a cold read without REACTIVE(...) highlighting.
    */
@@ -233,4 +240,53 @@ export function useQuery<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] 
 
 export function useQueryConfirmed<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] {
   return useReactiveQuery(sql, 'confirmed', mapRow);
+}
+
+/**
+ * Like `useQuery`, but drives the read through the async wasm path
+ * (`query_async`). Use whenever the SQL contains a `schema.fn(args)`
+ * source — those hit the server via `/table-fetch` during Phase 0 and
+ * the sync `query` would bail with `RequiresAsync`.
+ *
+ * Rendering semantics: first render returns `[]`, then re-renders once
+ * the async read resolves. Subscription-driven refreshes also go through
+ * the same async read.
+ */
+export function useAsyncQuery<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] {
+  const [data, setData] = useState<T[]>([]);
+  const mapRef = useRef(mapRow);
+  mapRef.current = mapRow;
+
+  useEffect(() => {
+    if (!wasmReady) return;
+    const w = wasm();
+    if (!w.query_async) {
+      throw new Error('@wasmdb/client: useAsyncQuery requires the wasm module to expose `query_async`');
+    }
+    const { handle, subId } = w.subscribe(sql);
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const rows = await w.query_async!(sql);
+        if (cancelled) return;
+        setData(mapRef.current ? rows.map(mapRef.current) : (rows as T[]));
+      } catch (e) {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.error('[useAsyncQuery] query_async failed', { sql, error: e });
+      }
+    };
+
+    addListener(subId, handle, () => { void refresh(); });
+    void refresh();
+
+    return () => {
+      cancelled = true;
+      removeListener(handle);
+      w.unsubscribe(handle);
+    };
+  }, [sql]);
+
+  return data;
 }

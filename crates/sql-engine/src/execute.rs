@@ -40,8 +40,9 @@ pub use context::{ExecutionContext, ScanMethod, Span, SpanOperation};
 pub use materialize::execute_plan;
 pub use pipeline::{execute, execute_and_resolve_requirements};
 pub use requirement::{
-    resolve_requirements,
-    AsyncFetcherFn, FetcherFuture, FetcherRuntime, RequirementKey, RequirementsResult,
+    apply_fetched, collect_fetch_plan, fetch_requirements, resolve_requirements,
+    AsyncFetcherFn, FetchedEntry, FetchedRequirements, FetcherFuture, FetcherRuntime,
+    RequirementKey, RequirementsResult, ResolvedInvocation,
 };
 pub use rowset::{RowSet, NULL_ROW};
 

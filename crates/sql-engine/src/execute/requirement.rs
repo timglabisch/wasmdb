@@ -1,22 +1,26 @@
 //! Phase 0 of query execution: resolve all `PlanSource::Requirement` entries.
 //!
-//! For every requirement in the plan (main query + every materialization
-//! sub-plan), this phase:
-//!   1. Resolves the requirement's args against `ctx.bound_values` / `params`.
-//!   2. Invokes the registered async fetcher with the resolved args.
-//!   3. Upserts each returned row into the backing `row_table` (persistent —
-//!      data has the lifetime of the DB, not the query).
-//!   4. Extracts the PK tuples from the returned rows and stores them in a
-//!      `RequirementsResult`, keyed by `(caller_id, resolved_args)`.
+//! Split into three explicit sub-phases so callers can avoid holding
+//! `&mut db` across `.await`:
+//!
+//!   0a. [`collect_fetch_plan`] — sync, reads `&plan` + `&params`. Produces a
+//!       deduplicated `Vec<ResolvedInvocation>`.
+//!   0b. [`fetch_requirements`] — async, takes **no** DB reference. Invokes
+//!       all registered fetchers in parallel via the internal `join_all`.
+//!   0c. [`apply_fetched`] — sync, `&mut db`. Upserts every returned row into
+//!       the backing `row_table` and extracts the PK tuples.
 //!
 //! Phase 3's `scan_requirement` then reads those PK tuples from the
-//! `RequirementsResult` instead of invoking fetchers itself — the data is
-//! already in the DB.
+//! `RequirementsResult` — the rows themselves live in the DB.
+//!
+//! [`resolve_requirements`] stays as a convenience wrapper that runs all
+//! three in sequence; the sql-engine pipeline still uses it.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use sql_parser::ast::Value;
 
@@ -47,7 +51,7 @@ pub type FetcherFuture =
 pub type FetcherFuture =
     Pin<Box<dyn Future<Output = Result<Vec<Vec<CellValue>>, String>>>>;
 
-/// A registered fetcher. Invoked during Phase 0 (`resolve_requirements`).
+/// A registered fetcher. Invoked during Phase 0 (`fetch_requirements`).
 /// Native builds require `Send + Sync` so `Database` stays `Send`; on wasm
 /// both bounds are dropped for the same reason `FetcherFuture` loses `Send`
 /// there. `Arc` so cloning shares closure identity rather than forcing every
@@ -70,12 +74,12 @@ pub type FetcherRuntime = HashMap<String, AsyncFetcherFn>;
 pub type RequirementKey = (String, Vec<CellValue>);
 
 /// Proof that Phase 0 has executed for a given plan. Produced by
-/// [`resolve_requirements`] and consumed by [`super::execute_plan`].
+/// [`apply_fetched`] and consumed by [`super::execute_plan`].
 ///
 /// For each `(caller_id, args)` invocation in the plan, stores the PK tuples
 /// the fetcher produced. Phase 3's `scan_requirement` consults this map to
 /// learn which rows of the row_table the invocation covers — the rows
-/// themselves already live in the DB (upserted by Phase 0).
+/// themselves already live in the DB (upserted by Phase 0c).
 #[derive(Debug, Default, Clone)]
 pub struct RequirementsResult {
     pub pk_sets: HashMap<RequirementKey, Vec<Vec<Value>>>,
@@ -92,24 +96,48 @@ impl RequirementsResult {
     }
 }
 
-/// Resolve every requirement in `plan` against `fetchers` and upsert the
-/// returned rows into `db`. Returns a `RequirementsResult` that Phase 3 uses
-/// to look up which PKs each invocation produced.
-///
-/// Requirements cannot currently depend on each other's output — args must
-/// resolve from `params` + `plan.bound_values` alone. A fetcher that needs
-/// data from another fetcher's result is out of scope for this phase.
-pub async fn resolve_requirements(
-    db: &mut HashMap<String, Table>,
+// ── Phase-split types ─────────────────────────────────────────────────────
+
+/// Phase 0a output: a single deduplicated caller invocation with all args
+/// already resolved to concrete [`Value`]s. Ready for the fetcher call,
+/// independent of any DB state.
+#[derive(Debug, Clone)]
+pub struct ResolvedInvocation {
+    pub caller_id: String,
+    pub row_table: String,
+    pub resolved_args: Vec<Value>,
+    /// Cached `(caller_id, arg_cells)` for use as `RequirementKey` without
+    /// recomputing in phase 0c.
+    pub key: RequirementKey,
+}
+
+/// Phase 0b output: the fetcher rows collected per invocation. Kept as a
+/// plain `Vec` (not keyed) because `apply_fetched` consumes each entry
+/// once and needs the associated `row_table` name for the upsert.
+#[derive(Debug, Default)]
+pub struct FetchedRequirements {
+    pub entries: Vec<FetchedEntry>,
+}
+
+#[derive(Debug)]
+pub struct FetchedEntry {
+    pub key: RequirementKey,
+    pub row_table: String,
+    pub rows: Vec<Vec<CellValue>>,
+}
+
+// ── Public phase functions ────────────────────────────────────────────────
+
+/// Phase 0a — sync. Walks the plan, resolves each caller invocation's args
+/// against `plan.bound_values` + `params`, dedupes by `(caller_id, args)`.
+pub fn collect_fetch_plan(
     plan: &ExecutionPlan,
     params: &Params,
-    fetchers: &FetcherRuntime,
-) -> Result<RequirementsResult, ExecuteError> {
-    let mut result = RequirementsResult::default();
+) -> Result<Vec<ResolvedInvocation>, ExecuteError> {
+    let mut out = Vec::new();
     let mut seen: HashSet<RequirementKey> = HashSet::new();
 
-    let invocations = collect_invocations(plan);
-    for inv in invocations {
+    for inv in collect_invocations(plan) {
         let resolved_args = resolve_args(&plan.bound_values, params, &inv)?;
         let arg_cells: Vec<CellValue> = resolved_args.iter().map(value_to_cell).collect();
         let key: RequirementKey = (inv.caller_id.clone(), arg_cells);
@@ -118,22 +146,74 @@ pub async fn resolve_requirements(
             continue;
         }
 
+        out.push(ResolvedInvocation {
+            caller_id: inv.caller_id,
+            row_table: inv.row_table,
+            resolved_args,
+            key,
+        });
+    }
+
+    Ok(out)
+}
+
+/// Phase 0b — async. Invokes all fetchers **in parallel** via [`join_all`].
+/// Takes no DB reference; safe to run without holding any `&mut` over an
+/// `.await`. A missing fetcher or a fetcher error fails the whole set.
+pub async fn fetch_requirements(
+    invocations: &[ResolvedInvocation],
+    fetchers: &FetcherRuntime,
+) -> Result<FetchedRequirements, ExecuteError> {
+    // Look up fetcher Arcs up-front so the async block below only holds
+    // clones — it doesn't need to borrow `fetchers` across the await.
+    let mut prepared: Vec<(ResolvedInvocation, AsyncFetcherFn)> =
+        Vec::with_capacity(invocations.len());
+    for inv in invocations {
         let fetcher = fetchers.get(&inv.caller_id).ok_or_else(|| {
             ExecuteError::CallerError(format!("fetcher `{}` not registered", inv.caller_id))
         })?;
+        prepared.push((inv.clone(), fetcher.clone()));
+    }
 
-        let rows = fetcher(resolved_args.clone()).await.map_err(|e| {
-            ExecuteError::CallerError(format!("fetcher `{}` failed: {e}", inv.caller_id))
-        })?;
+    let futs: Vec<_> = prepared
+        .into_iter()
+        .map(|(inv, fetcher)| async move {
+            let rows = fetcher(inv.resolved_args.clone()).await.map_err(|e| {
+                ExecuteError::CallerError(format!("fetcher `{}` failed: {e}", inv.caller_id))
+            })?;
+            Ok::<FetchedEntry, ExecuteError>(FetchedEntry {
+                key: inv.key,
+                row_table: inv.row_table,
+                rows,
+            })
+        })
+        .collect();
 
-        let table = db.get_mut(&inv.row_table).ok_or_else(|| {
-            ExecuteError::TableNotFound(inv.row_table.clone())
+    let results = join_all(futs).await;
+    let mut entries = Vec::with_capacity(results.len());
+    for r in results {
+        entries.push(r?);
+    }
+    Ok(FetchedRequirements { entries })
+}
+
+/// Phase 0c — sync. Upserts every fetched row into its `row_table` and
+/// produces the `RequirementsResult` that Phase 3 reads.
+pub fn apply_fetched(
+    db: &mut HashMap<String, Table>,
+    fetched: FetchedRequirements,
+) -> Result<RequirementsResult, ExecuteError> {
+    let mut result = RequirementsResult::default();
+
+    for FetchedEntry { key, row_table, rows } in fetched.entries {
+        let table = db.get_mut(&row_table).ok_or_else(|| {
+            ExecuteError::TableNotFound(row_table.clone())
         })?;
         let pk_columns = table.schema.primary_key.clone();
         if pk_columns.is_empty() {
             return Err(ExecuteError::CallerError(format!(
                 "fetcher `{}` row_table `{}` has no primary key",
-                inv.caller_id, inv.row_table,
+                key.0, row_table,
             )));
         }
         let expected_col_count = table.schema.columns.len();
@@ -143,14 +223,14 @@ pub async fn resolve_requirements(
             if row.len() != expected_col_count {
                 return Err(ExecuteError::CallerError(format!(
                     "fetcher `{}` row {row_idx}: returned {} cells, row_table `{}` has {} columns",
-                    inv.caller_id, row.len(), inv.row_table, expected_col_count,
+                    key.0, row.len(), row_table, expected_col_count,
                 )));
             }
             let pk: Vec<Value> = pk_columns.iter().map(|&c| cell_to_value(&row[c])).collect();
             table.upsert_by_pk(&row).map_err(|e| {
                 ExecuteError::CallerError(format!(
                     "fetcher `{}` upsert into `{}` failed: {e}",
-                    inv.caller_id, inv.row_table,
+                    key.0, row_table,
                 ))
             })?;
             pk_tuples.push(pk);
@@ -162,7 +242,24 @@ pub async fn resolve_requirements(
     Ok(result)
 }
 
-/// One invocation site of a caller in the plan.
+/// Convenience wrapper: runs 0a → 0b → 0c in sequence. Holds `&mut db`
+/// across the fetcher awaits — use the split phases if you need to drop
+/// the `&mut` during fetching (e.g. the wasm client does this to allow
+/// parallel `query_async` calls).
+pub async fn resolve_requirements(
+    db: &mut HashMap<String, Table>,
+    plan: &ExecutionPlan,
+    params: &Params,
+    fetchers: &FetcherRuntime,
+) -> Result<RequirementsResult, ExecuteError> {
+    let invocations = collect_fetch_plan(plan, params)?;
+    let fetched = fetch_requirements(&invocations, fetchers).await?;
+    apply_fetched(db, fetched)
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────
+
+/// One invocation site of a caller in the plan (pre-arg-resolution).
 struct Invocation {
     caller_id: String,
     row_table: String,
@@ -236,3 +333,57 @@ fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
     }
 }
 
+// ── Parallel joiner (minimal `join_all`) ──────────────────────────────────
+//
+// Polls every future each wake-up so all fetchers make progress concurrently.
+// Independent of `Send`/`Sync` — inherits from the inner future, which is
+// what the `FetcherFuture` cfg-split needs (wasm: !Send, native: Send).
+
+enum JoinSlot<F: Future> {
+    Pending(Pin<Box<F>>),
+    Done(F::Output),
+    Taken,
+}
+
+struct JoinAll<F: Future> {
+    slots: Vec<JoinSlot<F>>,
+}
+
+// `Pin<Box<F>>` pins the inner future; the outer `JoinAll` itself never needs
+// to stay pinned (we only mutate the `Vec`, not the futures in place). Marking
+// it `Unpin` unlocks plain `&mut`-access via `Pin::get_mut`.
+impl<F: Future> Unpin for JoinAll<F> {}
+
+impl<F: Future> Future for JoinAll<F> {
+    type Output = Vec<F::Output>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = Pin::into_inner(self);
+        let mut all_done = true;
+        for slot in this.slots.iter_mut() {
+            if let JoinSlot::Pending(f) = slot {
+                match f.as_mut().poll(cx) {
+                    Poll::Ready(v) => *slot = JoinSlot::Done(v),
+                    Poll::Pending => all_done = false,
+                }
+            }
+        }
+        if !all_done {
+            return Poll::Pending;
+        }
+        let out = this
+            .slots
+            .iter_mut()
+            .map(|slot| match std::mem::replace(slot, JoinSlot::Taken) {
+                JoinSlot::Done(v) => v,
+                _ => unreachable!("every slot must be Done when all_done is true"),
+            })
+            .collect();
+        Poll::Ready(out)
+    }
+}
+
+fn join_all<F: Future>(futs: Vec<F>) -> JoinAll<F> {
+    JoinAll {
+        slots: futs.into_iter().map(|f| JoinSlot::Pending(Box::pin(f))).collect(),
+    }
+}

@@ -11,7 +11,7 @@ import type { InvoiceCommand } from './generated/InvoiceCommand';
 
 export type { InvoiceCommand, Execution };
 
-export { useQuery, useQueryConfirmed, createStream, flushStream, nextId } from '@wasmdb/client';
+export { useQuery, useQueryConfirmed, useAsyncQuery, createStream, flushStream, nextId } from '@wasmdb/client';
 
 /** Boot the WASM module once and wire it to the reactive client. */
 export function useWasm(): boolean {

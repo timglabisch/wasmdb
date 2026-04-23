@@ -10,6 +10,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/command': 'http://localhost:3124',
+      '/table-fetch': 'http://localhost:3124',
     },
   },
 });

@@ -2,7 +2,7 @@ mod apply;
 mod delete;
 mod filter;
 mod insert;
-mod select;
+pub(crate) mod select;
 mod update;
 
 use std::collections::HashMap;

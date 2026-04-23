@@ -30,6 +30,9 @@ pub struct Row {
     pub fields: Vec<(String, Type)>,
     pub pk_name: String,
     pub pk_ty: Type,
+    /// Explicit `#[row(table = "…")]` override. `None` means the emitter
+    /// falls back to `pascal_to_snake(name)`.
+    pub table_name: Option<String>,
 }
 
 pub struct Query {
@@ -157,6 +160,11 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
         )));
     };
 
+    let row_attr = find_attr(&s.attrs, "row").ok_or_else(|| {
+        CodegenError::Parse(format!("#[row] on `{name}`: attribute missing"))
+    })?;
+    let table_name = parse_row_table(&name, row_attr)?;
+
     let mut fields = vec![];
     let mut pk: Option<(String, Type)> = None;
     for f in &named.named {
@@ -184,7 +192,30 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
         fields,
         pk_name,
         pk_ty,
+        table_name,
     })
+}
+
+fn parse_row_table(row_name: &str, attr: &Attribute) -> Result<Option<String>, CodegenError> {
+    match &attr.meta {
+        Meta::Path(_) => Ok(None),
+        _ => attr
+            .parse_args_with(parse_table_arg)
+            .map_err(|e| CodegenError::Parse(format!("#[row] on `{row_name}`: {e}"))),
+    }
+}
+
+fn parse_table_arg(input: ParseStream) -> syn::Result<Option<String>> {
+    if input.is_empty() {
+        return Ok(None);
+    }
+    let ident: Ident = input.parse()?;
+    if ident != "table" {
+        return Err(syn::Error::new(ident.span(), "expected `table = \"...\"`"));
+    }
+    let _eq: Token![=] = input.parse()?;
+    let lit: LitStr = input.parse()?;
+    Ok(Some(lit.value()))
 }
 
 fn parse_query(f: &ItemFn, attr: &Attribute, mod_path: &[String]) -> Result<Query, CodegenError> {
@@ -212,13 +243,13 @@ fn parse_query(f: &ItemFn, attr: &Attribute, mod_path: &[String]) -> Result<Quer
     let marker_name = snake_to_pascal(&fn_name);
 
     let args: Vec<&FnArg> = f.sig.inputs.iter().collect();
-    if args.len() < 2 {
+    if args.is_empty() {
         return Err(CodegenError::Parse(format!(
-            "#[query] on `{fn_name}`: needs at least one param + ctx arg"
+            "#[query] on `{fn_name}`: needs a ctx arg"
         )));
     }
 
-    // Params: all args before the last.
+    // Params: all args before the last (may be empty for param-less queries).
     let mut params = vec![];
     for arg in &args[..args.len() - 1] {
         let FnArg::Typed(PatType { pat, ty, .. }) = arg else {

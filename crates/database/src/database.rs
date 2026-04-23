@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use sql_engine::execute::ExecuteError;
+use sql_engine::execute::{ExecuteError, FetcherRuntime};
 use sql_engine::schema::TableSchema;
 use sql_engine::storage::{CellValue, Table};
 use sql_engine::planner::requirement::RequirementRegistry;
@@ -62,6 +62,15 @@ impl Database {
     /// without executing.
     pub fn requirements(&self) -> &RequirementRegistry {
         &self.callers.requirements
+    }
+
+    /// Clone of the fetcher runtime. `FetcherRuntime` is
+    /// `HashMap<String, Arc<...>>`, so clone is cheap — every entry is an
+    /// `Arc`-bump. Callers that need to invoke fetchers without holding
+    /// `&Database` over an `.await` use this to own the closures outright
+    /// (see the wasm `query_async` split in `invoice-demo/wasm/src/api.rs`).
+    pub fn fetchers(&self) -> FetcherRuntime {
+        self.callers.fetchers.clone()
     }
 
     pub fn table_schemas(&self) -> HashMap<String, TableSchema> {
