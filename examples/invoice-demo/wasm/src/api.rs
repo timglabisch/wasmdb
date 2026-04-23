@@ -7,7 +7,10 @@ use std::sync::Arc;
 use database_reactive::SubscriptionHandle;
 use invoice_demo_commands::InvoiceCommand;
 #[cfg(target_arch = "wasm32")]
-use invoice_demo_tables_client_generated::customers as gen_customers;
+use invoice_demo_tables_client_generated::{
+    activity_log, contacts, customers, invoices, payments, positions, products,
+    recurring_invoices, recurring_positions, sepa_mandates,
+};
 use sql_engine::storage::CellValue;
 use sync::protocol::StreamId;
 use sync_client::client::SyncClient;
@@ -25,7 +28,18 @@ pub fn init() {
     // because the HTTP fetcher uses `JsFuture` (`!Send`); gate registration
     // the same way so native `cargo check` stays green.
     #[cfg(target_arch = "wasm32")]
-    db.register_caller_of::<gen_customers::All>(Arc::new(()));
+    {
+        db.register_caller_of::<customers::All>(Arc::new(()));
+        db.register_caller_of::<contacts::All>(Arc::new(()));
+        db.register_caller_of::<invoices::All>(Arc::new(()));
+        db.register_caller_of::<positions::All>(Arc::new(()));
+        db.register_caller_of::<payments::All>(Arc::new(()));
+        db.register_caller_of::<products::All>(Arc::new(()));
+        db.register_caller_of::<recurring_invoices::All>(Arc::new(()));
+        db.register_caller_of::<recurring_positions::All>(Arc::new(()));
+        db.register_caller_of::<sepa_mandates::All>(Arc::new(()));
+        db.register_caller_of::<activity_log::All>(Arc::new(()));
+    }
     let mut client = SyncClient::new(db);
     let stream_id_val = client.create_stream().0;
     install_client(client);
