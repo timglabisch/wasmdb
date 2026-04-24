@@ -1,12 +1,5 @@
 import { peekQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import type { CustomerRow, ContactRow, SepaMandateRow } from '../types';
-
-const CUSTOMER_COLS =
-  'name, email, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, ' +
-  'billing_street, billing_zip, billing_city, billing_country, ' +
-  'shipping_street, shipping_zip, shipping_city, shipping_country, ' +
-  'default_iban, default_bic, notes';
 
 const rowToCustomer = (r: any[]): CustomerRow => ({
   name: r[0] as string, email: r[1] as string,
@@ -20,12 +13,17 @@ const rowToCustomer = (r: any[]): CustomerRow => ({
 });
 
 export function peekCustomer(id: number): CustomerRow | null {
-  const rows = peekQuery(selectById('customers', CUSTOMER_COLS, id));
+  const rows = peekQuery(
+    `SELECT customers.name, customers.email, customers.company_type, customers.tax_id, customers.vat_id, ` +
+    `customers.payment_terms_days, customers.default_discount_pct, ` +
+    `customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country, ` +
+    `customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country, ` +
+    `customers.default_iban, customers.default_bic, customers.notes ` +
+    `FROM customers WHERE customers.id = ${id}`,
+  );
   if (rows.length === 0) return null;
   return rowToCustomer(rows[0]);
 }
-
-const CONTACT_COLS = 'name, email, phone, role, is_primary';
 
 const rowToContact = (r: any[]): ContactRow => ({
   name: r[0] as string, email: r[1] as string, phone: r[2] as string,
@@ -33,12 +31,13 @@ const rowToContact = (r: any[]): ContactRow => ({
 });
 
 export function peekContact(id: number): ContactRow | null {
-  const rows = peekQuery(selectById('contacts', CONTACT_COLS, id));
+  const rows = peekQuery(
+    `SELECT contacts.name, contacts.email, contacts.phone, contacts.role, contacts.is_primary ` +
+    `FROM contacts WHERE contacts.id = ${id}`,
+  );
   if (rows.length === 0) return null;
   return rowToContact(rows[0]);
 }
-
-const SEPA_COLS = 'mandate_ref, iban, bic, holder_name, signed_at, status';
 
 const rowToSepa = (r: any[]): SepaMandateRow => ({
   mandate_ref: r[0] as string, iban: r[1] as string, bic: r[2] as string,
@@ -46,7 +45,11 @@ const rowToSepa = (r: any[]): SepaMandateRow => ({
 });
 
 export function peekSepaMandate(id: number): SepaMandateRow | null {
-  const rows = peekQuery(selectById('sepa_mandates', SEPA_COLS, id));
+  const rows = peekQuery(
+    `SELECT sepa_mandates.mandate_ref, sepa_mandates.iban, sepa_mandates.bic, ` +
+    `sepa_mandates.holder_name, sepa_mandates.signed_at, sepa_mandates.status ` +
+    `FROM sepa_mandates WHERE sepa_mandates.id = ${id}`,
+  );
   if (rows.length === 0) return null;
   return rowToSepa(rows[0]);
 }

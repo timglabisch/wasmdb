@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Link } from '@tanstack/react-router';
 import { CheckCircle2 } from 'lucide-react';
 import { useQuery } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -69,7 +68,8 @@ interface OverdueRowProps {
  */
 const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps) {
   const invoice = useQuery(
-    selectById('invoices', 'number, date_due, customer_id, status, doc_type', invoiceId),
+    `SELECT invoices.number, invoices.date_due, invoices.customer_id, invoices.status, invoices.doc_type ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([number, dateDue, customerId, status, docType]) => ({
       number: number as string,
       dateDue: dateDue as string,
@@ -110,7 +110,7 @@ const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps
 
 const CustomerName = React.memo(function CustomerName({ customerId }: { customerId: number }) {
   const rows = useQuery(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   );
   const name = rows[0];
@@ -127,7 +127,7 @@ const CustomerName = React.memo(function CustomerName({ customerId }: { customer
 const OpenAmount = React.memo(function OpenAmount({ invoiceId }: { invoiceId: number }) {
   const gross = useInvoiceGrossCents(invoiceId);
   const payments = useQuery(
-    selectByFk('payments', 'amount', 'invoice_id', invoiceId),
+    `SELECT payments.amount FROM payments WHERE payments.invoice_id = ${invoiceId}`,
     ([amount]) => amount as number,
   );
   const paid = payments.reduce((s, n) => s + n, 0);

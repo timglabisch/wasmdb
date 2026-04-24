@@ -1,5 +1,4 @@
 import { peekQuery } from '../../../wasm.ts';
-import { selectByFk } from '../../../queries.ts';
 
 export interface ActionPosition {
   position_nr: number;
@@ -18,9 +17,10 @@ export interface ActionPosition {
 /** One-shot non-reactive read of an invoice's positions. */
 export function peekPositions(invoiceId: number): ActionPosition[] {
   const rows = peekQuery(
-    selectByFk('positions',
-      'id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type',
-      'invoice_id', invoiceId, 'position_nr'),
+    `SELECT positions.id, positions.position_nr, positions.description, positions.quantity, ` +
+    `positions.unit_price, positions.tax_rate, positions.product_id, positions.item_number, ` +
+    `positions.unit, positions.discount_pct, positions.cost_price, positions.position_type ` +
+    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
   );
   return rows.map((r) => ({
     position_nr: r[1] as number,

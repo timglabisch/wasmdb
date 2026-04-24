@@ -1,10 +1,5 @@
 import { peekQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import type { RecurringRow } from '../types';
-
-const COLS =
-  'customer_id, template_name, interval_unit, interval_value, ' +
-  'next_run, last_run, enabled, status_template, notes_template';
 
 const rowToRecurring = (r: any[]): RecurringRow => ({
   customer_id: r[0] as number,
@@ -20,7 +15,13 @@ const rowToRecurring = (r: any[]): RecurringRow => ({
 
 /** One-shot non-reactive full-row read. Used at write time to compose UpdateRecurring payloads. */
 export function peekRecurring(recurringId: number): RecurringRow | null {
-  const rows = peekQuery(selectById('recurring_invoices', COLS, recurringId));
+  const rows = peekQuery(
+    `SELECT recurring_invoices.customer_id, recurring_invoices.template_name, ` +
+    `recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
+    `recurring_invoices.next_run, recurring_invoices.last_run, recurring_invoices.enabled, ` +
+    `recurring_invoices.status_template, recurring_invoices.notes_template ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+  );
   if (rows.length === 0) return null;
   return rowToRecurring(rows[0]);
 }

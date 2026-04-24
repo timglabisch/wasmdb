@@ -14,25 +14,37 @@ export interface DirtyNotification {
   triggered: number[];
 }
 
+/**
+ * A named-parameter map for prepared-statement-style queries. Placeholders
+ * in SQL are written as `:name` (e.g. `WHERE id = :id`). Accepted value
+ * types map 1:1 to the engine's `ParamValue` enum: integer numbers,
+ * strings, `null`, integer arrays and string arrays.
+ *
+ * Floats/booleans are rejected — the engine has no corresponding variants
+ * today. Pass an empty object or omit the argument for a query without
+ * parameters.
+ */
+export type QueryParams = Record<string, number | string | null | number[] | string[]>;
+
 /** Surface of the wasm-bindgen module needed by this client library. */
 export interface WasmSyncApi {
   execute(cmdJson: string): Execution;
   execute_on_stream(streamId: number, cmdJson: string): Execution;
   create_stream(batchCount: number, batchWaitMs: number, retryCount: number): number;
   flush_stream(streamId: number): Promise<void>;
-  query(sql: string): any[][];
+  query(sql: string, params?: QueryParams | null): any[][];
   /**
    * Async sibling of `query`. Required when the SQL contains a
    * `schema.fn(args)` source — the sync path refuses those because it
    * would have to await an HTTP roundtrip. Optional in the shape because
    * not every demo wires it up (sync-demo doesn't need fetchers).
    */
-  query_async?(sql: string): Promise<any[][]>;
+  query_async?(sql: string, params?: QueryParams | null): Promise<any[][]>;
   /**
    * `triggered` is a `number[]` (e.g. from `DirtyNotification.triggered`).
    * Pass `undefined` or `[]` for a cold read without REACTIVE(...) highlighting.
    */
-  query_confirmed(sql: string, triggered?: number[]): any[][];
+  query_confirmed(sql: string, triggered?: number[], params?: QueryParams | null): any[][];
   /**
    * Register a reactive subscription. Returns `{handle, subId}`:
    * - `handle` is unique per call and is what you pass back to `unsubscribe`.
@@ -199,22 +211,27 @@ function useReactiveQuery<T>(
   sql: string,
   dbKind: 'optimistic' | 'confirmed',
   mapRow?: (row: any[]) => T,
+  params?: QueryParams,
 ): T[] {
   const [data, setData] = useState<T[]>([]);
   const mapRef = useRef(mapRow);
   mapRef.current = mapRow;
+  // Stringify once per render so the effect re-subscribes when any param
+  // changes, without requiring callers to memoize the params object.
+  const paramsKey = params ? JSON.stringify(params) : '';
 
   useEffect(() => {
     if (!wasmReady) return;
     const w = wasm();
     const { handle, subId } = w.subscribe(sql);
+    const boundParams = paramsKey ? JSON.parse(paramsKey) as QueryParams : undefined;
 
     const read = () => {
       if (dbKind === 'confirmed') {
         const triggered = lastTriggeredBySubId.get(subId);
-        return w.query_confirmed(sql, triggered);
+        return w.query_confirmed(sql, triggered, boundParams);
       }
-      return w.query(sql);
+      return w.query(sql, boundParams);
     };
 
     const refresh = () => {
@@ -229,17 +246,25 @@ function useReactiveQuery<T>(
       removeListener(handle);
       w.unsubscribe(handle);
     };
-  }, [sql, dbKind]);
+  }, [sql, dbKind, paramsKey]);
 
   return data;
 }
 
-export function useQuery<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] {
-  return useReactiveQuery(sql, 'optimistic', mapRow);
+export function useQuery<T = any>(
+  sql: string,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): T[] {
+  return useReactiveQuery(sql, 'optimistic', mapRow, params);
 }
 
-export function useQueryConfirmed<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] {
-  return useReactiveQuery(sql, 'confirmed', mapRow);
+export function useQueryConfirmed<T = any>(
+  sql: string,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): T[] {
+  return useReactiveQuery(sql, 'confirmed', mapRow, params);
 }
 
 /**
@@ -252,10 +277,15 @@ export function useQueryConfirmed<T = any>(sql: string, mapRow?: (row: any[]) =>
  * the async read resolves. Subscription-driven refreshes also go through
  * the same async read.
  */
-export function useAsyncQuery<T = any>(sql: string, mapRow?: (row: any[]) => T): T[] {
+export function useAsyncQuery<T = any>(
+  sql: string,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): T[] {
   const [data, setData] = useState<T[]>([]);
   const mapRef = useRef(mapRow);
   mapRef.current = mapRow;
+  const paramsKey = params ? JSON.stringify(params) : '';
 
   useEffect(() => {
     if (!wasmReady) return;
@@ -264,11 +294,12 @@ export function useAsyncQuery<T = any>(sql: string, mapRow?: (row: any[]) => T):
       throw new Error('@wasmdb/client: useAsyncQuery requires the wasm module to expose `query_async`');
     }
     const { handle, subId } = w.subscribe(sql);
+    const boundParams = paramsKey ? JSON.parse(paramsKey) as QueryParams : undefined;
 
     let cancelled = false;
     const refresh = async () => {
       try {
-        const rows = await w.query_async!(sql);
+        const rows = await w.query_async!(sql, boundParams);
         if (cancelled) return;
         setData(mapRef.current ? rows.map(mapRef.current) : (rows as T[]));
       } catch (e) {
@@ -286,7 +317,7 @@ export function useAsyncQuery<T = any>(sql: string, mapRow?: (row: any[]) => T):
       removeListener(handle);
       w.unsubscribe(handle);
     };
-  }, [sql]);
+  }, [sql, paramsKey]);
 
   return data;
 }

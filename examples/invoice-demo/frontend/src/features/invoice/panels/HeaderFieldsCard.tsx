@@ -4,7 +4,6 @@ import { Badge } from '@/components/ui/badge';
 import { Field, BlurInput, BlurDateInput, BlurSelect } from '@/components/form';
 import { usePatchInvoice } from '@/features/invoice/hooks/usePatchInvoice';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { DOC_TYPE_LABEL, STATUS_LABEL, isOverdue } from '@/shared/lib/status';
 
 const DOC_TYPE_OPTIONS = Object.entries(DOC_TYPE_LABEL).map(([value, label]) => ({ value, label }));
@@ -35,7 +34,10 @@ export function HeaderFieldsCard({ invoiceId }: { invoiceId: number }) {
 }
 
 const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'number', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.number FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   const v = rows[0] ?? '';
   return (
@@ -46,7 +48,10 @@ const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: number }
 });
 
 const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'doc_type', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.doc_type FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Typ">
@@ -60,7 +65,10 @@ const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: number
 });
 
 const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'status', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.status FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Status">
@@ -74,7 +82,10 @@ const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: number }
 });
 
 const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'date_issued', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.date_issued FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Ausgestellt">
@@ -86,7 +97,7 @@ const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: number }
 interface DueBits { date_due: string; status: string }
 const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<DueBits>(
-    selectById('invoices', 'date_due, status', invoiceId),
+    `SELECT invoices.date_due, invoices.status FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([date_due, status]) => ({ date_due: date_due as string, status: status as string }),
   );
   const patch = usePatchInvoice(invoiceId);
@@ -107,7 +118,10 @@ const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: number }) {
 });
 
 const ServiceDateTile = memo(function ServiceDateTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'service_date', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.service_date FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Leistungsdatum">

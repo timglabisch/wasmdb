@@ -4,7 +4,6 @@ import {
   ArrowLeft, MoreHorizontal, Package, Trash2, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { useQuery, createStream, executeOnStream, flushStream } from '@/wasm';
-import { selectById } from '@/queries';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -98,7 +97,8 @@ const DetailHeader = React.memo(function DetailHeader({ productId }: { productId
   const patch = usePatchProduct(productId);
 
   const rows = useQuery(
-    selectById('products', 'name, sku, unit, active', productId),
+    `SELECT products.name, products.sku, products.unit, products.active ` +
+    `FROM products WHERE products.id = ${productId}`,
     ([name, sku, unit, active]) => ({
       name: name as string,
       sku: sku as string,
@@ -206,7 +206,8 @@ const DetailHeader = React.memo(function DetailHeader({ productId }: { productId
 const MasterDataCard = React.memo(function MasterDataCard({ productId }: { productId: number }) {
   const patch = usePatchProduct(productId);
   const rows = useQuery(
-    selectById('products', 'sku, description, unit', productId),
+    `SELECT products.sku, products.description, products.unit ` +
+    `FROM products WHERE products.id = ${productId}`,
     ([sku, description, unit]) => ({
       sku: sku as string,
       description: description as string,
@@ -273,7 +274,8 @@ const MasterDataCard = React.memo(function MasterDataCard({ productId }: { produ
 const PriceCard = React.memo(function PriceCard({ productId }: { productId: number }) {
   const patch = usePatchProduct(productId);
   const rows = useQuery(
-    selectById('products', 'unit_price, tax_rate, cost_price', productId),
+    `SELECT products.unit_price, products.tax_rate, products.cost_price ` +
+    `FROM products WHERE products.id = ${productId}`,
     ([unit_price, tax_rate, cost_price]) => ({
       unit_price: unit_price as number,
       tax_rate: tax_rate as number,

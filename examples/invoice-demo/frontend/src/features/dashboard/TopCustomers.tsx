@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Link } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -192,7 +191,7 @@ const CustomerIdentity = React.memo(function CustomerIdentity({
   invoiceCount: number;
 }) {
   const rows = useQuery(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   );
   const name = rows[0];

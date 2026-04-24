@@ -4,7 +4,6 @@ import {
   ArrowLeft, MoreHorizontal, Play, Plus, Trash2, X,
 } from 'lucide-react';
 import { useQuery, execute, createStream, executeOnStream, flushStream, nextId } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -44,7 +43,8 @@ export default function RecurringDetailRoute() {
 
 function useRecurringExists(recurringId: number): boolean {
   const rows = useQuery(
-    selectById('recurring_invoices', 'id', recurringId),
+    `SELECT recurring_invoices.id FROM recurring_invoices ` +
+    `WHERE recurring_invoices.id = ${recurringId}`,
     ([id]) => id as number,
   );
   return rows.length > 0;
@@ -136,7 +136,8 @@ function DetailHeader({
   onDelete: () => void;
 }) {
   const rows = useQuery(
-    selectById('recurring_invoices', 'template_name, customer_id, enabled', recurringId),
+    `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, recurring_invoices.enabled ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
     ([name, cid, enabled]) => ({
       name: name as string,
       customerId: cid as number,
@@ -197,7 +198,7 @@ function DetailHeader({
 
 function HeaderSubtitle({ customerId }: { customerId: number }) {
   const rows = useQuery(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   );
   const name = rows[0];
@@ -225,7 +226,8 @@ function TemplateCard({
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
-    selectById('recurring_invoices', 'template_name, customer_id', recurringId),
+    `SELECT recurring_invoices.template_name, recurring_invoices.customer_id ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
     ([name, cid]) => ({ name: name as string, customerId: cid as number }),
   );
   const t = rows[0];
@@ -280,7 +282,9 @@ function RhythmCard({
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
-    selectById('recurring_invoices', 'interval_unit, interval_value, next_run, last_run, enabled', recurringId),
+    `SELECT recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
+    `recurring_invoices.next_run, recurring_invoices.last_run, recurring_invoices.enabled ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
     ([unit, value, next, last, enabled]) => ({
       unit: unit as string,
       value: value as number,
@@ -372,7 +376,8 @@ function InvoiceTemplateCard({
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
-    selectById('recurring_invoices', 'status_template, notes_template', recurringId),
+    `SELECT recurring_invoices.status_template, recurring_invoices.notes_template ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
     ([status, notes]) => ({ status: status as string, notes: notes as string }),
   );
   const t = rows[0];
@@ -417,7 +422,9 @@ interface PositionSummary {
 
 function PositionsCard({ recurringId }: { recurringId: number }) {
   const positions = useQuery(
-    selectByFk('recurring_positions', 'id, position_nr', 'recurring_id', recurringId, 'position_nr'),
+    `SELECT recurring_positions.id, recurring_positions.position_nr ` +
+    `FROM recurring_positions WHERE recurring_positions.recurring_id = ${recurringId} ` +
+    `ORDER BY recurring_positions.position_nr`,
     ([id, nr]): PositionSummary => ({ id: id as number, positionNr: nr as number }),
   );
 
@@ -487,11 +494,10 @@ const PositionRow = React.memo(function PositionRow({
   index: number;
 }) {
   const rows = useQuery(
-    selectById(
-      'recurring_positions',
-      'description, quantity, unit_price, tax_rate, unit, item_number, discount_pct',
-      positionId,
-    ),
+    `SELECT recurring_positions.description, recurring_positions.quantity, ` +
+    `recurring_positions.unit_price, recurring_positions.tax_rate, recurring_positions.unit, ` +
+    `recurring_positions.item_number, recurring_positions.discount_pct ` +
+    `FROM recurring_positions WHERE recurring_positions.id = ${positionId}`,
     ([desc, qty, price, tax, unit, item, disc]) => ({
       description: desc as string,
       quantity: qty as number,
@@ -590,11 +596,9 @@ const PositionRow = React.memo(function PositionRow({
 
 function TotalsRow({ recurringId }: { recurringId: number }) {
   const positions = useQuery(
-    selectByFk(
-      'recurring_positions',
-      'quantity, unit_price, tax_rate, discount_pct',
-      'recurring_id', recurringId,
-    ),
+    `SELECT recurring_positions.quantity, recurring_positions.unit_price, ` +
+    `recurring_positions.tax_rate, recurring_positions.discount_pct ` +
+    `FROM recurring_positions WHERE recurring_positions.recurring_id = ${recurringId}`,
     ([q, p, t, d]) => ({
       quantity: q as number,
       unitPrice: p as number,

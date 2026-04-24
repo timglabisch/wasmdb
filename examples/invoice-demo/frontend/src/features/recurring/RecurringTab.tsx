@@ -3,8 +3,7 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import {
   MoreHorizontal, Play, Search, Trash2, ExternalLink, RefreshCw,
 } from 'lucide-react';
-import { useQuery, createStream, executeOnStream, flushStream } from '@/wasm';
-import { selectById } from '@/queries';
+import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,9 +33,9 @@ interface RowId {
 export default function RecurringTab() {
   const [query, setQuery] = React.useState('');
 
-  const ids = useQuery(
+  const ids = useAsyncQuery(
     'SELECT recurring_invoices.id, recurring_invoices.next_run ' +
-    'FROM recurring_invoices ORDER BY recurring_invoices.next_run ASC',
+    'FROM recurring_invoices.all() ORDER BY recurring_invoices.next_run ASC',
     ([id, nextRun]) => ({ id: id as number, nextRun: nextRun as string }),
   );
 
@@ -122,11 +121,10 @@ interface RowProps {
 const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, query }: RowProps) {
   const navigate = useNavigate();
   const rows = useQuery(
-    selectById(
-      'recurring_invoices',
-      'template_name, customer_id, interval_unit, interval_value, next_run, enabled, status_template',
-      recurringId,
-    ),
+    `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, ` +
+    `recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
+    `recurring_invoices.next_run, recurring_invoices.enabled, recurring_invoices.status_template ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
     ([name, cid, unit, value, next, enabled, status]) => ({
       name: name as string,
       customerId: cid as number,
@@ -246,7 +244,7 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
 
 const CustomerCell = React.memo(function CustomerCell({ customerId }: { customerId: number }) {
   const rows = useQuery(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   );
   const name = rows[0];

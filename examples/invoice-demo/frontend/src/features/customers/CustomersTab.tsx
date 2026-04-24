@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/table';
 import { PageBody, PageHeader } from '@/shared/layout/AppShell';
 import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
-import { selectById } from '@/queries';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { logActivity } from '@/commands/activity/logActivity';
 import { formatEuro } from '@/shared/lib/format';
@@ -131,7 +130,8 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const customer = useQuery(
-    selectById('customers', 'name, email, payment_terms_days', customerId),
+    `SELECT customers.name, customers.email, customers.payment_terms_days ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([name, email, terms]) => ({
       name: name as string,
       email: email as string,

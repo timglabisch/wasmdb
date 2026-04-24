@@ -7,7 +7,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { BlurInput, BlurNumberInput } from '@/components/form';
 import { execute, useQuery, nextId } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { addPosition } from '@/commands/position/addPosition';
 import { updatePosition } from '@/commands/position/updatePosition';
 import { deletePosition } from '@/commands/position/deletePosition';
@@ -32,7 +31,8 @@ interface PosIdRow { id: number; position_nr: number }
  */
 export function PositionsCard({ invoiceId }: { invoiceId: number }) {
   const ids = useQuery<PosIdRow>(
-    selectByFk('positions', 'id, position_nr', 'invoice_id', invoiceId, 'position_nr'),
+    `SELECT positions.id, positions.position_nr FROM positions ` +
+    `WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
     ([id, nr]) => ({ id: id as number, position_nr: nr as number }),
   );
   const nextPositionNr = (ids.length > 0 ? ids[ids.length - 1].position_nr : 0) + 1;
@@ -171,11 +171,10 @@ const PositionRow = memo(function PositionRow({
   onEnterIfLast?: () => void;
 }) {
   const rows = useQuery<PosRowFull>(
-    selectById(
-      'positions',
-      'description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type',
-      positionId,
-    ),
+    `SELECT positions.description, positions.quantity, positions.unit_price, positions.tax_rate, ` +
+    `positions.product_id, positions.item_number, positions.unit, positions.discount_pct, ` +
+    `positions.cost_price, positions.position_type ` +
+    `FROM positions WHERE positions.id = ${positionId}`,
     ([desc, qty, up, tr, pid, item, unit, disc, cost, pt]) => ({
       description: desc as string,
       quantity: qty as number,

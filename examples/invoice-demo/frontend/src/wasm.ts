@@ -5,6 +5,7 @@ import {
   execute as executeGeneric,
   executeOnStream as executeOnStreamGeneric,
   type Execution,
+  type QueryParams,
 } from '@wasmdb/client';
 import { setDebugWasm } from '@wasmdb/debug-toolbar';
 import type { InvoiceCommand } from './generated/InvoiceCommand';
@@ -12,6 +13,7 @@ import type { InvoiceCommand } from './generated/InvoiceCommand';
 export type { InvoiceCommand, Execution };
 
 export { useQuery, useQueryConfirmed, useAsyncQuery, createStream, flushStream, nextId } from '@wasmdb/client';
+export type { QueryParams } from '@wasmdb/client';
 
 /** Boot the WASM module once and wire it to the reactive client. */
 export function useWasm(): boolean {
@@ -38,6 +40,6 @@ export function executeOnStream(streamId: number, cmd: InvoiceCommand): Executio
  * (actions, commands) where you do not want to subscribe the caller to
  * re-renders. Returns raw rows — callers map columns themselves.
  */
-export function peekQuery(sql: string): any[][] {
-  return (wasm as any).query(sql);
+export function peekQuery(sql: string, params?: QueryParams): any[][] {
+  return (wasm as any).query(sql, params);
 }

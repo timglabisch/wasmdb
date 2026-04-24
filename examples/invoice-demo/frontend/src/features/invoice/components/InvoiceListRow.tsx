@@ -14,7 +14,6 @@ import {
 } from '@/shared/lib/status';
 import { formatDateISO, formatEuro } from '@/shared/lib/format';
 import { useQuery } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { computeGrossCents } from '@/shared/lib/gross';
 import { duplicateInvoice } from '@/features/invoice/actions/duplicateInvoice';
 import { deleteInvoiceWithConfirm } from '@/features/invoice/actions/deleteInvoiceWithConfirm';
@@ -51,11 +50,9 @@ export const InvoiceListRow = memo(function InvoiceListRow({
 
   // Header columns used by this row.
   const headers = useQuery<Header>(
-    selectById(
-      'invoices',
-      'number, doc_type, status, date_issued, date_due, customer_id',
-      invoiceId,
-    ),
+    `SELECT invoices.number, invoices.doc_type, invoices.status, invoices.date_issued, ` +
+    `invoices.date_due, invoices.customer_id ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([number, doc_type, status, date_issued, date_due, customer_id]) => ({
       number: number as string,
       doc_type: doc_type as string,
@@ -142,7 +139,7 @@ export const InvoiceListRow = memo(function InvoiceListRow({
 /** Subscribes to customers.name for the given id. */
 const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: number }) {
   const rows = useQuery<string>(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   );
   return <span className="text-sm">{rows[0] ?? '—'}</span>;
@@ -151,11 +148,9 @@ const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: nu
 /** Subscribes to all positions of this invoice and shows gross. */
 const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: number }) {
   const positions = useQuery<GrossPos>(
-    selectByFk(
-      'positions',
-      'quantity, unit_price, tax_rate, discount_pct, position_type',
-      'invoice_id', invoiceId, 'position_nr',
-    ),
+    `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
+    `positions.discount_pct, positions.position_type ` +
+    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -170,11 +165,9 @@ const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: number }) 
 /** Subscribes to payments + positions to compute payment status. */
 const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: number }) {
   const positions = useQuery<GrossPos>(
-    selectByFk(
-      'positions',
-      'quantity, unit_price, tax_rate, discount_pct, position_type',
-      'invoice_id', invoiceId, 'position_nr',
-    ),
+    `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
+    `positions.discount_pct, positions.position_type ` +
+    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -184,7 +177,7 @@ const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: number
     }),
   );
   const payments = useQuery<number>(
-    selectByFk('payments', 'amount', 'invoice_id', invoiceId),
+    `SELECT payments.amount FROM payments WHERE payments.invoice_id = ${invoiceId}`,
     ([a]) => a as number,
   );
   const gross = computeGrossCents(positions);

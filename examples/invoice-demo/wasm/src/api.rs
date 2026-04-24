@@ -11,6 +11,7 @@ use invoice_demo_tables_client_generated::{
     activity_log, contacts, customers, invoices, payments, positions, products,
     recurring_invoices, recurring_positions, sepa_mandates,
 };
+use sql_engine::execute::{ParamValue, Params};
 use sql_engine::storage::CellValue;
 use sync::protocol::StreamId;
 use sync_client::client::SyncClient;
@@ -243,11 +244,12 @@ pub fn flush_stream(stream_id: f64) -> js_sys::Promise {
 }
 
 #[wasm_bindgen]
-pub fn query(sql: &str) -> Result<JsValue, JsError> {
+pub fn query(sql: &str, params: JsValue) -> Result<JsValue, JsError> {
+    let params = js_to_params(params)?;
     with_client(|client| {
         let (columns, spans) = client
             .db_mut()
-            .execute_traced(sql)
+            .execute_traced_with_params(sql, params)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         record_query(sql, "optimistic", spans, rows.len());
@@ -265,12 +267,12 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
 /// HTTP roundtrip in between runs without any client borrow — parallel
 /// `query_async` calls overlap their fetches and never double-borrow.
 #[wasm_bindgen]
-pub async fn query_async(sql: String) -> Result<JsValue, JsError> {
-    use std::collections::HashMap;
+pub async fn query_async(sql: String, params: JsValue) -> Result<JsValue, JsError> {
+    let params = js_to_params(params)?;
 
     let (prepared, fetchers) = with_client(|client| {
         let db = client.db_mut().db_mut_raw();
-        let prepared = db.prepare_select(&sql, HashMap::new())
+        let prepared = db.prepare_select(&sql, params)
             .map_err(|e| JsError::new(&e.to_string()))?;
         Ok::<_, JsError>((prepared, db.fetchers()))
     })?;
@@ -291,20 +293,114 @@ pub async fn query_async(sql: String) -> Result<JsValue, JsError> {
 }
 
 #[wasm_bindgen]
-pub fn query_confirmed(sql: &str, triggered: Option<Vec<u32>>) -> Result<JsValue, JsError> {
+pub fn query_confirmed(
+    sql: &str,
+    triggered: Option<Vec<u32>>,
+    params: JsValue,
+) -> Result<JsValue, JsError> {
     let triggered_set: Option<HashSet<usize>> = triggered
         .filter(|t| !t.is_empty())
         .map(|t| t.into_iter().map(|i| i as usize).collect());
+    let params = js_to_params(params)?;
 
     with_client(|client| {
         let (columns, spans) = client
             .confirmed_db_mut()
-            .execute_traced_with_triggered(sql, triggered_set)
+            .execute_traced_with_triggered_and_params(sql, triggered_set, params)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         record_query(sql, "confirmed", spans, rows.len());
         serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
     })
+}
+
+/// Convert a JS object `{ name: value, ... }` into `Params`. Accepts:
+/// - `number` (integer) → `ParamValue::Int`
+/// - `string` → `ParamValue::Text`
+/// - `null` / `undefined` (value) → `ParamValue::Null`
+/// - `number[]` → `ParamValue::IntList`
+/// - `string[]` → `ParamValue::TextList`
+///
+/// `null` or `undefined` for the whole argument yields an empty `Params`.
+fn js_to_params(value: JsValue) -> Result<Params, JsError> {
+    use js_sys::{Object, Reflect};
+
+    if value.is_undefined() || value.is_null() {
+        return Ok(Params::new());
+    }
+    let obj: &Object = value.dyn_ref::<Object>()
+        .ok_or_else(|| JsError::new("params must be a plain object"))?;
+    let keys = Object::keys(obj);
+    let mut out = Params::new();
+    for i in 0..keys.length() {
+        let key_js = keys.get(i);
+        let key = key_js.as_string()
+            .ok_or_else(|| JsError::new("param key must be a string"))?;
+        let val = Reflect::get(obj, &key_js)
+            .map_err(|_| JsError::new(&format!("could not read param '{}'", key)))?;
+        let pv = js_to_param_value(val, &key)?;
+        out.insert(key, pv);
+    }
+    Ok(out)
+}
+
+fn js_to_param_value(value: JsValue, key: &str) -> Result<ParamValue, JsError> {
+    use js_sys::Array;
+
+    if value.is_null() || value.is_undefined() {
+        return Ok(ParamValue::Null);
+    }
+    if let Some(s) = value.as_string() {
+        return Ok(ParamValue::Text(s));
+    }
+    if let Some(n) = value.as_f64() {
+        if !n.is_finite() || n.fract() != 0.0 {
+            return Err(JsError::new(&format!(
+                "param '{key}' must be an integer, got {n}"
+            )));
+        }
+        return Ok(ParamValue::Int(n as i64));
+    }
+    if let Some(arr) = value.dyn_ref::<Array>() {
+        let len = arr.length();
+        if len == 0 {
+            return Ok(ParamValue::IntList(vec![]));
+        }
+        let first = arr.get(0);
+        if first.is_string() {
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let v = arr.get(i);
+                let s = v.as_string().ok_or_else(|| {
+                    JsError::new(&format!("param '{key}' array must be all strings"))
+                })?;
+                out.push(s);
+            }
+            return Ok(ParamValue::TextList(out));
+        }
+        if first.as_f64().is_some() {
+            let mut out = Vec::with_capacity(len as usize);
+            for i in 0..len {
+                let v = arr.get(i);
+                let n = v.as_f64().ok_or_else(|| {
+                    JsError::new(&format!("param '{key}' array must be all numbers"))
+                })?;
+                if !n.is_finite() || n.fract() != 0.0 {
+                    return Err(JsError::new(&format!(
+                        "param '{key}' list element {n} is not an integer"
+                    )));
+                }
+                out.push(n as i64);
+            }
+            return Ok(ParamValue::IntList(out));
+        }
+        return Err(JsError::new(&format!(
+            "param '{key}' array has unsupported element type (expected number or string)"
+        )));
+    }
+    Err(JsError::new(&format!(
+        "param '{key}' has unsupported type; expected int, string, null, int[] or string[]"
+    )))
 }
 
 fn columns_to_rows(columns: Vec<Vec<CellValue>>) -> Vec<Vec<CellValue>> {

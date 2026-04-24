@@ -9,7 +9,6 @@ import {
   Field, BlurInput, BlurNumberInput, BlurSelect, BlurTextarea,
 } from '@/components/form';
 import { useQuery, peekQuery } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { usePatchInvoice } from '@/features/invoice/hooks/usePatchInvoice';
 
 const METHOD_OPTIONS = [
@@ -76,7 +75,8 @@ interface PaymentBits {
 
 function PaymentSection({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<PaymentBits>(
-    selectById('invoices', 'payment_method, sepa_mandate_id, customer_id', invoiceId),
+    `SELECT invoices.payment_method, invoices.sepa_mandate_id, invoices.customer_id ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([pm, sm, ci]) => ({
       payment_method: pm as string,
       sepa_mandate_id: sm as number,
@@ -121,7 +121,8 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
   onCommit: (id: number) => void;
 }) {
   const mandates = useQuery<SepaMandate>(
-    selectByFk('sepa_mandates', 'id, mandate_ref, status', 'customer_id', customerId, 'id'),
+    `SELECT sepa_mandates.id, sepa_mandates.mandate_ref, sepa_mandates.status ` +
+    `FROM sepa_mandates WHERE sepa_mandates.customer_id = ${customerId} ORDER BY sepa_mandates.id`,
     ([id, ref, status]) => ({
       id: id as number,
       mandate_ref: ref as string,
@@ -143,7 +144,10 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
 });
 
 const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<number>(selectById('invoices', 'cash_allowance_pct', invoiceId), ([v]) => v as number);
+  const rows = useQuery<number>(
+    `SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as number,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Skonto %" hint="Wert in Basispunkten (100 = 1 %)">
@@ -153,7 +157,10 @@ const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: {
 });
 
 const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<number>(selectById('invoices', 'cash_allowance_days', invoiceId), ([v]) => v as number);
+  const rows = useQuery<number>(
+    `SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as number,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Skonto Tage">
@@ -163,7 +170,10 @@ const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }:
 });
 
 const DiscountPctTile = memo(function DiscountPctTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<number>(selectById('invoices', 'discount_pct', invoiceId), ([v]) => v as number);
+  const rows = useQuery<number>(
+    `SELECT invoices.discount_pct FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as number,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Rabatt %" hint="Wert in Basispunkten (100 = 1 %)">
@@ -184,7 +194,10 @@ function FormatSection({ invoiceId }: { invoiceId: number }) {
 }
 
 const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'currency', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.currency FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Währung">
@@ -198,7 +211,10 @@ const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: numb
 });
 
 const LanguageTile = memo(function LanguageTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'language', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.language FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Sprache">
@@ -218,7 +234,8 @@ function AddressSection({ invoiceId }: { invoiceId: number }) {
 
   const copyBillingToShipping = useCallback(() => {
     const rows = peekQuery(
-      selectById('invoices', 'billing_street, billing_zip, billing_city, billing_country', invoiceId),
+      `SELECT invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country ` +
+      `FROM invoices WHERE invoices.id = ${invoiceId}`,
     );
     if (rows.length === 0) return;
     const r = rows[0];
@@ -258,7 +275,8 @@ interface Addr { street: string; zip: string; city: string; country: string }
 
 const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<Addr>(
-    selectById('invoices', 'billing_street, billing_zip, billing_city, billing_country', invoiceId),
+    `SELECT invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -288,7 +306,8 @@ const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: {
 
 const ShippingAddressFields = memo(function ShippingAddressFields({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<Addr>(
-    selectById('invoices', 'shipping_street, shipping_zip, shipping_city, shipping_country', invoiceId),
+    `SELECT invoices.shipping_street, invoices.shipping_zip, invoices.shipping_city, invoices.shipping_country ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -329,7 +348,10 @@ function RefsSection({ invoiceId }: { invoiceId: number }) {
 }
 
 const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'project_ref', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.project_ref FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Projekt-Ref">
@@ -339,7 +361,10 @@ const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: 
 });
 
 const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'external_id', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.external_id FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Externe ID">
@@ -349,7 +374,10 @@ const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: 
 });
 
 const NotesTile = memo(function NotesTile({ invoiceId }: { invoiceId: number }) {
-  const rows = useQuery<string>(selectById('invoices', 'notes', invoiceId), ([v]) => v as string);
+  const rows = useQuery<string>(
+    `SELECT invoices.notes FROM invoices WHERE invoices.id = ${invoiceId}`,
+    ([v]) => v as string,
+  );
   const patch = usePatchInvoice(invoiceId);
   return (
     <Field label="Notizen">

@@ -1,5 +1,4 @@
 import { useQuery } from '../../wasm.ts';
-import { selectByFk } from '../../queries.ts';
 
 export interface GrossPosition {
   quantity: number;
@@ -15,11 +14,9 @@ export interface GrossPosition {
  */
 export function useInvoicePositions(invoiceId: number): GrossPosition[] {
   return useQuery(
-    selectByFk(
-      'positions',
-      'quantity, unit_price, tax_rate, discount_pct, position_type',
-      'invoice_id', invoiceId, 'position_nr',
-    ),
+    `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
+    `positions.discount_pct, positions.position_type ` +
+    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,

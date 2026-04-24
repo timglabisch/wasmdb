@@ -3,8 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import {
   MoreHorizontal, Package, Search, ExternalLink, Power, Trash2,
 } from 'lucide-react';
-import { useQuery, createStream, executeOnStream, flushStream } from '@/wasm';
-import { selectById } from '@/queries';
+import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -73,9 +72,10 @@ interface ProductListRow {
 
 function ProductsList({ filter }: { filter: string }) {
   // Parent subscription: ids + the two columns we need for client-side filtering.
-  // Filtering in JS keeps the reactive plan simple and avoids reparsing on keystrokes.
-  const rows = useQuery(
-    'SELECT products.id, products.sku, products.name FROM products ' +
+  // `.all()` triggers the /table-fetch hydrator on first mount so reloads
+  // land on a populated store; filtering stays in JS.
+  const rows = useAsyncQuery(
+    'SELECT products.id, products.sku, products.name FROM products.all() ' +
       'ORDER BY products.name ASC',
     ([id, sku, name]): ProductListRow => ({
       id: id as number,
@@ -157,7 +157,9 @@ interface ProductRowData {
 const ProductListRow = React.memo(function ProductListRow({ productId }: { productId: number }) {
   const navigate = useNavigate();
   const rows = useQuery(
-    selectById('products', 'sku, name, unit, unit_price, tax_rate, cost_price, active', productId),
+    `SELECT products.sku, products.name, products.unit, products.unit_price, ` +
+    `products.tax_rate, products.cost_price, products.active ` +
+    `FROM products WHERE products.id = ${productId}`,
     ([sku, name, unit, unit_price, tax_rate, cost_price, active]): ProductRowData => ({
       sku: sku as string,
       name: name as string,

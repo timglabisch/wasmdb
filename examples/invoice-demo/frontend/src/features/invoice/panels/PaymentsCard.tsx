@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/sonner';
 import { execute, useQuery, nextId } from '@/wasm';
-import { selectByFk } from '@/queries';
 import { createPayment } from '@/commands/payment/createPayment';
 import { deletePayment } from '@/commands/payment/deletePayment';
 import { formatEuro, formatDateISO } from '@/shared/lib/format';
@@ -40,12 +39,9 @@ interface PaymentRow {
 
 export function PaymentsCard({ invoiceId }: { invoiceId: number }) {
   const payments = useQuery<PaymentRow>(
-    selectByFk(
-      'payments',
-      'id, paid_at, amount, method, reference',
-      'invoice_id', invoiceId,
-      'paid_at DESC, id',
-    ),
+    `SELECT payments.id, payments.paid_at, payments.amount, payments.method, payments.reference ` +
+    `FROM payments WHERE payments.invoice_id = ${invoiceId} ` +
+    `ORDER BY payments.paid_at DESC, payments.id`,
     ([id, paid_at, amount, method, ref]) => ({
       id: id as number,
       paid_at: paid_at as string,

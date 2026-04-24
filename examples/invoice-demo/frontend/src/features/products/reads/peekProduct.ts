@@ -1,9 +1,5 @@
 import { peekQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import type { ProductRow } from '../types';
-
-const COLS =
-  'sku, name, description, unit, unit_price, tax_rate, cost_price, active';
 
 const rowToProduct = (r: any[]): ProductRow => ({
   sku: r[0] as string,
@@ -18,7 +14,11 @@ const rowToProduct = (r: any[]): ProductRow => ({
 
 /** One-shot non-reactive full-row read. Used at write time to compose UpdateProduct payloads. */
 export function peekProduct(productId: number): ProductRow | null {
-  const rows = peekQuery(selectById('products', COLS, productId));
+  const rows = peekQuery(
+    `SELECT products.sku, products.name, products.description, products.unit, ` +
+    `products.unit_price, products.tax_rate, products.cost_price, products.active ` +
+    `FROM products WHERE products.id = ${productId}`,
+  );
   if (rows.length === 0) return null;
   return rowToProduct(rows[0]);
 }

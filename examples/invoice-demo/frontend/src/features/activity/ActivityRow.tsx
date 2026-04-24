@@ -20,7 +20,6 @@ import {
   User,
 } from 'lucide-react';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { Badge } from '@/components/ui/badge';
 import type { BadgeProps } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
@@ -56,11 +55,9 @@ export const ActivityRow = React.memo(function ActivityRow({
   searchTerm,
 }: ActivityRowProps) {
   const rows = useQuery(
-    selectById(
-      'activity_log',
-      'timestamp, entity_type, entity_id, action, actor, detail',
-      activityId,
-    ),
+    `SELECT activity_log.timestamp, activity_log.entity_type, activity_log.entity_id, ` +
+    `activity_log.action, activity_log.actor, activity_log.detail ` +
+    `FROM activity_log WHERE activity_log.id = ${activityId}`,
     ([timestamp, entityType, entityId, action, actor, detail]) => ({
       timestamp: timestamp as string,
       entityType: entityType as string,
@@ -387,7 +384,7 @@ const InvoiceLabel = React.memo(function InvoiceLabel({
   entityId: number;
 }) {
   const rows = useQuery(
-    selectById('invoices', 'number', entityId),
+    `SELECT invoices.number FROM invoices WHERE invoices.id = ${entityId}`,
     ([number]) => number as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -401,7 +398,7 @@ const CustomerLabel = React.memo(function CustomerLabel({
   entityId: number;
 }) {
   const rows = useQuery(
-    selectById('customers', 'name', entityId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${entityId}`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -419,7 +416,7 @@ const ProductLabel = React.memo(function ProductLabel({
   entityId: number;
 }) {
   const rows = useQuery(
-    selectById('products', 'sku, name', entityId),
+    `SELECT products.sku, products.name FROM products WHERE products.id = ${entityId}`,
     ([sku, name]) => ({ sku: sku as string, name: name as string }),
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -438,7 +435,8 @@ const RecurringLabel = React.memo(function RecurringLabel({
   entityId: number;
 }) {
   const rows = useQuery(
-    selectById('recurring_invoices', 'template_name', entityId),
+    `SELECT recurring_invoices.template_name FROM recurring_invoices ` +
+    `WHERE recurring_invoices.id = ${entityId}`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;

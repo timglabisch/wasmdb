@@ -136,6 +136,23 @@ impl ReactiveDatabase {
         self.db.execute_traced(sql)
     }
 
+    pub fn execute_traced_with_params(
+        &mut self,
+        sql: &str,
+        params: Params,
+    ) -> Result<(Columns, Vec<Span>), DbError> {
+        self.db.execute_traced_with_params(sql, params)
+    }
+
+    pub fn execute_traced_with_triggered_and_params(
+        &mut self,
+        sql: &str,
+        triggered_conditions: Option<std::collections::HashSet<usize>>,
+        params: Params,
+    ) -> Result<(Columns, Vec<Span>), DbError> {
+        self.db.execute_traced_with_triggered_and_params(sql, triggered_conditions, params)
+    }
+
     // ── Mutation with auto-notify ────────────────────────────────────
 
     pub fn execute_mut(&mut self, sql: &str) -> Result<MutResult, DbError> {

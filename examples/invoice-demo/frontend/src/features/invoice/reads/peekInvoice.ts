@@ -1,13 +1,5 @@
 import { peekQuery } from '../../../wasm.ts';
-import { selectById } from '../../../queries.ts';
 import type { InvoiceRow } from '../types.ts';
-
-const COLS =
-  'number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, ' +
-  'cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, ' +
-  'currency, language, project_ref, external_id, ' +
-  'billing_street, billing_zip, billing_city, billing_country, ' +
-  'shipping_street, shipping_zip, shipping_city, shipping_country, customer_id';
 
 const rowToInvoice = (r: any[]): InvoiceRow => ({
   number: r[0] as string, status: r[1] as string,
@@ -24,7 +16,16 @@ const rowToInvoice = (r: any[]): InvoiceRow => ({
 
 /** One-shot non-reactive full-row read. Used at write time to compose UpdateInvoiceHeader payloads. */
 export function peekInvoice(invoiceId: number): InvoiceRow | null {
-  const rows = peekQuery(selectById('invoices', COLS, invoiceId));
+  const rows = peekQuery(
+    `SELECT invoices.number, invoices.status, invoices.date_issued, invoices.date_due, invoices.notes, ` +
+    `invoices.doc_type, invoices.parent_id, invoices.service_date, ` +
+    `invoices.cash_allowance_pct, invoices.cash_allowance_days, invoices.discount_pct, ` +
+    `invoices.payment_method, invoices.sepa_mandate_id, invoices.currency, invoices.language, ` +
+    `invoices.project_ref, invoices.external_id, ` +
+    `invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country, ` +
+    `invoices.shipping_street, invoices.shipping_zip, invoices.shipping_city, invoices.shipping_country, ` +
+    `invoices.customer_id FROM invoices WHERE invoices.id = ${invoiceId}`,
+  );
   if (rows.length === 0) return null;
   return rowToInvoice(rows[0]);
 }

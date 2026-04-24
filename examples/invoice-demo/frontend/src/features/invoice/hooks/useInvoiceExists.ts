@@ -1,5 +1,4 @@
 import { useQuery } from '../../../wasm.ts';
-import { selectById } from '../../../queries.ts';
 
 /**
  * Reactive existence check. Using a single-column subscription instead of the
@@ -8,7 +7,7 @@ import { selectById } from '../../../queries.ts';
  */
 export function useInvoiceExists(invoiceId: number): boolean {
   const rows = useQuery(
-    selectById('invoices', 'id', invoiceId),
+    `SELECT invoices.id FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([id]) => id as number,
   );
   return rows.length > 0;

@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from '@/components/ui/sonner';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { markSent } from '@/features/invoice/actions/markSent';
 import { markPaid } from '@/features/invoice/actions/markPaid';
 import { convertOfferToInvoice } from '@/features/invoice/actions/convertOfferToInvoice';
@@ -31,7 +30,8 @@ interface HeaderBits {
 export const HeaderActions = memo(function HeaderActions({ invoiceId }: { invoiceId: number }) {
   const navigate = useNavigate();
   const rows = useQuery<HeaderBits>(
-    selectById('invoices', 'status, doc_type, number', invoiceId),
+    `SELECT invoices.status, invoices.doc_type, invoices.number ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([status, doc_type, number]) => ({
       status: status as string,
       doc_type: doc_type as string,

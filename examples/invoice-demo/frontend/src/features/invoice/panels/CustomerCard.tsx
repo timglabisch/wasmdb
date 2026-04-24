@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/components/ui/sonner';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { assignCustomer } from '@/features/invoice/actions/assignCustomer';
 
 interface InvoiceFk { customer_id: number }
@@ -22,7 +21,7 @@ interface InvoiceFk { customer_id: number }
  */
 export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<InvoiceFk>(
-    selectById('invoices', 'customer_id', invoiceId),
+    `SELECT invoices.customer_id FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([customer_id]) => ({ customer_id: customer_id as number }),
   );
   const customerId = rows[0]?.customer_id ?? 0;
@@ -80,11 +79,9 @@ const CustomerBody = memo(function CustomerBody({
   onDetach: () => void;
 }) {
   const rows = useQuery<CustomerDisplay>(
-    selectById(
-      'customers',
-      'name, email, billing_street, billing_zip, billing_city, billing_country, payment_terms_days',
-      customerId,
-    ),
+    `SELECT customers.name, customers.email, customers.billing_street, customers.billing_zip, ` +
+    `customers.billing_city, customers.billing_country, customers.payment_terms_days ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([name, email, st, zip, city, country, terms]) => ({
       name: name as string,
       email: email as string,

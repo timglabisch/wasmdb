@@ -43,7 +43,15 @@ impl Database {
     }
 
     pub fn execute_traced(&mut self, sql: &str) -> Result<(Columns, Vec<Span>), DbError> {
-        self.execute_traced_with_triggered(sql, None)
+        self.execute_traced_with_triggered_and_params(sql, None, HashMap::new())
+    }
+
+    pub fn execute_traced_with_params(
+        &mut self,
+        sql: &str,
+        params: Params,
+    ) -> Result<(Columns, Vec<Span>), DbError> {
+        self.execute_traced_with_triggered_and_params(sql, None, params)
     }
 
     pub fn execute_traced_with_triggered(
@@ -51,14 +59,23 @@ impl Database {
         sql: &str,
         triggered_conditions: Option<std::collections::HashSet<usize>>,
     ) -> Result<(Columns, Vec<Span>), DbError> {
+        self.execute_traced_with_triggered_and_params(sql, triggered_conditions, HashMap::new())
+    }
+
+    pub fn execute_traced_with_triggered_and_params(
+        &mut self,
+        sql: &str,
+        triggered_conditions: Option<std::collections::HashSet<usize>>,
+        params: Params,
+    ) -> Result<(Columns, Vec<Span>), DbError> {
         let stmt = sql_parser::parser::parse_statement(sql)
             .map_err(|e| DbError::Parse(format!("{e:?}")))?;
         match stmt {
             Statement::Select(select) => {
-                select::execute_select_traced(self, &select, HashMap::new(), triggered_conditions)
+                select::execute_select_traced(self, &select, params, triggered_conditions)
             }
             _ => {
-                let result = self.execute_statement(stmt, HashMap::new())?;
+                let result = self.execute_statement(stmt, params)?;
                 Ok((result, vec![]))
             }
         }

@@ -5,7 +5,6 @@ import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 import { InvoiceStatusBadge, DocTypeBadge } from '@/shared/lib/status';
 import { useInvoiceExists } from '@/features/invoice/hooks/useInvoiceExists';
 import { HeaderActions } from '@/features/invoice/components/HeaderActions';
@@ -46,7 +45,8 @@ interface TitleBits { number: string; status: string; doc_type: string }
 
 const HeaderTitle = memo(function HeaderTitle({ invoiceId }: { invoiceId: number }) {
   const rows = useQuery<TitleBits>(
-    selectById('invoices', 'number, status, doc_type', invoiceId),
+    `SELECT invoices.number, invoices.status, invoices.doc_type ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([number, status, doc_type]) => ({
       number: number as string,
       status: status as string,

@@ -23,7 +23,6 @@ import {
 import {
   createStream, execute, executeOnStream, flushStream, useQuery,
 } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { deleteContact } from '@/commands/contact/deleteContact';
 import { deleteSepaMandate } from '@/commands/sepaMandate/deleteSepaMandate';
@@ -44,7 +43,7 @@ export default function CustomerDetailRoute() {
   const { customerId } = useParams({ from: '/customers/$customerId' });
 
   const exists = useQuery(
-    selectById('customers', 'id', customerId),
+    `SELECT customers.id FROM customers WHERE customers.id = ${customerId}`,
     ([id]) => id as number,
   ).length > 0;
 
@@ -94,7 +93,8 @@ function CustomerDetail({ customerId }: { customerId: number }) {
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const head = useQuery(
-    selectById('customers', 'name, company_type, created_at', customerId),
+    `SELECT customers.name, customers.company_type, customers.created_at ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([name, type, createdAt]) => ({
       name: name as string,
       companyType: type as string,
@@ -214,7 +214,7 @@ function CustomerDetail({ customerId }: { customerId: number }) {
 
 const InlineName = React.memo(function InlineName({ customerId }: { customerId: number }) {
   const name = useQuery(
-    selectById('customers', 'name', customerId),
+    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
     ([name]) => name as string,
   )[0] ?? '';
   const patch = usePatchCustomer(customerId);
@@ -234,7 +234,8 @@ const InlineName = React.memo(function InlineName({ customerId }: { customerId: 
 
 const BasisCard = React.memo(function BasisCard({ customerId }: { customerId: number }) {
   const row = useQuery(
-    selectById('customers', 'name, email, company_type, created_at', customerId),
+    `SELECT customers.name, customers.email, customers.company_type, customers.created_at ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([name, email, type, createdAt]) => ({
       name: name as string,
       email: email as string,
@@ -287,7 +288,8 @@ const BasisCard = React.memo(function BasisCard({ customerId }: { customerId: nu
 
 const TaxPaymentCard = React.memo(function TaxPaymentCard({ customerId }: { customerId: number }) {
   const row = useQuery(
-    selectById('customers', 'tax_id, vat_id, payment_terms_days, default_discount_pct', customerId),
+    `SELECT customers.tax_id, customers.vat_id, customers.payment_terms_days, customers.default_discount_pct ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([taxId, vatId, terms, disc]) => ({
       taxId: taxId as string,
       vatId: vatId as string,
@@ -334,13 +336,15 @@ const TaxPaymentCard = React.memo(function TaxPaymentCard({ customerId }: { cust
 
 const AddressGrid = React.memo(function AddressGrid({ customerId }: { customerId: number }) {
   const billing = useQuery(
-    selectById('customers', 'billing_street, billing_zip, billing_city, billing_country', customerId),
+    `SELECT customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([s, z, c, co]) => ({
       street: s as string, zip: z as string, city: c as string, country: co as string,
     }),
   )[0];
   const shipping = useQuery(
-    selectById('customers', 'shipping_street, shipping_zip, shipping_city, shipping_country', customerId),
+    `SELECT customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([s, z, c, co]) => ({
       street: s as string, zip: z as string, city: c as string, country: co as string,
     }),
@@ -431,7 +435,8 @@ const AddressGrid = React.memo(function AddressGrid({ customerId }: { customerId
 
 const BankCard = React.memo(function BankCard({ customerId }: { customerId: number }) {
   const row = useQuery(
-    selectById('customers', 'default_iban, default_bic', customerId),
+    `SELECT customers.default_iban, customers.default_bic ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
     ([iban, bic]) => ({ iban: iban as string, bic: bic as string }),
   )[0];
   const patch = usePatchCustomer(customerId);
@@ -468,7 +473,7 @@ const BankCard = React.memo(function BankCard({ customerId }: { customerId: numb
 
 const NotesCard = React.memo(function NotesCard({ customerId }: { customerId: number }) {
   const row = useQuery(
-    selectById('customers', 'notes', customerId),
+    `SELECT customers.notes FROM customers WHERE customers.id = ${customerId}`,
     ([notes]) => notes as string,
   )[0];
   const patch = usePatchCustomer(customerId);
@@ -496,7 +501,8 @@ const NotesCard = React.memo(function NotesCard({ customerId }: { customerId: nu
 
 const ContactsCard = React.memo(function ContactsCard({ customerId }: { customerId: number }) {
   const ids = useQuery(
-    selectByFk('contacts', 'id', 'customer_id', customerId, 'is_primary DESC, name'),
+    `SELECT contacts.id FROM contacts WHERE contacts.customer_id = ${customerId} ` +
+    `ORDER BY contacts.is_primary DESC, contacts.name`,
     ([id]) => id as number,
   );
   return (
@@ -522,7 +528,8 @@ const ContactsCard = React.memo(function ContactsCard({ customerId }: { customer
 
 const ContactRow = React.memo(function ContactRow({ contactId }: { contactId: number }) {
   const row = useQuery(
-    selectById('contacts', 'name, email, phone, role, is_primary', contactId),
+    `SELECT contacts.name, contacts.email, contacts.phone, contacts.role, contacts.is_primary ` +
+    `FROM contacts WHERE contacts.id = ${contactId}`,
     ([name, email, phone, role, isPrimary]) => ({
       name: name as string,
       email: email as string,
@@ -611,7 +618,8 @@ const ContactRow = React.memo(function ContactRow({ contactId }: { contactId: nu
 
 const SepaMandatesCard = React.memo(function SepaMandatesCard({ customerId }: { customerId: number }) {
   const ids = useQuery(
-    selectByFk('sepa_mandates', 'id', 'customer_id', customerId, 'signed_at DESC'),
+    `SELECT sepa_mandates.id FROM sepa_mandates WHERE sepa_mandates.customer_id = ${customerId} ` +
+    `ORDER BY sepa_mandates.signed_at DESC`,
     ([id]) => id as number,
   );
   return (
@@ -637,7 +645,8 @@ const SepaMandatesCard = React.memo(function SepaMandatesCard({ customerId }: { 
 
 const SepaRow = React.memo(function SepaRow({ mandateId }: { mandateId: number }) {
   const row = useQuery(
-    selectById('sepa_mandates', 'mandate_ref, iban, status, signed_at', mandateId),
+    `SELECT sepa_mandates.mandate_ref, sepa_mandates.iban, sepa_mandates.status, sepa_mandates.signed_at ` +
+    `FROM sepa_mandates WHERE sepa_mandates.id = ${mandateId}`,
     ([ref, iban, status, signedAt]) => ({
       ref: ref as string,
       iban: iban as string,
@@ -699,7 +708,8 @@ const INVOICE_LIMIT = 10;
 
 const InvoicesCard = React.memo(function InvoicesCard({ customerId }: { customerId: number }) {
   const ids = useQuery(
-    selectByFk('invoices', 'id', 'customer_id', customerId, 'date_issued DESC'),
+    `SELECT invoices.id FROM invoices WHERE invoices.customer_id = ${customerId} ` +
+    `ORDER BY invoices.date_issued DESC`,
     ([id]) => id as number,
   );
   const shown = ids.slice(0, INVOICE_LIMIT);
@@ -739,7 +749,8 @@ const InvoicesCard = React.memo(function InvoicesCard({ customerId }: { customer
 
 const InvoiceRow = React.memo(function InvoiceRow({ invoiceId }: { invoiceId: number }) {
   const row = useQuery(
-    selectById('invoices', 'number, status, date_issued, date_due, doc_type', invoiceId),
+    `SELECT invoices.number, invoices.status, invoices.date_issued, invoices.date_due, invoices.doc_type ` +
+    `FROM invoices WHERE invoices.id = ${invoiceId}`,
     ([num, status, issued, due, docType]) => ({
       number: num as string,
       status: status as string,
@@ -750,7 +761,7 @@ const InvoiceRow = React.memo(function InvoiceRow({ invoiceId }: { invoiceId: nu
   )[0];
   const gross = useInvoiceGrossCents(invoiceId);
   const payments = useQuery(
-    selectByFk('payments', 'amount', 'invoice_id', invoiceId),
+    `SELECT payments.amount FROM payments WHERE payments.invoice_id = ${invoiceId}`,
     ([amount]) => amount as number,
   );
   const paid = payments.reduce((s, n) => s + n, 0);

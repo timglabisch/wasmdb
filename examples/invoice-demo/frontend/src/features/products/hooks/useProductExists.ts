@@ -1,5 +1,4 @@
 import { useQuery } from '@/wasm';
-import { selectById } from '@/queries';
 
 /**
  * Reactive existence check. Using a single-column subscription instead of the
@@ -8,7 +7,7 @@ import { selectById } from '@/queries';
  */
 export function useProductExists(productId: number): boolean {
   const rows = useQuery(
-    selectById('products', 'id', productId),
+    `SELECT products.id FROM products WHERE products.id = ${productId}`,
     ([id]) => id as number,
   );
   return rows.length > 0;

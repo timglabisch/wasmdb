@@ -1,5 +1,4 @@
 import { executeOnStream, createStream, flushStream, peekQuery } from '../../../wasm.ts';
-import { selectById } from '../../../queries.ts';
 import { updateInvoiceHeader } from '../../../commands/invoice/updateInvoiceHeader.ts';
 import { logActivity } from '../../../commands/activity/logActivity.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
@@ -14,9 +13,12 @@ interface CustomerDefaults {
 
 function peekCustomer(customerId: number): CustomerDefaults | null {
   if (customerId <= 0) return null;
-  const rows = peekQuery(selectById('customers',
-    'name, payment_terms_days, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country',
-    customerId));
+  const rows = peekQuery(
+    `SELECT customers.name, customers.payment_terms_days, ` +
+    `customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country, ` +
+    `customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country ` +
+    `FROM customers WHERE customers.id = ${customerId}`,
+  );
   if (rows.length === 0) return null;
   const r = rows[0];
   return {

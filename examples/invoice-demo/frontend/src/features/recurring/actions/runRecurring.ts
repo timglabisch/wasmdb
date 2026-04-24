@@ -1,7 +1,6 @@
 import {
   executeOnStream, createStream, flushStream, nextId, peekQuery,
 } from '@/wasm';
-import { selectById, selectByFk } from '@/queries';
 import { runRecurringOnce } from '@/commands/recurring/runRecurringOnce';
 import { logActivity } from '@/commands/activity/logActivity';
 import { advanceDate } from '../lib/interval';
@@ -20,11 +19,11 @@ function isoDate(offsetDays = 0): string {
 }
 
 function peekTemplateHeader(recurringId: number) {
-  const rows = peekQuery(selectById(
-    'recurring_invoices',
-    'template_name, customer_id, interval_unit, interval_value, next_run',
-    recurringId,
-  ));
+  const rows = peekQuery(
+    `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, ` +
+    `recurring_invoices.interval_unit, recurring_invoices.interval_value, recurring_invoices.next_run ` +
+    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+  );
   if (rows.length === 0) return null;
   const r = rows[0];
   return {
@@ -37,15 +36,18 @@ function peekTemplateHeader(recurringId: number) {
 }
 
 function peekPositionCount(recurringId: number): number {
-  const rows = peekQuery(selectByFk(
-    'recurring_positions', 'id', 'recurring_id', recurringId,
-  ));
+  const rows = peekQuery(
+    `SELECT recurring_positions.id FROM recurring_positions ` +
+    `WHERE recurring_positions.recurring_id = ${recurringId}`,
+  );
   return rows.length;
 }
 
 function peekPaymentTermsDays(customerId: number): number {
   if (customerId <= 0) return 14;
-  const rows = peekQuery(selectById('customers', 'payment_terms_days', customerId));
+  const rows = peekQuery(
+    `SELECT customers.payment_terms_days FROM customers WHERE customers.id = ${customerId}`,
+  );
   if (rows.length === 0) return 14;
   const v = rows[0][0] as number;
   return v || 14;

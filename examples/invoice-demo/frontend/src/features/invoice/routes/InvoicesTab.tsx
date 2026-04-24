@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Search, Filter } from 'lucide-react';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Input } from '@/components/ui/input';
@@ -9,7 +9,7 @@ import {
 import {
   Table, TableBody, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { useQuery } from '@/wasm';
+import { useAsyncQuery } from '@/wasm';
 import { DOC_TYPE_LABEL, STATUS_LABEL } from '@/shared/lib/status';
 import { InvoiceListRow } from '@/features/invoice/components/InvoiceListRow';
 import { NewInvoiceDialog } from '@/features/invoice/components/NewInvoiceDialog';
@@ -17,20 +17,30 @@ import { NewInvoiceDialog } from '@/features/invoice/components/NewInvoiceDialog
 const DOC_TYPES = ['invoice', 'offer', 'credit_note', 'delivery_note', 'proforma'];
 const STATUSES = ['draft', 'sent', 'paid', 'cancelled'];
 
+interface InvoiceListItem {
+  id: number;
+  docType: string;
+  status: string;
+}
+
 export default function InvoicesTab() {
   const [docType, setDocType] = useState<string>('all');
   const [status, setStatus] = useState<string>('all');
   const [term, setTerm] = useState('');
 
-  const sql = useMemo(() => {
-    const where: string[] = [];
-    if (docType !== 'all') where.push(`invoices.doc_type = '${docType}'`);
-    if (status !== 'all') where.push(`invoices.status = '${status}'`);
-    const whereClause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
-    return `SELECT invoices.id FROM invoices${whereClause} ORDER BY invoices.date_issued DESC, invoices.id DESC`;
-  }, [docType, status]);
+  const rows = useAsyncQuery<InvoiceListItem>(
+    'SELECT invoices.id, invoices.doc_type, invoices.status FROM invoices.all() ORDER BY invoices.date_issued DESC, invoices.id DESC',
+    ([id, dt, st]) => ({
+      id: id as number,
+      docType: (dt as string) ?? '',
+      status: (st as string) ?? '',
+    }),
+  );
 
-  const ids = useQuery<number>(sql, ([id]) => id as number);
+  const ids = rows
+    .filter((r) => (docType === 'all' || r.docType === docType)
+      && (status === 'all' || r.status === status))
+    .map((r) => r.id);
 
   return (
     <>
