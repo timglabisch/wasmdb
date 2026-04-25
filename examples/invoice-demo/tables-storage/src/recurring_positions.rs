@@ -1,13 +1,14 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "recurring_positions")]
 pub struct RecurringPosition {
     #[pk]
-    pub id: i64,
-    pub recurring_id: i64,
+    pub id: Uuid,
+    pub recurring_id: Uuid,
     pub position_nr: i64,
     pub description: String,
     pub quantity: i64,
@@ -32,8 +33,8 @@ async fn all(ctx: &AppCtx) -> Result<Vec<RecurringPosition>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(RecurringPosition {
-                id: r.try_get("id")?,
-                recurring_id: r.try_get("recurring_id")?,
+                id: try_uuid(&r, "id")?,
+                recurring_id: try_uuid(&r, "recurring_id")?,
                 position_nr: r.try_get("position_nr")?,
                 description: r.try_get("description")?,
                 quantity: r.try_get("quantity")?,

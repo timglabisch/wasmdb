@@ -22,6 +22,24 @@ pub struct AppCtx {
     pub pool: sqlx::MySqlPool,
 }
 
+/// Convert a sqlx-fetched `BINARY(16)` column into a `Uuid`. The MySQL
+/// driver hands us a `Vec<u8>`; failure to produce 16 bytes means the
+/// column is malformed (truncated or wrong type), which we surface as a
+/// row-decode error so the calling fetcher can bubble it up.
+pub(crate) fn try_uuid(
+    row: &sqlx::mysql::MySqlRow,
+    col: &str,
+) -> Result<sql_engine::storage::Uuid, sqlx::Error> {
+    use sqlx::Row;
+    let bytes: Vec<u8> = row.try_get(col)?;
+    let arr: [u8; 16] = bytes.try_into().map_err(|v: Vec<u8>| {
+        sqlx::Error::Decode(
+            format!("column {col}: expected 16 bytes, got {}", v.len()).into(),
+        )
+    })?;
+    Ok(sql_engine::storage::Uuid(arr))
+}
+
 pub mod __generated {
     include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 }

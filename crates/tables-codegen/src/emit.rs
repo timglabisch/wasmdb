@@ -106,11 +106,15 @@ fn emit_server_module(m: &Module, ctx_ty: &Type) -> Result<TokenStream, CodegenE
 /// emitted verbatim, so any field typed `Uuid` (or `Option<Uuid>`) needs
 /// the newtype in scope. Other supported types (`i64`, `String`,
 /// `Option<...>`) resolve via the prelude already.
+///
+/// `#[allow(unused_imports)]` keeps server-only modules quiet: those
+/// emit only the params struct (no row), so the prelude can be dead even
+/// when a sibling row would need it on the client side.
 fn module_prelude(m: &Module) -> TokenStream {
     let needs_uuid = m.rows.iter().any(|r| row_uses_uuid(r))
         || m.queries.iter().any(|q| query_uses_uuid(q));
     if needs_uuid {
-        quote! { use ::sql_engine::storage::Uuid; }
+        quote! { #[allow(unused_imports)] use ::sql_engine::storage::Uuid; }
     } else {
         quote! {}
     }

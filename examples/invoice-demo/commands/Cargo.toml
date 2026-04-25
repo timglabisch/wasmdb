@@ -12,7 +12,7 @@ server = ["dep:sync-server-mysql", "dep:sqlx", "dep:async-trait"]
 [dependencies]
 sync = { path = "../../../crates/sync" }
 database = { path = "../../../crates/database", features = ["borsh"] }
-sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
+sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }

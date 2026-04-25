@@ -1,13 +1,14 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "payments")]
 pub struct Payment {
     #[pk]
-    pub id: i64,
-    pub invoice_id: i64,
+    pub id: Uuid,
+    pub invoice_id: Uuid,
     pub amount: i64,
     pub paid_at: String,
     pub method: String,
@@ -27,8 +28,8 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Payment>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(Payment {
-                id: r.try_get("id")?,
-                invoice_id: r.try_get("invoice_id")?,
+                id: try_uuid(&r, "id")?,
+                invoice_id: try_uuid(&r, "invoice_id")?,
                 amount: r.try_get("amount")?,
                 paid_at: r.try_get("paid_at")?,
                 method: r.try_get("method")?,

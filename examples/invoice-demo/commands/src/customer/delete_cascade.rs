@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::{Params, ParamValue};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, read_i64_col};
+use crate::helpers::{execute_sql, p_uuid, read_uuid_col};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteCustomerCascade {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
 }
 
 impl Command for DeleteCustomerCascade {
@@ -19,53 +21,55 @@ impl Command for DeleteCustomerCascade {
     ) -> Result<ZSet, CommandError> {
         let id = self.id;
 
-        let recurring_ids = read_i64_col(db,
+        let recurring_ids = read_uuid_col(db,
             "SELECT id FROM recurring_invoices WHERE customer_id = :cid",
-            Params::from([p_int("cid", id)]))?;
-        let invoice_ids = read_i64_col(db,
+            Params::from([p_uuid("cid", &id)]))?;
+        let invoice_ids = read_uuid_col(db,
             "SELECT id FROM invoices WHERE customer_id = :cid",
-            Params::from([p_int("cid", id)]))?;
+            Params::from([p_uuid("cid", &id)]))?;
 
         let mut acc = ZSet::new();
 
         if !recurring_ids.is_empty() {
+            let bytes: Vec<[u8; 16]> = recurring_ids.iter().map(|u| u.0).collect();
             let p = Params::from([
-                ("rids".into(), ParamValue::IntList(recurring_ids.clone())),
+                ("rids".into(), ParamValue::UuidList(bytes.clone())),
             ]);
             acc.extend(execute_sql(db,
                 "DELETE FROM recurring_positions WHERE recurring_id IN (:rids)", p)?);
             let p = Params::from([
-                ("rids".into(), ParamValue::IntList(recurring_ids)),
+                ("rids".into(), ParamValue::UuidList(bytes)),
             ]);
             acc.extend(execute_sql(db,
                 "DELETE FROM recurring_invoices WHERE id IN (:rids)", p)?);
         }
 
         if !invoice_ids.is_empty() {
+            let bytes: Vec<[u8; 16]> = invoice_ids.iter().map(|u| u.0).collect();
             let p = Params::from([
-                ("iids".into(), ParamValue::IntList(invoice_ids.clone())),
+                ("iids".into(), ParamValue::UuidList(bytes.clone())),
             ]);
             acc.extend(execute_sql(db,
                 "DELETE FROM payments WHERE invoice_id IN (:iids)", p)?);
             let p = Params::from([
-                ("iids".into(), ParamValue::IntList(invoice_ids.clone())),
+                ("iids".into(), ParamValue::UuidList(bytes.clone())),
             ]);
             acc.extend(execute_sql(db,
                 "DELETE FROM positions WHERE invoice_id IN (:iids)", p)?);
             let p = Params::from([
-                ("iids".into(), ParamValue::IntList(invoice_ids)),
+                ("iids".into(), ParamValue::UuidList(bytes)),
             ]);
             acc.extend(execute_sql(db,
                 "DELETE FROM invoices WHERE id IN (:iids)", p)?);
         }
 
-        let p = Params::from([p_int("cid", id)]);
+        let p = Params::from([p_uuid("cid", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM sepa_mandates WHERE customer_id = :cid", p)?);
-        let p = Params::from([p_int("cid", id)]);
+        let p = Params::from([p_uuid("cid", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM contacts WHERE customer_id = :cid", p)?);
-        let p = Params::from([p_int("id", id)]);
+        let p = Params::from([p_uuid("id", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM customers WHERE id = :id", p)?);
 
@@ -94,94 +98,94 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             let id = self.id;
 
-            let recurring_ids: Vec<i64> = sqlx::query_scalar(
+            let recurring_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
                 "SELECT id FROM recurring_invoices WHERE customer_id = ?",
             )
-            .bind(id)
+            .bind(&id.0[..])
             .fetch_all(&mut **tx)
             .await
             .map_err(|e| CommandError::ExecutionFailed(format!(
                 "lookup recurring_invoices for customer {id}: {e}",
             )))?;
 
-            let invoice_ids: Vec<i64> = sqlx::query_scalar(
+            let invoice_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
                 "SELECT id FROM invoices WHERE customer_id = ?",
             )
-            .bind(id)
+            .bind(&id.0[..])
             .fetch_all(&mut **tx)
             .await
             .map_err(|e| CommandError::ExecutionFailed(format!(
                 "lookup invoices for customer {id}: {e}",
             )))?;
 
-            if !recurring_ids.is_empty() {
+            if !recurring_id_rows.is_empty() {
                 let sql = format!(
                     "DELETE FROM recurring_positions WHERE recurring_id IN ({})",
-                    qmarks(recurring_ids.len()),
+                    qmarks(recurring_id_rows.len()),
                 );
                 let mut q = sqlx::query(&sql);
-                for rid in &recurring_ids { q = q.bind(rid); }
+                for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE recurring_positions for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
                     "DELETE FROM recurring_invoices WHERE id IN ({})",
-                    qmarks(recurring_ids.len()),
+                    qmarks(recurring_id_rows.len()),
                 );
                 let mut q = sqlx::query(&sql);
-                for rid in &recurring_ids { q = q.bind(rid); }
+                for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE recurring_invoices for customer {id}: {e}"),
                 ))?;
             }
 
-            if !invoice_ids.is_empty() {
+            if !invoice_id_rows.is_empty() {
                 let sql = format!(
                     "DELETE FROM payments WHERE invoice_id IN ({})",
-                    qmarks(invoice_ids.len()),
+                    qmarks(invoice_id_rows.len()),
                 );
                 let mut q = sqlx::query(&sql);
-                for iid in &invoice_ids { q = q.bind(iid); }
+                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE payments for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
                     "DELETE FROM positions WHERE invoice_id IN ({})",
-                    qmarks(invoice_ids.len()),
+                    qmarks(invoice_id_rows.len()),
                 );
                 let mut q = sqlx::query(&sql);
-                for iid in &invoice_ids { q = q.bind(iid); }
+                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE positions for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
                     "DELETE FROM invoices WHERE id IN ({})",
-                    qmarks(invoice_ids.len()),
+                    qmarks(invoice_id_rows.len()),
                 );
                 let mut q = sqlx::query(&sql);
-                for iid in &invoice_ids { q = q.bind(iid); }
+                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE invoices for customer {id}: {e}"),
                 ))?;
             }
 
             sqlx::query("DELETE FROM sepa_mandates WHERE customer_id = ?")
-                .bind(id).execute(&mut **tx).await
+                .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE sepa_mandates for customer {id}: {e}",
                 )))?;
 
             sqlx::query("DELETE FROM contacts WHERE customer_id = ?")
-                .bind(id).execute(&mut **tx).await
+                .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE contacts for customer {id}: {e}",
                 )))?;
 
             sqlx::query("DELETE FROM customers WHERE id = ?")
-                .bind(id).execute(&mut **tx).await
+                .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE customer {id}: {e}",
                 )))?;

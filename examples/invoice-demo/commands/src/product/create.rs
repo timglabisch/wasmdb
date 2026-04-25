@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateProduct {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub sku: String,
     pub name: String,
     pub description: String,
@@ -26,7 +28,7 @@ impl Command for CreateProduct {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("sku", &self.sku),
             p_str("name", &self.name),
             p_str("description", &self.description),
@@ -60,7 +62,7 @@ mod server_impl {
             sqlx::query(
                 "INSERT INTO products (id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .bind(&self.sku)
                 .bind(&self.name)
                 .bind(&self.description)

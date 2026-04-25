@@ -1,26 +1,27 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "invoices")]
 pub struct Invoice {
     #[pk]
-    pub id: i64,
-    pub customer_id: i64,
+    pub id: Uuid,
+    pub customer_id: Uuid,
     pub number: String,
     pub status: String,
     pub date_issued: String,
     pub date_due: String,
     pub notes: String,
     pub doc_type: String,
-    pub parent_id: i64,
+    pub parent_id: Uuid,
     pub service_date: String,
     pub cash_allowance_pct: i64,
     pub cash_allowance_days: i64,
     pub discount_pct: i64,
     pub payment_method: String,
-    pub sepa_mandate_id: i64,
+    pub sepa_mandate_id: Uuid,
     pub currency: String,
     pub language: String,
     pub project_ref: String,
@@ -52,21 +53,21 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Invoice>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(Invoice {
-                id: r.try_get("id")?,
-                customer_id: r.try_get("customer_id")?,
+                id: try_uuid(&r, "id")?,
+                customer_id: try_uuid(&r, "customer_id")?,
                 number: r.try_get("number")?,
                 status: r.try_get("status")?,
                 date_issued: r.try_get("date_issued")?,
                 date_due: r.try_get("date_due")?,
                 notes: r.try_get("notes")?,
                 doc_type: r.try_get("doc_type")?,
-                parent_id: r.try_get("parent_id")?,
+                parent_id: try_uuid(&r, "parent_id")?,
                 service_date: r.try_get("service_date")?,
                 cash_allowance_pct: r.try_get("cash_allowance_pct")?,
                 cash_allowance_days: r.try_get("cash_allowance_days")?,
                 discount_pct: r.try_get("discount_pct")?,
                 payment_method: r.try_get("payment_method")?,
-                sepa_mandate_id: r.try_get("sepa_mandate_id")?,
+                sepa_mandate_id: try_uuid(&r, "sepa_mandate_id")?,
                 currency: r.try_get("currency")?,
                 language: r.try_get("language")?,
                 project_ref: r.try_get("project_ref")?,

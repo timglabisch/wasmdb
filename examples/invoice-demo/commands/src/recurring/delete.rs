@@ -1,16 +1,18 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int};
+use crate::helpers::{execute_sql, p_uuid};
 
 /// Cascades recurring_positions + recurring_invoice atomically.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteRecurring {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
 }
 
 impl Command for DeleteRecurring {
@@ -20,10 +22,10 @@ impl Command for DeleteRecurring {
     ) -> Result<ZSet, CommandError> {
         let id = self.id;
         let mut acc = ZSet::new();
-        let p = Params::from([p_int("rid", id)]);
+        let p = Params::from([p_uuid("rid", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM recurring_positions WHERE recurring_id = :rid", p)?);
-        let p = Params::from([p_int("id", id)]);
+        let p = Params::from([p_uuid("id", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM recurring_invoices WHERE id = :id", p)?);
         Ok(acc)
@@ -45,7 +47,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query("DELETE FROM recurring_positions WHERE recurring_id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
@@ -53,7 +55,7 @@ mod server_impl {
                     self.id,
                 )))?;
             sqlx::query("DELETE FROM recurring_invoices WHERE id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

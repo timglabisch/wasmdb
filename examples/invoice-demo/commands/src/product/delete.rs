@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int};
+use crate::helpers::{execute_sql, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteProduct {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
 }
 
 impl Command for DeleteProduct {
@@ -17,7 +19,7 @@ impl Command for DeleteProduct {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([p_int("id", self.id)]);
+        let params = Params::from([p_uuid("id", &self.id)]);
         execute_sql(db, "DELETE FROM products WHERE products.id = :id", params)
     }
 }
@@ -37,7 +39,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query("DELETE FROM products WHERE id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

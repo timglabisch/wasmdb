@@ -1,6 +1,6 @@
 use database::{Database, MutResult};
 use sql_engine::execute::{Params, ParamValue};
-use sql_engine::storage::CellValue;
+use sql_engine::storage::{CellValue, Uuid};
 use sync::command::CommandError;
 use sync::zset::ZSet;
 
@@ -25,6 +25,32 @@ pub fn p_int(k: &str, v: i64) -> (String, ParamValue) {
 
 pub fn p_str(k: &str, v: &str) -> (String, ParamValue) {
     (k.into(), ParamValue::Text(v.to_string()))
+}
+
+pub fn p_uuid(k: &str, v: &Uuid) -> (String, ParamValue) {
+    (k.into(), ParamValue::Uuid(v.0))
+}
+
+pub fn read_uuid_col(
+    db: &mut Database,
+    sql: &str,
+    params: Params,
+) -> Result<Vec<Uuid>, CommandError> {
+    let cols = db
+        .execute_with_params(sql, params)
+        .map_err(|e| CommandError::ExecutionFailed(e.to_string()))?;
+    Ok(cols
+        .into_iter()
+        .next()
+        .map(|col| {
+            col.into_iter()
+                .filter_map(|v| match v {
+                    CellValue::Uuid(b) => Some(Uuid(b)),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 pub fn read_i64_col(

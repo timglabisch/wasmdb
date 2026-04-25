@@ -1,16 +1,19 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateSepaMandate {
-    pub id: i64,
-    pub customer_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub customer_id: Uuid,
     pub mandate_ref: String,
     pub iban: String,
     pub bic: String,
@@ -24,8 +27,8 @@ impl Command for CreateSepaMandate {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
-            p_int("customer_id", self.customer_id),
+            p_uuid("id", &self.id),
+            p_uuid("customer_id", &self.customer_id),
             p_str("mandate_ref", &self.mandate_ref),
             p_str("iban", &self.iban),
             p_str("bic", &self.bic),
@@ -57,8 +60,8 @@ mod server_impl {
             sqlx::query(
                 "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                .bind(self.id)
-                .bind(self.customer_id)
+                .bind(&self.id.0[..])
+                .bind(&self.customer_id.0[..])
                 .bind(&self.mandate_ref)
                 .bind(&self.iban)
                 .bind(&self.bic)

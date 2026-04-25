@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use sql_engine::schema::{IndexSchema, IndexType, TableSchema};
-use super::cols::{i64_col, str_col};
+use super::cols::{i64_col, str_col, uuid_col};
 
 pub fn register(schemas: &mut HashMap<String, TableSchema>) {
     schemas.insert("recurring_invoices".into(), TableSchema {
         name: "recurring_invoices".into(),
         columns: vec![
-            i64_col("id"), i64_col("customer_id"),
+            uuid_col("id"), uuid_col("customer_id"),
             str_col("template_name"),
             str_col("interval_unit"), i64_col("interval_value"),
             str_col("next_run"), str_col("last_run"),
@@ -23,7 +23,7 @@ pub fn register(schemas: &mut HashMap<String, TableSchema>) {
     schemas.insert("recurring_positions".into(), TableSchema {
         name: "recurring_positions".into(),
         columns: vec![
-            i64_col("id"), i64_col("recurring_id"), i64_col("position_nr"),
+            uuid_col("id"), uuid_col("recurring_id"), i64_col("position_nr"),
             str_col("description"),
             i64_col("quantity"), i64_col("unit_price"), i64_col("tax_rate"),
             str_col("unit"), str_col("item_number"),

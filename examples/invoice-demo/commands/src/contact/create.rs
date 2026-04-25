@@ -1,16 +1,19 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateContact {
-    pub id: i64,
-    pub customer_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub customer_id: Uuid,
     pub name: String,
     pub email: String,
     pub phone: String,
@@ -24,8 +27,8 @@ impl Command for CreateContact {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
-            p_int("customer_id", self.customer_id),
+            p_uuid("id", &self.id),
+            p_uuid("customer_id", &self.customer_id),
             p_str("name", &self.name),
             p_str("email", &self.email),
             p_str("phone", &self.phone),
@@ -57,8 +60,8 @@ mod server_impl {
                 "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
-            .bind(self.id)
-            .bind(self.customer_id)
+            .bind(&self.id.0[..])
+            .bind(&self.customer_id.0[..])
             .bind(&self.name)
             .bind(&self.email)
             .bind(&self.phone)

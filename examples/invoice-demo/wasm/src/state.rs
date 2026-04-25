@@ -19,7 +19,6 @@ use sync_client::client::SyncClient;
 thread_local! {
     static CLIENT: RefCell<Option<SyncClient<InvoiceCommand>>> = RefCell::new(None);
     pub(crate) static DEFAULT_STREAM_ID: RefCell<Option<u64>> = RefCell::new(None);
-    pub(crate) static ID_COUNTER: RefCell<i64> = RefCell::new(0);
 }
 
 pub(crate) fn install_client(client: SyncClient<InvoiceCommand>) {

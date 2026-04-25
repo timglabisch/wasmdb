@@ -6,3 +6,4 @@ pub fn col(name: &str, ty: DataType) -> ColumnSchema {
 
 pub fn str_col(name: &str) -> ColumnSchema { col(name, DataType::String) }
 pub fn i64_col(name: &str) -> ColumnSchema { col(name, DataType::I64) }
+pub fn uuid_col(name: &str) -> ColumnSchema { col(name, DataType::Uuid) }

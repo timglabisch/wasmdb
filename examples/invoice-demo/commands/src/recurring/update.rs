@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateRecurring {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub template_name: String,
     pub interval_unit: String,
     pub interval_value: i64,
@@ -25,7 +27,7 @@ impl Command for UpdateRecurring {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("template_name", &self.template_name),
             p_str("interval_unit", &self.interval_unit),
             p_int("interval_value", self.interval_value),
@@ -64,7 +66,7 @@ mod server_impl {
                 .bind(self.enabled)
                 .bind(&self.status_template)
                 .bind(&self.notes_template)
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

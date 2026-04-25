@@ -1,16 +1,19 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct AddRecurringPosition {
-    pub id: i64,
-    pub recurring_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub recurring_id: Uuid,
     pub position_nr: i64,
     pub description: String,
     pub quantity: i64,
@@ -27,8 +30,8 @@ impl Command for AddRecurringPosition {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
-            p_int("recurring_id", self.recurring_id),
+            p_uuid("id", &self.id),
+            p_uuid("recurring_id", &self.recurring_id),
             p_int("position_nr", self.position_nr),
             p_str("description", &self.description),
             p_int("quantity", self.quantity),
@@ -63,8 +66,8 @@ mod server_impl {
                 "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
-                .bind(self.id)
-                .bind(self.recurring_id)
+                .bind(&self.id.0[..])
+                .bind(&self.recurring_id.0[..])
                 .bind(self.position_nr)
                 .bind(&self.description)
                 .bind(self.quantity)

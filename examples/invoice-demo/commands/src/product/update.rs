@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateProduct {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub sku: String,
     pub name: String,
     pub description: String,
@@ -26,7 +28,7 @@ impl Command for UpdateProduct {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("sku", &self.sku),
             p_str("name", &self.name),
             p_str("description", &self.description),
@@ -66,7 +68,7 @@ mod server_impl {
                 .bind(self.tax_rate)
                 .bind(self.cost_price)
                 .bind(self.active)
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

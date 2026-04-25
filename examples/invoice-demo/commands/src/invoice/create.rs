@@ -1,5 +1,6 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sync::command::{Command, CommandError};
@@ -9,21 +10,25 @@ use super::params::invoice_params;
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateInvoice {
-    pub id: i64,
-    pub customer_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub customer_id: Uuid,
     pub number: String,
     pub status: String,
     pub date_issued: String,
     pub date_due: String,
     pub notes: String,
     pub doc_type: String,
-    pub parent_id: i64,
+    #[ts(type = "string")]
+    pub parent_id: Uuid,
     pub service_date: String,
     pub cash_allowance_pct: i64,
     pub cash_allowance_days: i64,
     pub discount_pct: i64,
     pub payment_method: String,
-    pub sepa_mandate_id: i64,
+    #[ts(type = "string")]
+    pub sepa_mandate_id: Uuid,
     pub currency: String,
     pub language: String,
     pub project_ref: String,
@@ -44,11 +49,11 @@ impl Command for CreateInvoice {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = invoice_params(
-            self.id, Some(self.customer_id),
+            &self.id, Some(&self.customer_id),
             &self.number, &self.status, &self.date_issued, &self.date_due, &self.notes,
-            &self.doc_type, self.parent_id, &self.service_date,
+            &self.doc_type, &self.parent_id, &self.service_date,
             self.cash_allowance_pct, self.cash_allowance_days, self.discount_pct,
-            &self.payment_method, self.sepa_mandate_id, &self.currency, &self.language,
+            &self.payment_method, &self.sepa_mandate_id, &self.currency, &self.language,
             &self.project_ref, &self.external_id,
             &self.billing_street, &self.billing_zip, &self.billing_city, &self.billing_country,
             &self.shipping_street, &self.shipping_zip, &self.shipping_city, &self.shipping_country,
@@ -78,21 +83,21 @@ mod server_impl {
                 "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
-                .bind(self.id)
-                .bind(self.customer_id)
+                .bind(&self.id.0[..])
+                .bind(&self.customer_id.0[..])
                 .bind(&self.number)
                 .bind(&self.status)
                 .bind(&self.date_issued)
                 .bind(&self.date_due)
                 .bind(&self.notes)
                 .bind(&self.doc_type)
-                .bind(self.parent_id)
+                .bind(&self.parent_id.0[..])
                 .bind(&self.service_date)
                 .bind(self.cash_allowance_pct)
                 .bind(self.cash_allowance_days)
                 .bind(self.discount_pct)
                 .bind(&self.payment_method)
-                .bind(self.sepa_mandate_id)
+                .bind(&self.sepa_mandate_id.0[..])
                 .bind(&self.currency)
                 .bind(&self.language)
                 .bind(&self.project_ref)

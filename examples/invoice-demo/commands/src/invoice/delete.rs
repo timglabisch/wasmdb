@@ -1,16 +1,18 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int};
+use crate::helpers::{execute_sql, p_uuid};
 
 /// Cascades positions + payments + invoice — all in one atomic ZSet.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteInvoice {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
 }
 
 impl Command for DeleteInvoice {
@@ -20,13 +22,13 @@ impl Command for DeleteInvoice {
     ) -> Result<ZSet, CommandError> {
         let id = self.id;
         let mut acc = ZSet::new();
-        let p = Params::from([p_int("iid", id)]);
+        let p = Params::from([p_uuid("iid", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM payments WHERE invoice_id = :iid", p)?);
-        let p = Params::from([p_int("iid", id)]);
+        let p = Params::from([p_uuid("iid", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM positions WHERE invoice_id = :iid", p)?);
-        let p = Params::from([p_int("id", id)]);
+        let p = Params::from([p_uuid("id", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM invoices WHERE id = :id", p)?);
         Ok(acc)
@@ -48,7 +50,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query("DELETE FROM payments WHERE invoice_id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
@@ -56,7 +58,7 @@ mod server_impl {
                     self.id,
                 )))?;
             sqlx::query("DELETE FROM positions WHERE invoice_id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
@@ -64,7 +66,7 @@ mod server_impl {
                     self.id,
                 )))?;
             sqlx::query("DELETE FROM invoices WHERE id = ?")
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

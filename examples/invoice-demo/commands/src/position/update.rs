@@ -1,20 +1,23 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdatePosition {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub description: String,
     pub quantity: i64,
     pub unit_price: i64,
     pub tax_rate: i64,
-    pub product_id: i64,
+    #[ts(type = "string")]
+    pub product_id: Uuid,
     pub item_number: String,
     pub unit: String,
     pub discount_pct: i64,
@@ -28,12 +31,12 @@ impl Command for UpdatePosition {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("description", &self.description),
             p_int("quantity", self.quantity),
             p_int("unit_price", self.unit_price),
             p_int("tax_rate", self.tax_rate),
-            p_int("product_id", self.product_id),
+            p_uuid("product_id", &self.product_id),
             p_str("item_number", &self.item_number),
             p_str("unit", &self.unit),
             p_int("discount_pct", self.discount_pct),
@@ -75,13 +78,13 @@ mod server_impl {
                 .bind(self.quantity)
                 .bind(self.unit_price)
                 .bind(self.tax_rate)
-                .bind(self.product_id)
+                .bind(&self.product_id.0[..])
                 .bind(&self.item_number)
                 .bind(&self.unit)
                 .bind(self.discount_pct)
                 .bind(self.cost_price)
                 .bind(&self.position_type)
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(

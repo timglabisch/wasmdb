@@ -1,18 +1,21 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct LogActivity {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub timestamp: String,
     pub entity_type: String,
-    pub entity_id: i64,
+    #[ts(type = "string")]
+    pub entity_id: Uuid,
     pub action: String,
     pub actor: String,
     pub detail: String,
@@ -24,10 +27,10 @@ impl Command for LogActivity {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("timestamp", &self.timestamp),
             p_str("entity_type", &self.entity_type),
-            p_int("entity_id", self.entity_id),
+            p_uuid("entity_id", &self.entity_id),
             p_str("action", &self.action),
             p_str("actor", &self.actor),
             p_str("detail", &self.detail),
@@ -57,10 +60,10 @@ mod server_impl {
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
-            .bind(self.id)
+            .bind(&self.id.0[..])
             .bind(&self.timestamp)
             .bind(&self.entity_type)
-            .bind(self.entity_id)
+            .bind(&self.entity_id.0[..])
             .bind(&self.action)
             .bind(&self.actor)
             .bind(&self.detail)

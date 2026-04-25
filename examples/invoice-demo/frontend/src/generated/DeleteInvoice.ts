@@ -3,4 +3,4 @@
 /**
  * Cascades positions + payments + invoice — all in one atomic ZSet.
  */
-export type DeleteInvoice = { id: number, };
+export type DeleteInvoice = { id: string, };

@@ -1,13 +1,14 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "recurring_invoices")]
 pub struct RecurringInvoice {
     #[pk]
-    pub id: i64,
-    pub customer_id: i64,
+    pub id: Uuid,
+    pub customer_id: Uuid,
     pub template_name: String,
     pub interval_unit: String,
     pub interval_value: i64,
@@ -32,8 +33,8 @@ async fn all(ctx: &AppCtx) -> Result<Vec<RecurringInvoice>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(RecurringInvoice {
-                id: r.try_get("id")?,
-                customer_id: r.try_get("customer_id")?,
+                id: try_uuid(&r, "id")?,
+                customer_id: try_uuid(&r, "customer_id")?,
                 template_name: r.try_get("template_name")?,
                 interval_unit: r.try_get("interval_unit")?,
                 interval_value: r.try_get("interval_value")?,

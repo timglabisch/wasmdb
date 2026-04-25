@@ -1,13 +1,14 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "sepa_mandates")]
 pub struct SepaMandate {
     #[pk]
-    pub id: i64,
-    pub customer_id: i64,
+    pub id: Uuid,
+    pub customer_id: Uuid,
     pub mandate_ref: String,
     pub iban: String,
     pub bic: String,
@@ -29,8 +30,8 @@ async fn all(ctx: &AppCtx) -> Result<Vec<SepaMandate>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(SepaMandate {
-                id: r.try_get("id")?,
-                customer_id: r.try_get("customer_id")?,
+                id: try_uuid(&r, "id")?,
+                customer_id: try_uuid(&r, "customer_id")?,
                 mandate_ref: r.try_get("mandate_ref")?,
                 iban: r.try_get("iban")?,
                 bic: r.try_get("bic")?,

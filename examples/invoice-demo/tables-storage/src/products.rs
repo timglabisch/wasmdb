@@ -1,12 +1,13 @@
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "products")]
 pub struct Product {
     #[pk]
-    pub id: i64,
+    pub id: Uuid,
     pub sku: String,
     pub name: String,
     pub description: String,
@@ -30,7 +31,7 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Product>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(Product {
-                id: r.try_get("id")?,
+                id: try_uuid(&r, "id")?,
                 sku: r.try_get("sku")?,
                 name: r.try_get("name")?,
                 description: r.try_get("description")?,

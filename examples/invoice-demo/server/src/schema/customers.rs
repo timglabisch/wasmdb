@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use sql_engine::schema::{IndexSchema, IndexType, TableSchema};
-use super::cols::{i64_col, str_col};
+use super::cols::{i64_col, str_col, uuid_col};
 
 pub fn register(schemas: &mut HashMap<String, TableSchema>) {
     schemas.insert("customers".into(), TableSchema {
         name: "customers".into(),
         columns: vec![
-            i64_col("id"),
+            uuid_col("id"),
             str_col("name"), str_col("email"), str_col("created_at"),
             str_col("company_type"), str_col("tax_id"), str_col("vat_id"),
             i64_col("payment_terms_days"), i64_col("default_discount_pct"),
@@ -22,7 +22,7 @@ pub fn register(schemas: &mut HashMap<String, TableSchema>) {
     schemas.insert("contacts".into(), TableSchema {
         name: "contacts".into(),
         columns: vec![
-            i64_col("id"), i64_col("customer_id"),
+            uuid_col("id"), uuid_col("customer_id"),
             str_col("name"), str_col("email"), str_col("phone"), str_col("role"),
             i64_col("is_primary"),
         ],

@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
-sql-engine = { path = "../../../crates/sql-engine" }
+sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde"] }
 sql-parser = { path = "../../../crates/sql-parser" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

@@ -1,15 +1,17 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateCustomer {
-    pub id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
     pub name: String,
     pub email: String,
     pub created_at: String,
@@ -37,7 +39,7 @@ impl Command for CreateCustomer {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
+            p_uuid("id", &self.id),
             p_str("name", &self.name),
             p_str("email", &self.email),
             p_str("created_at", &self.created_at),
@@ -83,7 +85,7 @@ mod server_impl {
                 "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
-                .bind(self.id)
+                .bind(&self.id.0[..])
                 .bind(&self.name)
                 .bind(&self.email)
                 .bind(&self.created_at)

@@ -29,7 +29,7 @@ fn customer_dbtable_schema_matches_row() {
     assert_eq!(
         first,
         vec![
-            ("id", DataType::I64, false),
+            ("id", DataType::Uuid, false),
             ("name", DataType::String, false),
             ("email", DataType::String, false),
         ],

@@ -66,7 +66,6 @@ export interface WasmSyncApi {
    * exhausted. Call in a loop until it returns `null` to finish the cycle.
    */
   next_dirty(): DirtyNotification | null;
-  next_id(): number;
 }
 
 // ── Module-level wasm ref + ready-state ───────────────────────────
@@ -174,8 +173,16 @@ export function flushStream(streamId: number): Promise<void> {
   return wasm().flush_stream(streamId);
 }
 
-export function nextId(): number {
-  return wasm().next_id();
+/**
+ * Generate a fresh UUIDv4 as the canonical hyphenated lowercase string.
+ *
+ * Uses the browser-native `crypto.randomUUID()` (no wasm round-trip) — the
+ * Rust side mirrors this with `Uuid::new_v4()` for server/shared paths.
+ * Both flow into the same `BINARY(16)` storage; ts-rs serializes the
+ * shared `Uuid` newtype as a string so command JSON wires through cleanly.
+ */
+export function nextId(): string {
+  return crypto.randomUUID();
 }
 
 // ── React hooks ───────────────────────────────────────────────────

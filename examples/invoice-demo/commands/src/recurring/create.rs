@@ -1,16 +1,19 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateRecurring {
-    pub id: i64,
-    pub customer_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub customer_id: Uuid,
     pub template_name: String,
     pub interval_unit: String,
     pub interval_value: i64,
@@ -25,8 +28,8 @@ impl Command for CreateRecurring {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let params = Params::from([
-            p_int("id", self.id),
-            p_int("customer_id", self.customer_id),
+            p_uuid("id", &self.id),
+            p_uuid("customer_id", &self.customer_id),
             p_str("template_name", &self.template_name),
             p_str("interval_unit", &self.interval_unit),
             p_int("interval_value", self.interval_value),
@@ -61,8 +64,8 @@ mod server_impl {
                 "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
-                .bind(self.id)
-                .bind(self.customer_id)
+                .bind(&self.id.0[..])
+                .bind(&self.customer_id.0[..])
                 .bind(&self.template_name)
                 .bind(&self.interval_unit)
                 .bind(self.interval_value)

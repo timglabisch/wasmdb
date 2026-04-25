@@ -7,15 +7,16 @@
 //! `server/src/schema/customers.rs` exactly — Phase-0 upsert ships cells
 //! in this order and mismatches silently corrupt the local table.
 
+use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::AppCtx;
+use crate::{try_uuid, AppCtx};
 
 #[row(table = "customers")]
 pub struct Customer {
     #[pk]
-    pub id: i64,
+    pub id: Uuid,
     pub name: String,
     pub email: String,
     pub created_at: String,
@@ -55,7 +56,7 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Customer>, sqlx::Error> {
     rows.into_iter()
         .map(|r| {
             Ok(Customer {
-                id: r.try_get("id")?,
+                id: try_uuid(&r, "id")?,
                 name: r.try_get("name")?,
                 email: r.try_get("email")?,
                 created_at: r.try_get("created_at")?,

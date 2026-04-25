@@ -18,7 +18,7 @@ use sync_client::client::SyncClient;
 use wasm_bindgen::prelude::*;
 
 use crate::debug::{bump_notification_count, log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
-use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID, ID_COUNTER};
+use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID};
 use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle, STREAM_HANDLES};
 
 #[wasm_bindgen]
@@ -48,15 +48,6 @@ pub fn init() {
         sh.borrow_mut().insert(stream_id_val, StreamHandle::new(1, 0, 0));
     });
     DEFAULT_STREAM_ID.with(|d| *d.borrow_mut() = Some(stream_id_val));
-}
-
-#[wasm_bindgen]
-pub fn next_id() -> f64 {
-    ID_COUNTER.with(|c| {
-        let mut val = c.borrow_mut();
-        *val += 1;
-        *val as f64
-    })
 }
 
 #[wasm_bindgen]

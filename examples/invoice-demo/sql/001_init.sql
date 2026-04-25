@@ -19,7 +19,7 @@ DROP TABLE IF EXISTS contacts;
 DROP TABLE IF EXISTS customers;
 
 CREATE TABLE customers (
-    id                   BIGINT       NOT NULL,
+    id                   BINARY(16)   NOT NULL,
     name                 VARCHAR(255) NOT NULL,
     email                VARCHAR(255) NOT NULL,
     created_at           VARCHAR(64)  NOT NULL,
@@ -43,8 +43,8 @@ CREATE TABLE customers (
 );
 
 CREATE TABLE contacts (
-    id          BIGINT       NOT NULL,
-    customer_id BIGINT       NOT NULL,
+    id          BINARY(16)   NOT NULL,
+    customer_id BINARY(16)   NOT NULL,
     name        VARCHAR(255) NOT NULL,
     email       VARCHAR(255) NOT NULL,
     phone       VARCHAR(64)  NOT NULL,
@@ -55,21 +55,21 @@ CREATE TABLE contacts (
 );
 
 CREATE TABLE invoices (
-    id                   BIGINT       NOT NULL,
-    customer_id          BIGINT       NOT NULL,
+    id                   BINARY(16)   NOT NULL,
+    customer_id          BINARY(16)   NOT NULL,
     number               VARCHAR(64)  NOT NULL,
     status               VARCHAR(32)  NOT NULL,
     date_issued          VARCHAR(32)  NOT NULL,
     date_due             VARCHAR(32)  NOT NULL,
     notes                TEXT         NOT NULL,
     doc_type             VARCHAR(32)  NOT NULL,
-    parent_id            BIGINT       NOT NULL,
+    parent_id            BINARY(16)   NOT NULL,
     service_date         VARCHAR(32)  NOT NULL,
     cash_allowance_pct   BIGINT       NOT NULL,
     cash_allowance_days  BIGINT       NOT NULL,
     discount_pct         BIGINT       NOT NULL,
     payment_method       VARCHAR(32)  NOT NULL,
-    sepa_mandate_id      BIGINT       NOT NULL,
+    sepa_mandate_id      BINARY(16)   NOT NULL,
     currency             VARCHAR(8)   NOT NULL,
     language             VARCHAR(8)   NOT NULL,
     project_ref          VARCHAR(128) NOT NULL,
@@ -87,14 +87,14 @@ CREATE TABLE invoices (
 );
 
 CREATE TABLE positions (
-    id            BIGINT       NOT NULL,
-    invoice_id    BIGINT       NOT NULL,
+    id            BINARY(16)   NOT NULL,
+    invoice_id    BINARY(16)   NOT NULL,
     position_nr   BIGINT       NOT NULL,
     description   TEXT         NOT NULL,
     quantity      BIGINT       NOT NULL,
     unit_price    BIGINT       NOT NULL,
     tax_rate      BIGINT       NOT NULL,
-    product_id    BIGINT       NOT NULL,
+    product_id    BINARY(16)   NOT NULL,
     item_number   VARCHAR(64)  NOT NULL,
     unit          VARCHAR(32)  NOT NULL,
     discount_pct  BIGINT       NOT NULL,
@@ -105,8 +105,8 @@ CREATE TABLE positions (
 );
 
 CREATE TABLE payments (
-    id         BIGINT       NOT NULL,
-    invoice_id BIGINT       NOT NULL,
+    id         BINARY(16)   NOT NULL,
+    invoice_id BINARY(16)   NOT NULL,
     amount     BIGINT       NOT NULL,
     paid_at    VARCHAR(32)  NOT NULL,
     method     VARCHAR(32)  NOT NULL,
@@ -117,7 +117,7 @@ CREATE TABLE payments (
 );
 
 CREATE TABLE products (
-    id          BIGINT       NOT NULL,
+    id          BINARY(16)   NOT NULL,
     sku         VARCHAR(64)  NOT NULL,
     name        VARCHAR(255) NOT NULL,
     description TEXT         NOT NULL,
@@ -130,8 +130,8 @@ CREATE TABLE products (
 );
 
 CREATE TABLE sepa_mandates (
-    id          BIGINT       NOT NULL,
-    customer_id BIGINT       NOT NULL,
+    id          BINARY(16)   NOT NULL,
+    customer_id BINARY(16)   NOT NULL,
     mandate_ref VARCHAR(64)  NOT NULL,
     iban        VARCHAR(64)  NOT NULL,
     bic         VARCHAR(32)  NOT NULL,
@@ -143,8 +143,8 @@ CREATE TABLE sepa_mandates (
 );
 
 CREATE TABLE recurring_invoices (
-    id              BIGINT       NOT NULL,
-    customer_id     BIGINT       NOT NULL,
+    id              BINARY(16)   NOT NULL,
+    customer_id     BINARY(16)   NOT NULL,
     template_name   VARCHAR(255) NOT NULL,
     interval_unit   VARCHAR(16)  NOT NULL,
     interval_value  BIGINT       NOT NULL,
@@ -158,8 +158,8 @@ CREATE TABLE recurring_invoices (
 );
 
 CREATE TABLE recurring_positions (
-    id            BIGINT       NOT NULL,
-    recurring_id  BIGINT       NOT NULL,
+    id            BINARY(16)   NOT NULL,
+    recurring_id  BINARY(16)   NOT NULL,
     position_nr   BIGINT       NOT NULL,
     description   TEXT         NOT NULL,
     quantity      BIGINT       NOT NULL,
@@ -173,10 +173,10 @@ CREATE TABLE recurring_positions (
 );
 
 CREATE TABLE activity_log (
-    id          BIGINT       NOT NULL,
+    id          BINARY(16)   NOT NULL,
     timestamp   VARCHAR(32)  NOT NULL,
     entity_type VARCHAR(64)  NOT NULL,
-    entity_id   BIGINT       NOT NULL,
+    entity_id   BINARY(16)   NOT NULL,
     action      VARCHAR(64)  NOT NULL,
     actor       VARCHAR(64)  NOT NULL,
     detail      TEXT         NOT NULL,

@@ -3,4 +3,4 @@
 /**
  * Cascades recurring_positions + recurring_invoice atomically.
  */
-export type DeleteRecurring = { id: bigint, };
+export type DeleteRecurring = { id: string, };

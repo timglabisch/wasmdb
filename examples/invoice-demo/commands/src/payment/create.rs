@@ -1,16 +1,19 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use serde::{Serialize, Deserialize};
+use sql_engine::storage::Uuid;
 use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreatePayment {
-    pub id: i64,
-    pub invoice_id: i64,
+    #[ts(type = "string")]
+    pub id: Uuid,
+    #[ts(type = "string")]
+    pub invoice_id: Uuid,
     pub amount: i64,
     pub paid_at: String,
     pub method: String,
@@ -25,8 +28,8 @@ impl Command for CreatePayment {
             "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
              VALUES (:id, :invoice_id, :amount, :paid_at, :method, :reference, :note)",
             Params::from([
-                p_int("id", self.id),
-                p_int("invoice_id", self.invoice_id),
+                p_uuid("id", &self.id),
+                p_uuid("invoice_id", &self.invoice_id),
                 p_int("amount", self.amount),
                 p_str("paid_at", &self.paid_at),
                 p_str("method", &self.method),
@@ -68,8 +71,8 @@ mod server_impl {
                  - COALESCE((SELECT SUM(amount)              FROM payments  WHERE invoice_id=?), 0) \
                  AS SIGNED)",
             )
-            .bind(self.invoice_id)
-            .bind(self.invoice_id)
+            .bind(&self.invoice_id.0[..])
+            .bind(&self.invoice_id.0[..])
             .fetch_one(&mut **tx)
             .await
             .map_err(|e| CommandError::ExecutionFailed(format!(
@@ -88,8 +91,8 @@ mod server_impl {
                 "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
-            .bind(self.id)
-            .bind(self.invoice_id)
+            .bind(&self.id.0[..])
+            .bind(&self.invoice_id.0[..])
             .bind(self.amount)
             .bind(&self.paid_at)
             .bind(&self.method)
