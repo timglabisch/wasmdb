@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateProduct {
@@ -64,8 +64,9 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO products (id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                "INSERT INTO products (tenant_id, id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.sku)
                 .bind(&self.name)

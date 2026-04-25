@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid, read_i64_col, read_str_col, read_uuid_col};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use crate::invoice::params::invoice_params;
 
 /// Creates a new invoice with positions copied from the recurring template.
@@ -155,8 +155,9 @@ mod server_impl {
             let (customer_id_bytes, status_template, notes_template): (Vec<u8>, String, String) =
                 sqlx::query_as(
                     "SELECT customer_id, status_template, notes_template \
-                     FROM recurring_invoices WHERE id = ?",
+                     FROM recurring_invoices WHERE tenant_id = ? AND id = ?",
                 )
+                .bind(DEMO_TENANT_ID)
                 .bind(&recurring_id.0[..])
                 .fetch_optional(&mut **tx)
                 .await
@@ -182,8 +183,9 @@ mod server_impl {
             }
             let positions: Vec<PosRow> = sqlx::query_as(
                 "SELECT description, quantity, unit_price, tax_rate, unit, item_number, discount_pct \
-                 FROM recurring_positions WHERE recurring_id = ? ORDER BY position_nr",
+                 FROM recurring_positions WHERE tenant_id = ? AND recurring_id = ? ORDER BY position_nr",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&recurring_id.0[..])
             .fetch_all(&mut **tx)
             .await
@@ -201,9 +203,10 @@ mod server_impl {
             let nil_uuid = [0u8; 16];
 
             sqlx::query(
-                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&new_invoice_id.0[..])
             .bind(customer_id_bytes.as_slice())
             .bind(&self.new_number)
@@ -240,9 +243,10 @@ mod server_impl {
             for (i, pid) in self.position_ids.iter().enumerate() {
                 let pos = &positions[i];
                 sqlx::query(
-                    "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
+                .bind(DEMO_TENANT_ID)
                 .bind(&pid.0[..])
                 .bind(&new_invoice_id.0[..])
                 .bind((i as i64 + 1) * 1000)
@@ -264,10 +268,11 @@ mod server_impl {
             }
 
             sqlx::query(
-                "UPDATE recurring_invoices SET last_run = ?, next_run = ? WHERE id = ?",
+                "UPDATE recurring_invoices SET last_run = ?, next_run = ? WHERE tenant_id = ? AND id = ?",
             )
             .bind(&self.issue_date)
             .bind(&self.new_next_run)
+            .bind(DEMO_TENANT_ID)
             .bind(&recurring_id.0[..])
             .execute(&mut **tx)
             .await

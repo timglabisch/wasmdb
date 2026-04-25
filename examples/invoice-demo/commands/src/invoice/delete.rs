@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_uuid};
+use crate::helpers::{execute_sql, p_uuid, DEMO_TENANT_ID};
 
 /// Cascades positions + payments + invoice — all in one atomic ZSet.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
@@ -49,7 +49,8 @@ mod server_impl {
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM payments WHERE invoice_id = ?")
+            sqlx::query("DELETE FROM payments WHERE tenant_id = ? AND invoice_id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
@@ -57,7 +58,8 @@ mod server_impl {
                     "DELETE payments for invoice {}: {e}",
                     self.id,
                 )))?;
-            sqlx::query("DELETE FROM positions WHERE invoice_id = ?")
+            sqlx::query("DELETE FROM positions WHERE tenant_id = ? AND invoice_id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
@@ -65,7 +67,8 @@ mod server_impl {
                     "DELETE positions for invoice {}: {e}",
                     self.id,
                 )))?;
-            sqlx::query("DELETE FROM invoices WHERE id = ?")
+            sqlx::query("DELETE FROM invoices WHERE tenant_id = ? AND id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

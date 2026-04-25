@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateContact {
@@ -55,13 +55,14 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "UPDATE contacts SET name = ?, email = ?, phone = ?, role = ?, is_primary = ? \
-                 WHERE id = ?",
+                 WHERE tenant_id = ? AND id = ?",
             )
             .bind(&self.name)
             .bind(&self.email)
             .bind(&self.phone)
             .bind(&self.role)
             .bind(self.is_primary)
+            .bind(DEMO_TENANT_ID)
             .bind(&self.id.0[..])
             .execute(&mut **tx)
             .await

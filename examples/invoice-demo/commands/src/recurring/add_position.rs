@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct AddRecurringPosition {
@@ -68,9 +68,10 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO recurring_positions (tenant_id, id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.recurring_id.0[..])
                 .bind(self.position_nr)

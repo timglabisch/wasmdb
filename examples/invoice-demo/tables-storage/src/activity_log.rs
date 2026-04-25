@@ -2,7 +2,7 @@ use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::{try_uuid, AppCtx};
+use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "activity_log")]
 pub struct ActivityLogEntry {
@@ -20,8 +20,9 @@ pub struct ActivityLogEntry {
 async fn all(ctx: &AppCtx) -> Result<Vec<ActivityLogEntry>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, timestamp, entity_type, entity_id, action, actor, detail \
-         FROM invoice_demo.activity_log",
+         FROM invoice_demo.activity_log WHERE tenant_id = ?",
     )
+    .bind(DEMO_TENANT_ID)
     .fetch_all(&ctx.pool)
     .await?;
 

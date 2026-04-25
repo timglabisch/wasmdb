@@ -5,7 +5,7 @@ use ts_rs::TS;
 use database::Database;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::execute_sql;
+use crate::helpers::{execute_sql, DEMO_TENANT_ID};
 use super::params::invoice_params;
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
@@ -83,9 +83,10 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.customer_id.0[..])
                 .bind(&self.number)

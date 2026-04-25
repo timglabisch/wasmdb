@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateSepaMandate {
@@ -58,8 +58,9 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                "INSERT INTO sepa_mandates (tenant_id, id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.customer_id.0[..])
                 .bind(&self.mandate_ref)

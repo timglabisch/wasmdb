@@ -5,7 +5,7 @@ use ts_rs::TS;
 use database::Database;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::execute_sql;
+use crate::helpers::{execute_sql, DEMO_TENANT_ID};
 use super::params::invoice_params;
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
@@ -98,7 +98,7 @@ mod server_impl {
                  project_ref = ?, external_id = ?, \
                  billing_street = ?, billing_zip = ?, billing_city = ?, billing_country = ?, \
                  shipping_street = ?, shipping_zip = ?, shipping_city = ?, shipping_country = ? \
-                 WHERE invoices.id = ?",
+                 WHERE invoices.tenant_id = ? AND invoices.id = ?",
             )
                 .bind(&self.number)
                 .bind(&self.status)
@@ -125,6 +125,7 @@ mod server_impl {
                 .bind(&self.shipping_zip)
                 .bind(&self.shipping_city)
                 .bind(&self.shipping_country)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

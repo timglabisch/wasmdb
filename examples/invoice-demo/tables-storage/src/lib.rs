@@ -16,6 +16,11 @@ mod recurring_invoices;
 mod recurring_positions;
 mod sepa_mandates;
 
+/// Hardcoded tenant for the demo. Mirrors `commands::helpers::DEMO_TENANT_ID`
+/// — kept local to avoid pulling the commands crate into the storage facade.
+/// All `SELECT` queries below bind this to the `tenant_id` column TiDB requires.
+pub const DEMO_TENANT_ID: i64 = 0;
+
 /// App-level storage context. Server boot constructs this once with a
 /// connected pool.
 pub struct AppCtx {

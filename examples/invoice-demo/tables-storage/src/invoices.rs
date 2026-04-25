@@ -2,7 +2,7 @@ use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::{try_uuid, AppCtx};
+use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "invoices")]
 pub struct Invoice {
@@ -45,8 +45,9 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Invoice>, sqlx::Error> {
          payment_method, sepa_mandate_id, currency, language, project_ref, external_id, \
          billing_street, billing_zip, billing_city, billing_country, \
          shipping_street, shipping_zip, shipping_city, shipping_country \
-         FROM invoice_demo.invoices",
+         FROM invoice_demo.invoices WHERE tenant_id = ?",
     )
+    .bind(DEMO_TENANT_ID)
     .fetch_all(&ctx.pool)
     .await?;
 

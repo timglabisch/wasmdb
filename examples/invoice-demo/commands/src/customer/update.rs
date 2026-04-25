@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateCustomer {
@@ -93,7 +93,7 @@ mod server_impl {
                  billing_street = ?, billing_zip = ?, billing_city = ?, billing_country = ?, \
                  shipping_street = ?, shipping_zip = ?, shipping_city = ?, shipping_country = ?, \
                  default_iban = ?, default_bic = ?, notes = ? \
-                 WHERE customers.id = ?",
+                 WHERE customers.tenant_id = ? AND customers.id = ?",
             )
                 .bind(&self.name)
                 .bind(&self.email)
@@ -113,6 +113,7 @@ mod server_impl {
                 .bind(&self.default_iban)
                 .bind(&self.default_bic)
                 .bind(&self.notes)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

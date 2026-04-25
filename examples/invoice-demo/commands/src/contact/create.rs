@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreateContact {
@@ -58,9 +58,10 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO contacts (tenant_id, id, customer_id, name, email, phone, role, is_primary) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&self.id.0[..])
             .bind(&self.customer_id.0[..])
             .bind(&self.name)

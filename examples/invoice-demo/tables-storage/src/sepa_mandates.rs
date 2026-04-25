@@ -2,7 +2,7 @@ use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::{try_uuid, AppCtx};
+use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "sepa_mandates")]
 pub struct SepaMandate {
@@ -22,8 +22,9 @@ async fn all(ctx: &AppCtx) -> Result<Vec<SepaMandate>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT id, customer_id, mandate_ref, iban, bic, \
          holder_name, signed_at, status \
-         FROM invoice_demo.sepa_mandates",
+         FROM invoice_demo.sepa_mandates WHERE tenant_id = ?",
     )
+    .bind(DEMO_TENANT_ID)
     .fetch_all(&ctx.pool)
     .await?;
 

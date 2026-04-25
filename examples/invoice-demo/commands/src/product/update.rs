@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateProduct {
@@ -63,7 +63,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "UPDATE products SET sku = ?, name = ?, description = ?, unit = ?, unit_price = ?, tax_rate = ?, cost_price = ?, active = ? WHERE id = ?")
+                "UPDATE products SET sku = ?, name = ?, description = ?, unit = ?, unit_price = ?, tax_rate = ?, cost_price = ?, active = ? WHERE tenant_id = ? AND id = ?")
                 .bind(&self.sku)
                 .bind(&self.name)
                 .bind(&self.description)
@@ -72,6 +72,7 @@ mod server_impl {
                 .bind(self.tax_rate)
                 .bind(self.cost_price)
                 .bind(self.active)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

@@ -2,7 +2,7 @@ use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::{try_uuid, AppCtx};
+use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "recurring_invoices")]
 pub struct RecurringInvoice {
@@ -25,8 +25,9 @@ async fn all(ctx: &AppCtx) -> Result<Vec<RecurringInvoice>, sqlx::Error> {
         "SELECT id, customer_id, template_name, \
          interval_unit, interval_value, next_run, last_run, \
          enabled, status_template, notes_template \
-         FROM invoice_demo.recurring_invoices",
+         FROM invoice_demo.recurring_invoices WHERE tenant_id = ?",
     )
+    .bind(DEMO_TENANT_ID)
     .fetch_all(&ctx.pool)
     .await?;
 

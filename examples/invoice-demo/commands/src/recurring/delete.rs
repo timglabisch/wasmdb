@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_uuid};
+use crate::helpers::{execute_sql, p_uuid, DEMO_TENANT_ID};
 
 /// Cascades recurring_positions + recurring_invoice atomically.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
@@ -46,7 +46,8 @@ mod server_impl {
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM recurring_positions WHERE recurring_id = ?")
+            sqlx::query("DELETE FROM recurring_positions WHERE tenant_id = ? AND recurring_id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await
@@ -54,7 +55,8 @@ mod server_impl {
                     "DELETE recurring_positions for recurring_id {}: {e}",
                     self.id,
                 )))?;
-            sqlx::query("DELETE FROM recurring_invoices WHERE id = ?")
+            sqlx::query("DELETE FROM recurring_invoices WHERE tenant_id = ? AND id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

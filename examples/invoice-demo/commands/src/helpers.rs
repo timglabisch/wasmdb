@@ -4,6 +4,11 @@ use sql_engine::storage::{CellValue, Uuid};
 use sync::command::CommandError;
 use sync::zset::ZSet;
 
+/// Hardcoded tenant for the demo. Server-side TiDB queries bind this on every
+/// INSERT/UPDATE/DELETE/SELECT. Client-side `Database` does not know about
+/// tenants — the column lives in TiDB only.
+pub const DEMO_TENANT_ID: i64 = 0;
+
 /// Run a mutation and return the resulting `ZSet`. Non-mutations produce
 /// an empty delta — helpers.rs stays sync because the client-side
 /// `Database` is an in-memory store.

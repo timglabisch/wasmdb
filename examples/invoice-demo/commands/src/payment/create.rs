@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct CreatePayment {
@@ -68,11 +68,13 @@ mod server_impl {
             // `CAST(... AS SIGNED)` pins MySQL's DECIMAL SUM back to i64.
             let remaining: i64 = sqlx::query_scalar(
                 "SELECT CAST( \
-                   COALESCE((SELECT SUM(quantity*unit_price) FROM positions WHERE invoice_id=?), 0) \
-                 - COALESCE((SELECT SUM(amount)              FROM payments  WHERE invoice_id=?), 0) \
+                   COALESCE((SELECT SUM(quantity*unit_price) FROM positions WHERE tenant_id=? AND invoice_id=?), 0) \
+                 - COALESCE((SELECT SUM(amount)              FROM payments  WHERE tenant_id=? AND invoice_id=?), 0) \
                  AS SIGNED)",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&self.invoice_id.0[..])
+            .bind(DEMO_TENANT_ID)
             .bind(&self.invoice_id.0[..])
             .fetch_one(&mut **tx)
             .await
@@ -89,9 +91,10 @@ mod server_impl {
             }
 
             sqlx::query(
-                "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO payments (tenant_id, id, invoice_id, amount, paid_at, method, reference, note) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&self.id.0[..])
             .bind(&self.invoice_id.0[..])
             .bind(self.amount)

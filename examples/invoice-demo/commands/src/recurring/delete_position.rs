@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_uuid};
+use crate::helpers::{execute_sql, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteRecurringPosition {
@@ -38,7 +38,8 @@ mod server_impl {
             tx: &mut Transaction<'static, MySql>,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM recurring_positions WHERE id = ?")
+            sqlx::query("DELETE FROM recurring_positions WHERE tenant_id = ? AND id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

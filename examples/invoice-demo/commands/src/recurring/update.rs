@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateRecurring {
@@ -59,7 +59,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "UPDATE recurring_invoices SET template_name = ?, interval_unit = ?, interval_value = ?, next_run = ?, enabled = ?, status_template = ?, notes_template = ? WHERE id = ?",
+                "UPDATE recurring_invoices SET template_name = ?, interval_unit = ?, interval_value = ?, next_run = ?, enabled = ?, status_template = ?, notes_template = ? WHERE tenant_id = ? AND id = ?",
             )
                 .bind(&self.template_name)
                 .bind(&self.interval_unit)
@@ -68,6 +68,7 @@ mod server_impl {
                 .bind(self.enabled)
                 .bind(&self.status_template)
                 .bind(&self.notes_template)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

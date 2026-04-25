@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdatePayment {
@@ -54,13 +54,14 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "UPDATE payments SET amount = ?, paid_at = ?, method = ?, reference = ?, note = ? WHERE payments.id = ?",
+                "UPDATE payments SET amount = ?, paid_at = ?, method = ?, reference = ?, note = ? WHERE payments.tenant_id = ? AND payments.id = ?",
             )
                 .bind(self.amount)
                 .bind(&self.paid_at)
                 .bind(&self.method)
                 .bind(&self.reference)
                 .bind(&self.note)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

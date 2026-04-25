@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdatePosition {
@@ -77,7 +77,7 @@ mod server_impl {
                  unit_price = ?, tax_rate = ?, \
                  product_id = ?, item_number = ?, unit = ?, \
                  discount_pct = ?, cost_price = ?, position_type = ? \
-                 WHERE id = ?"
+                 WHERE tenant_id = ? AND id = ?"
             )
                 .bind(&self.description)
                 .bind(self.quantity)
@@ -89,6 +89,7 @@ mod server_impl {
                 .bind(self.discount_pct)
                 .bind(self.cost_price)
                 .bind(&self.position_type)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

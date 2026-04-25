@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct LogActivity {
@@ -57,9 +57,10 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&self.id.0[..])
             .bind(&self.timestamp)
             .bind(&self.entity_type)

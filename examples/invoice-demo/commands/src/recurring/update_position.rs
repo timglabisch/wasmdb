@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct UpdateRecurringPosition {
@@ -61,7 +61,7 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
-                "UPDATE recurring_positions SET description = ?, quantity = ?, unit_price = ?, tax_rate = ?, unit = ?, item_number = ?, discount_pct = ? WHERE id = ?",
+                "UPDATE recurring_positions SET description = ?, quantity = ?, unit_price = ?, tax_rate = ?, unit = ?, item_number = ?, discount_pct = ? WHERE tenant_id = ? AND id = ?",
             )
                 .bind(&self.description)
                 .bind(self.quantity)
@@ -70,6 +70,7 @@ mod server_impl {
                 .bind(&self.unit)
                 .bind(&self.item_number)
                 .bind(self.discount_pct)
+                .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .execute(&mut **tx)
                 .await

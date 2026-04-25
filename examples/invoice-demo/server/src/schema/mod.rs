@@ -21,9 +21,15 @@ pub fn build_table_schemas() -> HashMap<String, TableSchema> {
     s
 }
 
-/// Validate that the live TiDB database has the exact column layout that
+/// Validate that the live TiDB database has the column layout that
 /// `TableSchema` expects. Fails loud at boot so schema drift cannot silently
-/// corrupt ZSets (column-order has to match 1:1).
+/// corrupt ZSets (column-order has to match 1:1 for the columns the client
+/// knows about).
+///
+/// MySQL columns not present in `TableSchema` are skipped. This lets us host
+/// server-only columns (e.g. `tenant_id`) in TiDB without forcing them into
+/// the client's row layout. The order-strict comparison runs over the
+/// filtered, schema-known column subset only.
 pub async fn assert_mysql_matches(
     pool: &sqlx::MySqlPool,
     schemas: &HashMap<String, TableSchema>,
@@ -45,18 +51,26 @@ pub async fn assert_mysql_matches(
                 "table `{table}` missing in TiDB — run examples/invoice-demo/sql/001_init.sql"
             ));
         }
-        if rows.len() != schema.columns.len() {
+
+        let known: std::collections::HashSet<&str> =
+            schema.columns.iter().map(|c| c.name.as_str()).collect();
+        let filtered: Vec<&(String, String)> = rows
+            .iter()
+            .filter(|(name, _)| known.contains(name.as_str()))
+            .collect();
+
+        if filtered.len() != schema.columns.len() {
             return Err(format!(
-                "table `{table}`: expected {} columns, TiDB has {}",
+                "table `{table}`: expected {} client-visible columns, TiDB has {} matching",
                 schema.columns.len(),
-                rows.len(),
+                filtered.len(),
             ));
         }
         for (i, col) in schema.columns.iter().enumerate() {
-            let (name, dtype) = &rows[i];
+            let (name, dtype) = filtered[i];
             if name != &col.name {
                 return Err(format!(
-                    "table `{table}` column #{i}: expected `{}`, TiDB has `{}`",
+                    "table `{table}` column #{i}: expected `{}`, TiDB has `{}` (after filtering server-only columns)",
                     col.name, name,
                 ));
             }

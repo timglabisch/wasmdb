@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::{Params, ParamValue};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_uuid, read_uuid_col};
+use crate::helpers::{execute_sql, p_uuid, read_uuid_col, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteCustomerCascade {
@@ -99,8 +99,9 @@ mod server_impl {
             let id = self.id;
 
             let recurring_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
-                "SELECT id FROM recurring_invoices WHERE customer_id = ?",
+                "SELECT id FROM recurring_invoices WHERE tenant_id = ? AND customer_id = ?",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&id.0[..])
             .fetch_all(&mut **tx)
             .await
@@ -109,8 +110,9 @@ mod server_impl {
             )))?;
 
             let invoice_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
-                "SELECT id FROM invoices WHERE customer_id = ?",
+                "SELECT id FROM invoices WHERE tenant_id = ? AND customer_id = ?",
             )
+            .bind(DEMO_TENANT_ID)
             .bind(&id.0[..])
             .fetch_all(&mut **tx)
             .await
@@ -120,20 +122,20 @@ mod server_impl {
 
             if !recurring_id_rows.is_empty() {
                 let sql = format!(
-                    "DELETE FROM recurring_positions WHERE recurring_id IN ({})",
+                    "DELETE FROM recurring_positions WHERE tenant_id = ? AND recurring_id IN ({})",
                     qmarks(recurring_id_rows.len()),
                 );
-                let mut q = sqlx::query(&sql);
+                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
                 for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE recurring_positions for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
-                    "DELETE FROM recurring_invoices WHERE id IN ({})",
+                    "DELETE FROM recurring_invoices WHERE tenant_id = ? AND id IN ({})",
                     qmarks(recurring_id_rows.len()),
                 );
-                let mut q = sqlx::query(&sql);
+                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
                 for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE recurring_invoices for customer {id}: {e}"),
@@ -142,49 +144,52 @@ mod server_impl {
 
             if !invoice_id_rows.is_empty() {
                 let sql = format!(
-                    "DELETE FROM payments WHERE invoice_id IN ({})",
+                    "DELETE FROM payments WHERE tenant_id = ? AND invoice_id IN ({})",
                     qmarks(invoice_id_rows.len()),
                 );
-                let mut q = sqlx::query(&sql);
+                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
                 for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE payments for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
-                    "DELETE FROM positions WHERE invoice_id IN ({})",
+                    "DELETE FROM positions WHERE tenant_id = ? AND invoice_id IN ({})",
                     qmarks(invoice_id_rows.len()),
                 );
-                let mut q = sqlx::query(&sql);
+                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
                 for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE positions for customer {id}: {e}"),
                 ))?;
 
                 let sql = format!(
-                    "DELETE FROM invoices WHERE id IN ({})",
+                    "DELETE FROM invoices WHERE tenant_id = ? AND id IN ({})",
                     qmarks(invoice_id_rows.len()),
                 );
-                let mut q = sqlx::query(&sql);
+                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
                 for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
                 q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
                     format!("DELETE invoices for customer {id}: {e}"),
                 ))?;
             }
 
-            sqlx::query("DELETE FROM sepa_mandates WHERE customer_id = ?")
+            sqlx::query("DELETE FROM sepa_mandates WHERE tenant_id = ? AND customer_id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE sepa_mandates for customer {id}: {e}",
                 )))?;
 
-            sqlx::query("DELETE FROM contacts WHERE customer_id = ?")
+            sqlx::query("DELETE FROM contacts WHERE tenant_id = ? AND customer_id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE contacts for customer {id}: {e}",
                 )))?;
 
-            sqlx::query("DELETE FROM customers WHERE id = ?")
+            sqlx::query("DELETE FROM customers WHERE tenant_id = ? AND id = ?")
+                .bind(DEMO_TENANT_ID)
                 .bind(&id.0[..]).execute(&mut **tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE customer {id}: {e}",
