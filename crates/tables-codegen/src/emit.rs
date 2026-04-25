@@ -84,7 +84,7 @@ fn emit_client_module(m: &Module, url: &str) -> Result<TokenStream, CodegenError
         #(#rows)*
         #(#queries)*
     };
-    Ok(wrap_in_mods(&m.path, content))
+    Ok(wrap_in_mods(&m.path, module_prelude(m), content))
 }
 
 fn emit_server_module(m: &Module, ctx_ty: &Type) -> Result<TokenStream, CodegenError> {
@@ -97,7 +97,35 @@ fn emit_server_module(m: &Module, ctx_ty: &Type) -> Result<TokenStream, CodegenE
     let content = quote! {
         #(#queries)*
     };
-    Ok(wrap_in_mods(&m.path, content))
+    Ok(wrap_in_mods(&m.path, module_prelude(m), content))
+}
+
+/// Build the `use` prelude needed for a generated module to compile.
+///
+/// Today the only candidate is `Uuid`: `#[row]`/`#[query]` types are
+/// emitted verbatim, so any field typed `Uuid` (or `Option<Uuid>`) needs
+/// the newtype in scope. Other supported types (`i64`, `String`,
+/// `Option<...>`) resolve via the prelude already.
+fn module_prelude(m: &Module) -> TokenStream {
+    let needs_uuid = m.rows.iter().any(|r| row_uses_uuid(r))
+        || m.queries.iter().any(|q| query_uses_uuid(q));
+    if needs_uuid {
+        quote! { use ::sql_engine::storage::Uuid; }
+    } else {
+        quote! {}
+    }
+}
+
+fn row_uses_uuid(row: &Row) -> bool {
+    row.fields.iter().any(|(_, t)| type_is_uuid(t))
+}
+
+fn query_uses_uuid(q: &Query) -> bool {
+    q.params.iter().any(|(_, t)| type_is_uuid(t))
+}
+
+fn type_is_uuid(ty: &Type) -> bool {
+    matches!(classify(ty), Some(FieldKind::Uuid) | Some(FieldKind::OptUuid))
 }
 
 fn emit_client_row(row: &Row) -> Result<TokenStream, CodegenError> {
@@ -538,14 +566,7 @@ fn emit_arg_bindings(
         .collect()
 }
 
-fn wrap_in_mods(path: &[String], content: TokenStream) -> TokenStream {
-    // Re-import every type that user-side row/query field declarations might
-    // refer to by bare ident (the codegen passes those types through verbatim).
-    // Today: `Uuid`. If we add more "default-in-scope" types, list them here.
-    let prelude = quote! {
-        #[allow(unused_imports)]
-        use ::sql_engine::storage::Uuid;
-    };
+fn wrap_in_mods(path: &[String], prelude: TokenStream, content: TokenStream) -> TokenStream {
     let mut ts = quote! { #prelude #content };
     for name in path.iter().rev() {
         let ident = format_ident!("{name}");

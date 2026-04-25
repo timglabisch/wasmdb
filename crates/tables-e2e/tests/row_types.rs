@@ -5,7 +5,7 @@
 mod common;
 
 use sql_engine::schema::DataType;
-use sql_engine::storage::{CellValue, Uuid};
+use sql_engine::storage::CellValue;
 use sql_engine::DbTable;
 use tables_e2e::{contact_uuid, Contact, Customer, Invoice, Product};
 
@@ -195,16 +195,3 @@ fn contact_uuid_pk_uniqueness_via_upsert() {
     assert_eq!(t.get(live, 1), CellValue::Str("B".into()));
 }
 
-#[test]
-fn uuid_newtype_display_matches_canonical_form() {
-    let u = Uuid([0xff; 16]);
-    assert_eq!(u.to_string(), "ffffffff-ffff-ffff-ffff-ffffffffffff");
-}
-
-#[test]
-fn uuid_newtype_from_into_bytes_round_trip() {
-    let bytes = [0x12u8; 16];
-    let u = Uuid::from_bytes(bytes);
-    assert_eq!(u.as_bytes(), &bytes);
-    assert_eq!(u.into_bytes(), bytes);
-}

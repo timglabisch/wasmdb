@@ -293,7 +293,7 @@ mod tests {
         let bm = Bitmap::new(0, false);
         assert!(bm.is_empty());
         assert_eq!(bm.count_ones(), 0);
-        assert_eq!(bm.iter_ones().collect::<Vec<_>>(), vec![]);
+        assert_eq!(bm.iter_ones().collect::<Vec<usize>>(), Vec::<usize>::new());
     }
 
     #[test]

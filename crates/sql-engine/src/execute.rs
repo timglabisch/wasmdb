@@ -97,3 +97,15 @@ pub(crate) fn cell_to_value(cell: &CellValue) -> Value {
         CellValue::Null => Value::Null,
     }
 }
+
+/// Lift a scalar [`ParamValue`] to a [`Value`]. Returns `None` for list
+/// variants — callers requiring a scalar produce a context-specific error.
+pub(crate) fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
+    match pv {
+        ParamValue::Int(n) => Some(Value::Int(*n)),
+        ParamValue::Text(s) => Some(Value::Text(s.clone())),
+        ParamValue::Uuid(b) => Some(Value::Uuid(*b)),
+        ParamValue::Null => Some(Value::Null),
+        ParamValue::IntList(_) | ParamValue::TextList(_) | ParamValue::UuidList(_) => None,
+    }
+}

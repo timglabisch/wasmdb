@@ -5,7 +5,7 @@ use crate::planner::shared::plan::{
 use crate::storage::{CellValue, RangeOp, Table};
 use sql_parser::ast::Value;
 use super::value_to_cell;
-use super::{ExecuteError, ExecutionContext, ParamValue, ScanMethod, SpanOperation};
+use super::{param_value_to_value, ExecuteError, ExecutionContext, ScanMethod, SpanOperation};
 
 use super::RowSet;
 
@@ -129,16 +129,6 @@ fn resolve_caller_args(
             )))
         }
     }).collect()
-}
-
-fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
-    match pv {
-        ParamValue::Int(n) => Some(Value::Int(*n)),
-        ParamValue::Text(s) => Some(Value::Text(s.clone())),
-        ParamValue::Uuid(b) => Some(Value::Uuid(*b)),
-        ParamValue::Null => Some(Value::Null),
-        ParamValue::IntList(_) | ParamValue::TextList(_) | ParamValue::UuidList(_) => None,
-    }
 }
 
 fn resolve_pks_to_row_ids(

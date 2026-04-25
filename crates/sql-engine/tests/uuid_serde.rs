@@ -66,6 +66,24 @@ fn uuid_newtype_round_trip() {
 
 #[cfg(feature = "serde")]
 #[test]
+fn cell_value_untagged_string_deserializes_to_str_not_uuid() {
+    // Pinning: `CellValue` is `#[serde(untagged)]` and `Str` is declared
+    // before `Uuid`, so a bare JSON string always deserializes to
+    // `CellValue::Str` — even if the contents look like a UUID. Anyone
+    // moving `Str` after `Uuid` will silently flip this and break the
+    // wire contract; this test fails loudly when that happens.
+    let json = format!("\"{SAMPLE}\"");
+    let cell: CellValue = serde_json::from_str(&json).unwrap();
+    assert_eq!(cell, CellValue::Str(SAMPLE.into()));
+    assert!(!matches!(cell, CellValue::Uuid(_)));
+
+    // Non-UUID strings round-trip through Str trivially.
+    let cell2: CellValue = serde_json::from_str("\"plain text\"").unwrap();
+    assert_eq!(cell2, CellValue::Str("plain text".into()));
+}
+
+#[cfg(feature = "serde")]
+#[test]
 fn cell_value_other_variants_unchanged() {
     // Untagged enum: Uuid must not steal serialization from I64/Str/Null.
     assert_eq!(serde_json::to_string(&CellValue::I64(42)).unwrap(), "42");

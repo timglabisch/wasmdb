@@ -30,7 +30,7 @@ use crate::planner::shared::plan::{
 use crate::planner::sql::plan::ExecutionPlan;
 use crate::storage::{CellValue, Table};
 
-use super::{cell_to_value, value_to_cell, ExecuteError, ParamValue, Params};
+use super::{cell_to_value, param_value_to_value, value_to_cell, ExecuteError, Params};
 
 // ── Fetcher runtime ───────────────────────────────────────────────────────
 
@@ -322,16 +322,6 @@ fn resolve_args(
             )))
         }
     }).collect()
-}
-
-fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
-    match pv {
-        ParamValue::Int(n) => Some(Value::Int(*n)),
-        ParamValue::Text(s) => Some(Value::Text(s.clone())),
-        ParamValue::Uuid(b) => Some(Value::Uuid(*b)),
-        ParamValue::Null => Some(Value::Null),
-        ParamValue::IntList(_) | ParamValue::TextList(_) | ParamValue::UuidList(_) => None,
-    }
 }
 
 // ── Parallel joiner (minimal `join_all`) ──────────────────────────────────

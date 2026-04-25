@@ -31,6 +31,21 @@ impl Uuid {
     pub fn from_bytes(b: [u8; 16]) -> Self { Uuid(b) }
     pub fn as_bytes(&self) -> &[u8; 16] { &self.0 }
     pub fn into_bytes(self) -> [u8; 16] { self.0 }
+
+    /// Generate a fresh UUIDv4 from the platform RNG.
+    ///
+    /// Native uses the OS RNG via `getrandom`; wasm32 routes through
+    /// `crypto.getRandomValues` (the `js` feature on the same crate).
+    /// We deliberately mirror — not bridge — JS-side `crypto.randomUUID()`:
+    /// JS callsites stay on the browser API to avoid the wasm boundary
+    /// crossing, this path is for Rust-internal generation.
+    pub fn new_v4() -> Self {
+        let mut bytes = [0u8; 16];
+        getrandom::getrandom(&mut bytes).expect("UUIDv4: platform RNG failed");
+        bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+        bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xxxxxx
+        Uuid(bytes)
+    }
 }
 
 impl std::fmt::Display for Uuid {
@@ -1264,6 +1279,79 @@ mod tests {
         assert!(idx.lookup_prefix_eq(&[CellValue::I64(1)]).is_none());
         // Prefix range does not work on Hash
         assert!(idx.lookup_prefix_range(&[CellValue::I64(1)], RangeOp::Gt, &CellValue::I64(0)).is_none());
+    }
+
+    #[test]
+    fn test_uuid_newtype_display_matches_canonical_form() {
+        let u = Uuid([0xff; 16]);
+        assert_eq!(u.to_string(), "ffffffff-ffff-ffff-ffff-ffffffffffff");
+    }
+
+    #[test]
+    fn test_uuid_newtype_from_into_bytes_round_trip() {
+        let bytes = [0x12u8; 16];
+        let u = Uuid::from_bytes(bytes);
+        assert_eq!(u.as_bytes(), &bytes);
+        assert_eq!(u.into_bytes(), bytes);
+    }
+
+    #[test]
+    fn test_uuid_new_v4_version_and_variant_bits() {
+        for _ in 0..256 {
+            let u = Uuid::new_v4();
+            // Version nibble == 4 (high nibble of byte 6)
+            assert_eq!(u.0[6] & 0xf0, 0x40, "got byte6={:02x}", u.0[6]);
+            // Variant bits == 10 (top two bits of byte 8)
+            assert_eq!(u.0[8] & 0xc0, 0x80, "got byte8={:02x}", u.0[8]);
+        }
+    }
+
+    #[test]
+    fn test_uuid_new_v4_uniqueness_at_scale() {
+        // 4096 fresh UUIDs must not collide. Birthday paradox at 16 bytes
+        // makes any collision here a real bug, not a flaky test.
+        let n = 4096;
+        let mut seen = std::collections::HashSet::with_capacity(n);
+        for _ in 0..n {
+            let bytes = Uuid::new_v4().0;
+            assert!(seen.insert(bytes), "duplicate UUID: {bytes:?}");
+        }
+        assert_eq!(seen.len(), n);
+    }
+
+    #[test]
+    fn test_uuid_new_v4_random_bits_have_spread() {
+        // Crude entropy smoke test: across 256 UUIDs, the random bytes
+        // must not all be identical. Catches a stuck/zeroed RNG.
+        let mut all_byte_zero_same = true;
+        let first = Uuid::new_v4();
+        for _ in 0..255 {
+            let next = Uuid::new_v4();
+            if next.0[0] != first.0[0] || next.0[15] != first.0[15] {
+                all_byte_zero_same = false;
+                break;
+            }
+        }
+        assert!(!all_byte_zero_same, "RNG appears stuck");
+    }
+
+    #[test]
+    fn test_uuid_new_v4_canonical_string_shape() {
+        // Pin: serialized form is the standard 36-char hyphenated lowercase
+        // shape with version `4` at position 14 and variant ∈ {8,9,a,b}
+        // at position 19.
+        let s = Uuid::new_v4().to_string();
+        assert_eq!(s.len(), 36);
+        let bytes = s.as_bytes();
+        assert_eq!(bytes[8], b'-');
+        assert_eq!(bytes[13], b'-');
+        assert_eq!(bytes[18], b'-');
+        assert_eq!(bytes[23], b'-');
+        assert_eq!(bytes[14], b'4', "version digit must be '4', got {}", s);
+        assert!(
+            matches!(bytes[19], b'8' | b'9' | b'a' | b'b'),
+            "variant digit must be 8/9/a/b, got {}", s,
+        );
     }
 }
 

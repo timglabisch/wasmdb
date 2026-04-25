@@ -131,28 +131,28 @@ fn filter_typed_cmp(
         NormalizedValue::Null => Vec::new(),
         NormalizedValue::I64(n) => match col {
             TypedColumn::I64(data) => {
-                row_ids.iter().filter(|&&i| cmp_i64(data[i], n, op)).copied().collect()
+                row_ids.iter().filter(|&&i| cmp_ord(&data[i], &n, op)).copied().collect()
             }
             TypedColumn::NullableI64 { values, nulls } => {
-                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_i64(values[i], n, op)).copied().collect()
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_ord(&values[i], &n, op)).copied().collect()
             }
             _ => Vec::new(),
         },
         NormalizedValue::Str(s) => match col {
             TypedColumn::Str(data) => {
-                row_ids.iter().filter(|&&i| cmp_str(&data[i], s, op)).copied().collect()
+                row_ids.iter().filter(|&&i| cmp_ord(data[i].as_str(), s, op)).copied().collect()
             }
             TypedColumn::NullableStr { values, nulls } => {
-                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_str(&values[i], s, op)).copied().collect()
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_ord(values[i].as_str(), s, op)).copied().collect()
             }
             _ => Vec::new(),
         },
         NormalizedValue::Uuid(needle) => match col {
             TypedColumn::Uuid(data) => {
-                row_ids.iter().filter(|&&i| cmp_uuid(&data[i], &needle, op)).copied().collect()
+                row_ids.iter().filter(|&&i| cmp_ord(&data[i], &needle, op)).copied().collect()
             }
             TypedColumn::NullableUuid { values, nulls } => {
-                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_uuid(&values[i], &needle, op)).copied().collect()
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_ord(&values[i], &needle, op)).copied().collect()
             }
             _ => Vec::new(),
         },
@@ -167,40 +167,40 @@ fn filter_typed_col_col(
 ) -> Vec<usize> {
     match (left, right) {
         (TypedColumn::I64(l), TypedColumn::I64(r)) => {
-            row_ids.iter().filter(|&&i| cmp_i64(l[i], r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| cmp_ord(&l[i], &r[i], op)).copied().collect()
         }
         (TypedColumn::Str(l), TypedColumn::Str(r)) => {
-            row_ids.iter().filter(|&&i| cmp_str(&l[i], &r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| cmp_ord(l[i].as_str(), r[i].as_str(), op)).copied().collect()
         }
         (TypedColumn::Uuid(l), TypedColumn::Uuid(r)) => {
-            row_ids.iter().filter(|&&i| cmp_uuid(&l[i], &r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| cmp_ord(&l[i], &r[i], op)).copied().collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_i64(lv[i], rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_ord(&lv[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_str(&lv[i], &rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_ord(lv[i].as_str(), rv[i].as_str(), op)).copied().collect()
         }
         (TypedColumn::NullableUuid { values: lv, nulls: ln }, TypedColumn::NullableUuid { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_uuid(&lv[i], &rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_ord(&lv[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::I64(l), TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_i64(l[i], rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_ord(&l[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::I64(r)) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_i64(lv[i], r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_ord(&lv[i], &r[i], op)).copied().collect()
         }
         (TypedColumn::Str(l), TypedColumn::NullableStr { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_str(&l[i], &rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_ord(l[i].as_str(), rv[i].as_str(), op)).copied().collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::Str(r)) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_str(&lv[i], &r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_ord(lv[i].as_str(), r[i].as_str(), op)).copied().collect()
         }
         (TypedColumn::Uuid(l), TypedColumn::NullableUuid { values: rv, nulls: rn }) => {
-            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_uuid(&l[i], &rv[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_ord(&l[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableUuid { values: lv, nulls: ln }, TypedColumn::Uuid(r)) => {
-            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_uuid(&lv[i], &r[i], op)).copied().collect()
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_ord(&lv[i], &r[i], op)).copied().collect()
         }
         _ => Vec::new(),
     }
@@ -232,31 +232,7 @@ fn filter_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -
 }
 
 #[inline]
-fn cmp_i64(left: i64, right: i64, op: CmpOp) -> bool {
-    match op {
-        CmpOp::Eq => left == right,
-        CmpOp::Neq => left != right,
-        CmpOp::Lt => left < right,
-        CmpOp::Lte => left <= right,
-        CmpOp::Gt => left > right,
-        CmpOp::Gte => left >= right,
-    }
-}
-
-#[inline]
-fn cmp_str(left: &str, right: &str, op: CmpOp) -> bool {
-    match op {
-        CmpOp::Eq => left == right,
-        CmpOp::Neq => left != right,
-        CmpOp::Lt => left < right,
-        CmpOp::Lte => left <= right,
-        CmpOp::Gt => left > right,
-        CmpOp::Gte => left >= right,
-    }
-}
-
-#[inline]
-fn cmp_uuid(left: &[u8; 16], right: &[u8; 16], op: CmpOp) -> bool {
+fn cmp_ord<T: ?Sized + Ord>(left: &T, right: &T, op: CmpOp) -> bool {
     match op {
         CmpOp::Eq => left == right,
         CmpOp::Neq => left != right,
