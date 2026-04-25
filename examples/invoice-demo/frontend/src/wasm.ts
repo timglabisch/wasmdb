@@ -43,3 +43,13 @@ export function executeOnStream(streamId: number, cmd: InvoiceCommand): Executio
 export function peekQuery(sql: string, params?: QueryParams): any[][] {
   return (wasm as any).query(sql, params);
 }
+
+/**
+ * Async sibling of `peekQuery`. Required when the SQL contains a
+ * `schema.fn(args)` source — the sync path refuses those because the
+ * fetcher needs an HTTP roundtrip. Use to one-shot trigger a fetcher
+ * (and thus populate the local table) at component mount.
+ */
+export function peekQueryAsync(sql: string, params?: QueryParams): Promise<any[][]> {
+  return (wasm as any).query_async(sql, params);
+}

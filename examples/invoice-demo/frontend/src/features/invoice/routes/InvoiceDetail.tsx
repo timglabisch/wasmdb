@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery } from '@/wasm';
 import { InvoiceStatusBadge, DocTypeBadge } from '@/shared/lib/status';
 import { useInvoiceExists } from '@/features/invoice/hooks/useInvoiceExists';
@@ -19,7 +20,10 @@ export default function InvoiceDetail() {
   const { invoiceId } = useParams({ from: '/invoices/$invoiceId' });
   const exists = useInvoiceExists(invoiceId);
 
-  if (!exists) {
+  if (exists === 'loading') {
+    return <Loading />;
+  }
+  if (exists === 'notfound') {
     return <NotFound />;
   }
 
@@ -63,6 +67,19 @@ const HeaderTitle = memo(function HeaderTitle({ invoiceId }: { invoiceId: string
     </span>
   );
 });
+
+function Loading() {
+  return (
+    <>
+      <PageHeader title={<Skeleton className="h-5 w-40" />} />
+      <PageBody className="space-y-3">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-48 w-full" />
+      </PageBody>
+    </>
+  );
+}
 
 function NotFound() {
   return (
