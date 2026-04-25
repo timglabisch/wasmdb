@@ -10,7 +10,7 @@ use sync_client::client::SyncClient;
 use wasm_bindgen::prelude::*;
 
 use crate::debug::{bump_notification_count, log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
-use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID, ID_COUNTER};
+use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID};
 use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle, STREAM_HANDLES};
 
 #[wasm_bindgen]

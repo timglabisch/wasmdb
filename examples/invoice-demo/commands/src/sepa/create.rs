@@ -59,7 +59,8 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO sepa_mandates (tenant_id, id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE id = id")
                 .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.customer_id.0[..])

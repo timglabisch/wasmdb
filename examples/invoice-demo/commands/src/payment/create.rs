@@ -92,7 +92,8 @@ mod server_impl {
 
             sqlx::query(
                 "INSERT INTO payments (tenant_id, id, invoice_id, amount, paid_at, method, reference, note) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
             )
             .bind(DEMO_TENANT_ID)
             .bind(&self.id.0[..])

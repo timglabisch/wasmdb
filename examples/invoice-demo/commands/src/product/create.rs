@@ -65,7 +65,8 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO products (tenant_id, id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE id = id")
                 .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
                 .bind(&self.sku)

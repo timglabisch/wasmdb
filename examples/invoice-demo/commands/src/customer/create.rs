@@ -85,7 +85,8 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             sqlx::query(
                 "INSERT INTO customers (tenant_id, id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
             )
                 .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
