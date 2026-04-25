@@ -24,15 +24,6 @@ pub fn init() {
     DEFAULT_STREAM_ID.with(|d| *d.borrow_mut() = Some(stream_id_val));
 }
 
-#[wasm_bindgen]
-pub fn next_id() -> f64 {
-    ID_COUNTER.with(|c| {
-        let mut val = c.borrow_mut();
-        *val += 1;
-        *val as f64
-    })
-}
-
 /// Create a new stream with batching configuration. `batch_count=1` means sequential.
 #[wasm_bindgen]
 pub fn create_stream(batch_count: u32, batch_wait_ms: u32, retry_count: u32) -> f64 {
