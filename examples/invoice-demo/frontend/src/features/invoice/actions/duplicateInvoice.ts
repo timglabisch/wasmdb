@@ -10,7 +10,7 @@ import { isoDate } from './isoDate.ts';
  * Duplicate an invoice: copy header + all positions into a new draft.
  * Returns the new id, or null if the source doesn't exist.
  */
-export async function duplicateInvoice(invoiceId: number): Promise<number | null> {
+export async function duplicateInvoice(invoiceId: string): Promise<string | null> {
   const inv = peekInvoice(invoiceId);
   if (!inv) return null;
   const positions = peekPositions(invoiceId);
@@ -21,7 +21,7 @@ export async function duplicateInvoice(invoiceId: number): Promise<number | null
     ...inv, id: newId, customer_id: inv.customer_id,
     number: newNumber, status: 'draft',
     date_issued: isoDate(0), date_due: isoDate(14),
-    parent_id: 0,
+    parent_id: '',
   }));
   for (const p of positions) {
     executeOnStream(stream, addPosition({
@@ -36,7 +36,7 @@ export async function duplicateInvoice(invoiceId: number): Promise<number | null
   executeOnStream(stream, logActivity({
     entityType: 'invoice', entityId: newId,
     action: 'duplicate_from',
-    detail: `Kopie von "${inv.number}" (#${invoiceId}) als #${newId} angelegt`,
+    detail: `Kopie von "${inv.number}" als ${newNumber} angelegt`,
   }));
   await flushStream(stream);
   return newId;

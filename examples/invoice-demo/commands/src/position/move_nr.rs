@@ -12,6 +12,7 @@ use crate::helpers::{execute_sql, p_int, p_uuid};
 pub struct MovePosition {
     #[ts(type = "string")]
     pub id: Uuid,
+    #[ts(type = "number")]
     pub new_position_nr: i64,
 }
 

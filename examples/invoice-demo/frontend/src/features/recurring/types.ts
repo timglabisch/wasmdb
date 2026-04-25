@@ -3,7 +3,7 @@
  * (partial patches composed via peekRecurring).
  */
 export interface RecurringRow {
-  customer_id: number;
+  customer_id: string;
   template_name: string;
   interval_unit: string;
   interval_value: number;
@@ -15,7 +15,7 @@ export interface RecurringRow {
 }
 
 export interface RecurringPositionRow {
-  id: number;
+  id: string;
   position_nr: number;
   description: string;
   quantity: number;

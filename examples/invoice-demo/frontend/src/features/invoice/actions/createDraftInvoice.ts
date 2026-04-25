@@ -13,13 +13,13 @@ interface CustomerDefaults {
   shipping_street: string; shipping_zip: string; shipping_city: string; shipping_country: string;
 }
 
-function peekCustomerDefaults(customerId: number): CustomerDefaults | null {
-  if (customerId <= 0) return null;
+function peekCustomerDefaults(customerId: string): CustomerDefaults | null {
+  if (!customerId) return null;
   const rows = peekQuery(
     `SELECT customers.payment_terms_days, ` +
     `customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country, ` +
     `customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country ` +
-    `FROM customers WHERE customers.id = ${customerId}`,
+    `FROM customers WHERE customers.id = UUID '${customerId}'`,
   );
   if (rows.length === 0) return null;
   const r = rows[0];
@@ -40,11 +40,11 @@ function peekCustomerDefaults(customerId: number): CustomerDefaults | null {
  */
 export function useCreateDraftInvoice() {
   const navigate = useNavigate();
-  return useCallback(async (customerId: number = 0) => {
+  return useCallback(async (customerId: string = '') => {
     const id = nextId();
-    const defaults = customerId > 0 ? peekCustomerDefaults(customerId) : null;
+    const defaults = customerId ? peekCustomerDefaults(customerId) : null;
     const dueDays = defaults?.payment_terms_days ?? 14;
-    const number = `${DOC_PREFIX}-2026-${String(id).padStart(4, '0')}`;
+    const number = `${DOC_PREFIX}-2026-${id.slice(0, 8)}`;
     const stream = createStream(8);
     executeOnStream(stream, createInvoice({
       id, customer_id: customerId, number,

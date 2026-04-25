@@ -3,7 +3,7 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 type Variant = Extract<InvoiceCommand, { type: 'RunRecurringOnce' }>;
 
 const DEFAULTS: Omit<Variant, 'type'> = {
-  recurring_id: 0, new_invoice_id: 0,
+  recurring_id: '', new_invoice_id: '',
   position_ids: [], new_number: '',
   issue_date: '', due_date: '', new_next_run: '',
 };

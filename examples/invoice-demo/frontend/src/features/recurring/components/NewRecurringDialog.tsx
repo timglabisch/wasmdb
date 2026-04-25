@@ -18,7 +18,7 @@ import { createRecurring } from '@/commands/recurring/createRecurring';
 import { logActivity } from '@/commands/activity/logActivity';
 import { INTERVAL_UNIT_OPTIONS } from '../lib/interval';
 
-interface CustomerOption { id: number; name: string }
+interface CustomerOption { id: string; name: string }
 
 /**
  * Modal for "+ Neue Serie". Picks a customer, sets template name, interval,
@@ -31,7 +31,7 @@ export function NewRecurringDialog({
 }) {
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
-  const [customerId, setCustomerId] = React.useState<number>(0);
+  const [customerId, setCustomerId] = React.useState<string>('');
   const [customerQuery, setCustomerQuery] = React.useState('');
   const [templateName, setTemplateName] = React.useState('');
   const [intervalUnit, setIntervalUnit] = React.useState<string>('month');
@@ -45,7 +45,7 @@ export function NewRecurringDialog({
 
   const customers = useQuery(
     'SELECT customers.id, customers.name FROM customers ORDER BY customers.name',
-    ([id, name]) => ({ id: id as number, name: name as string }),
+    ([id, name]) => ({ id: id as string, name: name as string }),
   );
 
   const filtered = React.useMemo(() => {
@@ -60,7 +60,7 @@ export function NewRecurringDialog({
   );
 
   const reset = () => {
-    setCustomerId(0);
+    setCustomerId('');
     setCustomerQuery('');
     setTemplateName('');
     setIntervalUnit('month');

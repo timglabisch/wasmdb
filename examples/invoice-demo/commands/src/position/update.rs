@@ -13,14 +13,19 @@ pub struct UpdatePosition {
     #[ts(type = "string")]
     pub id: Uuid,
     pub description: String,
+    #[ts(type = "number")]
     pub quantity: i64,
+    #[ts(type = "number")]
     pub unit_price: i64,
+    #[ts(type = "number")]
     pub tax_rate: i64,
     #[ts(type = "string")]
     pub product_id: Uuid,
     pub item_number: String,
     pub unit: String,
+    #[ts(type = "number")]
     pub discount_pct: i64,
+    #[ts(type = "number")]
     pub cost_price: i64,
     pub position_type: String,
 }

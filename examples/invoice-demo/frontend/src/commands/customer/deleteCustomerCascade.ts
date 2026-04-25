@@ -2,7 +2,7 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 
 type Variant = Extract<InvoiceCommand, { type: 'DeleteCustomerCascade' }>;
 
-const DEFAULTS: Omit<Variant, 'type'> = { id: 0 };
+const DEFAULTS: Omit<Variant, 'type'> = { id: '' };
 
 /**
  * Full tree delete: customer + contacts + invoices + positions + payments +

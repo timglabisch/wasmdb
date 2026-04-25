@@ -92,13 +92,13 @@ function NotFound() {
 // Header (name inline-edit + status toggle + overflow menu)
 // ---------------------------------------------------------------------------
 
-const DetailHeader = React.memo(function DetailHeader({ productId }: { productId: number }) {
+const DetailHeader = React.memo(function DetailHeader({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const patch = usePatchProduct(productId);
 
   const rows = useQuery(
     `SELECT products.name, products.sku, products.unit, products.active ` +
-    `FROM products WHERE products.id = ${productId}`,
+    `FROM products WHERE products.id = UUID '${productId}'`,
     ([name, sku, unit, active]) => ({
       name: name as string,
       sku: sku as string,
@@ -203,11 +203,11 @@ const DetailHeader = React.memo(function DetailHeader({ productId }: { productId
 // Stammdaten
 // ---------------------------------------------------------------------------
 
-const MasterDataCard = React.memo(function MasterDataCard({ productId }: { productId: number }) {
+const MasterDataCard = React.memo(function MasterDataCard({ productId }: { productId: string }) {
   const patch = usePatchProduct(productId);
   const rows = useQuery(
     `SELECT products.sku, products.description, products.unit ` +
-    `FROM products WHERE products.id = ${productId}`,
+    `FROM products WHERE products.id = UUID '${productId}'`,
     ([sku, description, unit]) => ({
       sku: sku as string,
       description: description as string,
@@ -271,11 +271,11 @@ const MasterDataCard = React.memo(function MasterDataCard({ productId }: { produ
 // Preis & Steuer
 // ---------------------------------------------------------------------------
 
-const PriceCard = React.memo(function PriceCard({ productId }: { productId: number }) {
+const PriceCard = React.memo(function PriceCard({ productId }: { productId: string }) {
   const patch = usePatchProduct(productId);
   const rows = useQuery(
     `SELECT products.unit_price, products.tax_rate, products.cost_price ` +
-    `FROM products WHERE products.id = ${productId}`,
+    `FROM products WHERE products.id = UUID '${productId}'`,
     ([unit_price, tax_rate, cost_price]) => ({
       unit_price: unit_price as number,
       tax_rate: tax_rate as number,
@@ -390,13 +390,13 @@ const PriceCard = React.memo(function PriceCard({ productId }: { productId: numb
 // Verwendung
 // ---------------------------------------------------------------------------
 
-const UsageCard = React.memo(function UsageCard({ productId }: { productId: number }) {
+const UsageCard = React.memo(function UsageCard({ productId }: { productId: string }) {
   const invoiceRows = useQuery(
-    `SELECT positions.invoice_id FROM positions WHERE positions.product_id = ${productId}`,
-    ([invoice_id]) => invoice_id as number,
+    `SELECT positions.invoice_id FROM positions WHERE positions.product_id = UUID '${productId}'`,
+    ([invoice_id]) => invoice_id as string,
   );
   const uniqueInvoices = React.useMemo(() => {
-    const s = new Set<number>();
+    const s = new Set<string>();
     for (const iid of invoiceRows) s.add(iid);
     return s.size;
   }, [invoiceRows]);

@@ -28,7 +28,7 @@ import { initialsOf } from './lib/util';
 import { cn } from '@/lib/cn';
 
 interface IdRow {
-  id: number;
+  id: string;
   nameKey: string;
   emailKey: string;
 }
@@ -38,7 +38,7 @@ export default function CustomersTab() {
   const rows = useAsyncQuery(
     'SELECT customers.id, customers.name, customers.email FROM customers.all() ORDER BY customers.name',
     ([id, name, email]) => ({
-      id: id as number,
+      id: id as string,
       nameKey: ((name as string) ?? '').toLowerCase(),
       emailKey: ((email as string) ?? '').toLowerCase(),
     }),
@@ -124,14 +124,14 @@ function EmptyState() {
   );
 }
 
-const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { customerId: number }) {
+const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { customerId: string }) {
   const navigate = useNavigate();
   const createDraft = useCreateDraftInvoice();
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   const customer = useQuery(
     `SELECT customers.name, customers.email, customers.payment_terms_days ` +
-    `FROM customers WHERE customers.id = ${customerId}`,
+    `FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name, email, terms]) => ({
       name: name as string,
       email: email as string,
@@ -140,14 +140,14 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
   )[0];
 
   const invoiceIds = useQuery(
-    `SELECT invoices.id FROM invoices WHERE invoices.customer_id = ${customerId} AND invoices.doc_type = 'invoice'`,
-    ([id]) => id as number,
+    `SELECT invoices.id FROM invoices WHERE invoices.customer_id = UUID '${customerId}' AND invoices.doc_type = 'invoice'`,
+    ([id]) => id as string,
   );
 
   const openPositions = useQuery(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, positions.discount_pct, positions.position_type, positions.invoice_id ` +
     `FROM positions JOIN invoices ON invoices.id = positions.invoice_id ` +
-    `WHERE invoices.customer_id = ${customerId} ` +
+    `WHERE invoices.customer_id = UUID '${customerId}' ` +
     `AND invoices.doc_type = 'invoice' ` +
     `AND invoices.status IN ('draft', 'sent')`,
     ([q, p, t, d, pt]) => ({
@@ -158,7 +158,7 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
 
   const openPayments = useQuery(
     `SELECT payments.amount FROM payments JOIN invoices ON invoices.id = payments.invoice_id ` +
-    `WHERE invoices.customer_id = ${customerId} ` +
+    `WHERE invoices.customer_id = UUID '${customerId}' ` +
     `AND invoices.doc_type = 'invoice' ` +
     `AND invoices.status IN ('draft', 'sent')`,
     ([amount]) => amount as number,

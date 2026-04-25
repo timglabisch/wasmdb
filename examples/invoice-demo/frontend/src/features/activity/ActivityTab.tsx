@@ -24,10 +24,10 @@ import { ENTITY_FILTERS, PAGE_SIZE } from './types';
  */
 interface DayBucket {
   day: string;
-  ids: number[];
+  ids: string[];
 }
 
-function groupByDay(rows: Array<{ id: number; timestamp: string }>): DayBucket[] {
+function groupByDay(rows: Array<{ id: string; timestamp: string }>): DayBucket[] {
   const buckets: DayBucket[] = [];
   let current: DayBucket | null = null;
   for (const row of rows) {
@@ -74,7 +74,7 @@ export default function ActivityTab() {
   }, [entityFilter, limit]);
 
   const rows = useQuery(sql, ([id, timestamp]) => ({
-    id: id as number,
+    id: id as string,
     timestamp: timestamp as string,
   }));
 
@@ -159,7 +159,7 @@ export default function ActivityTab() {
 
 interface DaySectionProps {
   day: string;
-  ids: number[];
+  ids: string[];
   searchTerm: string;
 }
 

@@ -15,7 +15,7 @@ import { logActivity } from '@/commands/activity/logActivity';
 /**
  * Inline dialog for adding an Ansprechpartner to a customer.
  */
-export function NewContactDialog({ customerId }: { customerId: number }) {
+export function NewContactDialog({ customerId }: { customerId: string }) {
   const [open, setOpen] = React.useState(false);
   const [name, setName] = React.useState('');
   const [role, setRole] = React.useState('');

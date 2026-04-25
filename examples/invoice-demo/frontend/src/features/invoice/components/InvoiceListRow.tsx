@@ -24,7 +24,7 @@ interface Header {
   status: string;
   date_issued: string;
   date_due: string;
-  customer_id: number;
+  customer_id: string;
 }
 
 interface GrossPos {
@@ -43,7 +43,7 @@ export const InvoiceListRow = memo(function InvoiceListRow({
   invoiceId,
   searchTerm,
 }: {
-  invoiceId: number;
+  invoiceId: string;
   searchTerm: string;
 }) {
   const navigate = useNavigate();
@@ -52,14 +52,14 @@ export const InvoiceListRow = memo(function InvoiceListRow({
   const headers = useQuery<Header>(
     `SELECT invoices.number, invoices.doc_type, invoices.status, invoices.date_issued, ` +
     `invoices.date_due, invoices.customer_id ` +
-    `FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([number, doc_type, status, date_issued, date_due, customer_id]) => ({
       number: number as string,
       doc_type: doc_type as string,
       status: status as string,
       date_issued: date_issued as string,
       date_due: date_due as string,
-      customer_id: customer_id as number,
+      customer_id: customer_id as string,
     }),
   );
 
@@ -137,20 +137,20 @@ export const InvoiceListRow = memo(function InvoiceListRow({
 });
 
 /** Subscribes to customers.name for the given id. */
-const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: number }) {
+const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: string }) {
   const rows = useQuery<string>(
-    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name]) => name as string,
   );
   return <span className="text-sm">{rows[0] ?? '—'}</span>;
 });
 
 /** Subscribes to all positions of this invoice and shows gross. */
-const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: number }) {
+const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: string }) {
   const positions = useQuery<GrossPos>(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
+    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -163,11 +163,11 @@ const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: number }) 
 });
 
 /** Subscribes to payments + positions to compute payment status. */
-const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: number }) {
+const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: string }) {
   const positions = useQuery<GrossPos>(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
+    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -177,7 +177,7 @@ const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: number
     }),
   );
   const payments = useQuery<number>(
-    `SELECT payments.amount FROM payments WHERE payments.invoice_id = ${invoiceId}`,
+    `SELECT payments.amount FROM payments WHERE payments.invoice_id = UUID '${invoiceId}'`,
     ([a]) => a as number,
   );
   const gross = computeGrossCents(positions);

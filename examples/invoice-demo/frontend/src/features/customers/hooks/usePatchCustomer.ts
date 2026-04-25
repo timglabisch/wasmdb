@@ -9,7 +9,7 @@ import type { CustomerRow } from '../types';
  * payload at write time via peekCustomer. The caller does not subscribe to
  * customer columns — re-renders only happen when customerId changes.
  */
-export function usePatchCustomer(customerId: number) {
+export function usePatchCustomer(customerId: string) {
   return useCallback((partial: Partial<CustomerRow>) => {
     const row = peekCustomer(customerId);
     if (!row) return;

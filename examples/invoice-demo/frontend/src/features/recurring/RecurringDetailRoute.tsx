@@ -41,16 +41,16 @@ export default function RecurringDetailRoute() {
   return <RecurringDetail key={recurringId} recurringId={recurringId} />;
 }
 
-function useRecurringExists(recurringId: number): boolean {
+function useRecurringExists(recurringId: string): boolean {
   const rows = useQuery(
     `SELECT recurring_invoices.id FROM recurring_invoices ` +
-    `WHERE recurring_invoices.id = ${recurringId}`,
-    ([id]) => id as number,
+    `WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    ([id]) => id as string,
   );
   return rows.length > 0;
 }
 
-function RecurringDetail({ recurringId }: { recurringId: number }) {
+function RecurringDetail({ recurringId }: { recurringId: string }) {
   const exists = useRecurringExists(recurringId);
   const navigate = useNavigate();
 
@@ -131,16 +131,16 @@ function RecurringDetail({ recurringId }: { recurringId: number }) {
 function DetailHeader({
   recurringId, onRun, onDelete,
 }: {
-  recurringId: number;
+  recurringId: string;
   onRun: () => void;
   onDelete: () => void;
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, recurring_invoices.enabled ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
     ([name, cid, enabled]) => ({
       name: name as string,
-      customerId: cid as number,
+      customerId: cid as string,
       enabled: enabled as number,
     }),
   );
@@ -196,9 +196,9 @@ function DetailHeader({
   );
 }
 
-function HeaderSubtitle({ customerId }: { customerId: number }) {
+function HeaderSubtitle({ customerId }: { customerId: string }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name]) => name as string,
   );
   const name = rows[0];
@@ -222,22 +222,22 @@ function HeaderSubtitle({ customerId }: { customerId: number }) {
 function TemplateCard({
   recurringId, patch,
 }: {
-  recurringId: number;
+  recurringId: string;
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
-    ([name, cid]) => ({ name: name as string, customerId: cid as number }),
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    ([name, cid]) => ({ name: name as string, customerId: cid as string }),
   );
   const t = rows[0];
 
   const customers = useQuery(
     'SELECT customers.id, customers.name FROM customers ORDER BY customers.name',
-    ([id, name]) => ({ id: id as number, name: name as string }),
+    ([id, name]) => ({ id: id as string, name: name as string }),
   );
   const customerOptions = React.useMemo(
-    () => customers.map(c => ({ value: String(c.id), label: c.name || '—' })),
+    () => customers.map(c => ({ value: c.id, label: c.name || '—' })),
     [customers],
   );
 
@@ -262,7 +262,7 @@ function TemplateCard({
             hint="Kunde wird beim Anlegen festgelegt und kann hier nicht geändert werden."
           >
             <BlurSelect
-              value={String(t.customerId)}
+              value={t.customerId}
               onCommit={() => {/* customer is immutable on the update path */}}
               options={customerOptions}
               disabled
@@ -278,13 +278,13 @@ function TemplateCard({
 function RhythmCard({
   recurringId, patch,
 }: {
-  recurringId: number;
+  recurringId: string;
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
     `recurring_invoices.next_run, recurring_invoices.last_run, recurring_invoices.enabled ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
     ([unit, value, next, last, enabled]) => ({
       unit: unit as string,
       value: value as number,
@@ -372,12 +372,12 @@ function RhythmCard({
 function InvoiceTemplateCard({
   recurringId, patch,
 }: {
-  recurringId: number;
+  recurringId: string;
   patch: ReturnType<typeof usePatchRecurring>;
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.status_template, recurring_invoices.notes_template ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
     ([status, notes]) => ({ status: status as string, notes: notes as string }),
   );
   const t = rows[0];
@@ -416,16 +416,16 @@ function InvoiceTemplateCard({
 // ── Positions ────────────────────────────────────────────────────────────
 
 interface PositionSummary {
-  id: number;
+  id: string;
   positionNr: number;
 }
 
-function PositionsCard({ recurringId }: { recurringId: number }) {
+function PositionsCard({ recurringId }: { recurringId: string }) {
   const positions = useQuery(
     `SELECT recurring_positions.id, recurring_positions.position_nr ` +
-    `FROM recurring_positions WHERE recurring_positions.recurring_id = ${recurringId} ` +
+    `FROM recurring_positions WHERE recurring_positions.recurring_id = UUID '${recurringId}' ` +
     `ORDER BY recurring_positions.position_nr`,
-    ([id, nr]): PositionSummary => ({ id: id as number, positionNr: nr as number }),
+    ([id, nr]): PositionSummary => ({ id: id as string, positionNr: nr as number }),
   );
 
   return (
@@ -490,14 +490,14 @@ const transparentCell =
 const PositionRow = React.memo(function PositionRow({
   positionId, index,
 }: {
-  positionId: number;
+  positionId: string;
   index: number;
 }) {
   const rows = useQuery(
     `SELECT recurring_positions.description, recurring_positions.quantity, ` +
     `recurring_positions.unit_price, recurring_positions.tax_rate, recurring_positions.unit, ` +
     `recurring_positions.item_number, recurring_positions.discount_pct ` +
-    `FROM recurring_positions WHERE recurring_positions.id = ${positionId}`,
+    `FROM recurring_positions WHERE recurring_positions.id = UUID '${positionId}'`,
     ([desc, qty, price, tax, unit, item, disc]) => ({
       description: desc as string,
       quantity: qty as number,
@@ -594,11 +594,11 @@ const PositionRow = React.memo(function PositionRow({
   );
 });
 
-function TotalsRow({ recurringId }: { recurringId: number }) {
+function TotalsRow({ recurringId }: { recurringId: string }) {
   const positions = useQuery(
     `SELECT recurring_positions.quantity, recurring_positions.unit_price, ` +
     `recurring_positions.tax_rate, recurring_positions.discount_pct ` +
-    `FROM recurring_positions WHERE recurring_positions.recurring_id = ${recurringId}`,
+    `FROM recurring_positions WHERE recurring_positions.recurring_id = UUID '${recurringId}'`,
     ([q, p, t, d]) => ({
       quantity: q as number,
       unitPrice: p as number,
@@ -644,7 +644,7 @@ function TotalsRow({ recurringId }: { recurringId: number }) {
 function AddPositionForm({
   recurringId, nextNr,
 }: {
-  recurringId: number;
+  recurringId: string;
   nextNr: number;
 }) {
   const [description, setDescription] = React.useState('');
@@ -715,15 +715,15 @@ function AddPositionForm({
 
 // ── History ──────────────────────────────────────────────────────────────
 
-function HistoryCard({ recurringId }: { recurringId: number }) {
+function HistoryCard({ recurringId }: { recurringId: string }) {
   const activity = useQuery(
     `SELECT activity_log.id, activity_log.timestamp, activity_log.action, activity_log.detail ` +
     `FROM activity_log ` +
     `WHERE activity_log.entity_type = 'recurring' ` +
-    `AND activity_log.entity_id = ${recurringId} ` +
+    `AND activity_log.entity_id = UUID '${recurringId}' ` +
     `ORDER BY activity_log.timestamp DESC`,
     ([id, ts, action, detail]) => ({
-      id: id as number,
+      id: id as string,
       timestamp: ts as string,
       action: action as string,
       detail: detail as string,

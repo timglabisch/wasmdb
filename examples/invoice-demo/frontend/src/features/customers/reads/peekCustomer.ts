@@ -12,14 +12,14 @@ const rowToCustomer = (r: any[]): CustomerRow => ({
   default_iban: r[15] as string, default_bic: r[16] as string, notes: r[17] as string,
 });
 
-export function peekCustomer(id: number): CustomerRow | null {
+export function peekCustomer(id: string): CustomerRow | null {
   const rows = peekQuery(
     `SELECT customers.name, customers.email, customers.company_type, customers.tax_id, customers.vat_id, ` +
     `customers.payment_terms_days, customers.default_discount_pct, ` +
     `customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country, ` +
     `customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country, ` +
     `customers.default_iban, customers.default_bic, customers.notes ` +
-    `FROM customers WHERE customers.id = ${id}`,
+    `FROM customers WHERE customers.id = UUID '${id}'`,
   );
   if (rows.length === 0) return null;
   return rowToCustomer(rows[0]);
@@ -30,10 +30,10 @@ const rowToContact = (r: any[]): ContactRow => ({
   role: r[3] as string, is_primary: r[4] as number,
 });
 
-export function peekContact(id: number): ContactRow | null {
+export function peekContact(id: string): ContactRow | null {
   const rows = peekQuery(
     `SELECT contacts.name, contacts.email, contacts.phone, contacts.role, contacts.is_primary ` +
-    `FROM contacts WHERE contacts.id = ${id}`,
+    `FROM contacts WHERE contacts.id = UUID '${id}'`,
   );
   if (rows.length === 0) return null;
   return rowToContact(rows[0]);
@@ -44,11 +44,11 @@ const rowToSepa = (r: any[]): SepaMandateRow => ({
   holder_name: r[3] as string, signed_at: r[4] as string, status: r[5] as string,
 });
 
-export function peekSepaMandate(id: number): SepaMandateRow | null {
+export function peekSepaMandate(id: string): SepaMandateRow | null {
   const rows = peekQuery(
     `SELECT sepa_mandates.mandate_ref, sepa_mandates.iban, sepa_mandates.bic, ` +
     `sepa_mandates.holder_name, sepa_mandates.signed_at, sepa_mandates.status ` +
-    `FROM sepa_mandates WHERE sepa_mandates.id = ${id}`,
+    `FROM sepa_mandates WHERE sepa_mandates.id = UUID '${id}'`,
   );
   if (rows.length === 0) return null;
   return rowToSepa(rows[0]);

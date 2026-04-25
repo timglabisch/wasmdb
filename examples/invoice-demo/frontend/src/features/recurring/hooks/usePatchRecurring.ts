@@ -12,7 +12,7 @@ import type { RecurringRow } from '../types';
  * Note: UpdateRecurring does not accept customer_id — customer changes are
  * therefore ignored at the write-time level; callers should not pass one.
  */
-export function usePatchRecurring(recurringId: number) {
+export function usePatchRecurring(recurringId: string) {
   return useCallback((partial: Partial<RecurringRow>) => {
     const row = peekRecurring(recurringId);
     if (!row) return;

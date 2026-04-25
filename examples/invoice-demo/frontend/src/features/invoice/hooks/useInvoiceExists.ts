@@ -5,10 +5,10 @@ import { useQuery } from '../../../wasm.ts';
  * full-row subscription means the detail shell only re-renders when the row
  * appears/disappears — not on every field edit.
  */
-export function useInvoiceExists(invoiceId: number): boolean {
+export function useInvoiceExists(invoiceId: string): boolean {
   const rows = useQuery(
-    `SELECT invoices.id FROM invoices WHERE invoices.id = ${invoiceId}`,
-    ([id]) => id as number,
+    `SELECT invoices.id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    ([id]) => id as string,
   );
   return rows.length > 0;
 }

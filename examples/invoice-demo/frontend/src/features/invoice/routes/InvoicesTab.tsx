@@ -18,7 +18,7 @@ const DOC_TYPES = ['invoice', 'offer', 'credit_note', 'delivery_note', 'proforma
 const STATUSES = ['draft', 'sent', 'paid', 'cancelled'];
 
 interface InvoiceListItem {
-  id: number;
+  id: string;
   docType: string;
   status: string;
 }
@@ -31,7 +31,7 @@ export default function InvoicesTab() {
   const rows = useAsyncQuery<InvoiceListItem>(
     'SELECT invoices.id, invoices.doc_type, invoices.status FROM invoices.all() ORDER BY invoices.date_issued DESC, invoices.id DESC',
     ([id, dt, st]) => ({
-      id: id as number,
+      id: id as string,
       docType: (dt as string) ?? '',
       status: (st as string) ?? '',
     }),

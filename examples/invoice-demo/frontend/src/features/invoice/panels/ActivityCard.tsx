@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQuery } from '@/wasm';
 
 interface Entry {
-  id: number;
+  id: string;
   timestamp: string;
   action: string;
   detail: string;
@@ -40,15 +40,15 @@ const iconFor = (action: string) => {
   return CircleDot;
 };
 
-export function ActivityCard({ invoiceId }: { invoiceId: number }) {
+export function ActivityCard({ invoiceId }: { invoiceId: string }) {
   // No generic helper for a 2-col filter, so we write SQL inline.
   const entries = useQuery<Entry>(
     `SELECT activity_log.id, activity_log.timestamp, activity_log.action, activity_log.detail ` +
     `FROM activity_log ` +
-    `WHERE activity_log.entity_type = 'invoice' AND activity_log.entity_id = ${invoiceId} ` +
+    `WHERE activity_log.entity_type = 'invoice' AND activity_log.entity_id = UUID '${invoiceId}' ` +
     `ORDER BY activity_log.timestamp DESC, activity_log.id DESC`,
     ([id, ts, action, detail]) => ({
-      id: id as number,
+      id: id as string,
       timestamp: ts as string,
       action: action as string,
       detail: detail as string,

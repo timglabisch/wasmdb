@@ -13,11 +13,15 @@ pub struct UpdateRecurringPosition {
     #[ts(type = "string")]
     pub id: Uuid,
     pub description: String,
+    #[ts(type = "number")]
     pub quantity: i64,
+    #[ts(type = "number")]
     pub unit_price: i64,
+    #[ts(type = "number")]
     pub tax_rate: i64,
     pub unit: String,
     pub item_number: String,
+    #[ts(type = "number")]
     pub discount_pct: i64,
 }
 

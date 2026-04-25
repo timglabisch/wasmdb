@@ -16,6 +16,7 @@ pub struct CreateRecurring {
     pub customer_id: Uuid,
     pub template_name: String,
     pub interval_unit: String,
+    #[ts(type = "number")]
     pub interval_value: i64,
     pub next_run: String,
     pub status_template: String,

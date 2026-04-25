@@ -20,7 +20,7 @@ import { AddPositionControls } from '@/features/invoice/components/AddPositionCo
 const GRID_INPUT =
   'h-7 border-transparent bg-transparent shadow-none focus-visible:border-input focus-visible:bg-background';
 
-interface PosIdRow { id: number; position_nr: number }
+interface PosIdRow { id: string; position_nr: number }
 
 /**
  * Positions grid. The list subscribes only to ids + position_nr for ordering.
@@ -29,15 +29,15 @@ interface PosIdRow { id: number; position_nr: number }
  * autofocused so typing can start immediately. Pressing Enter on the last
  * row's description appends another empty row, Fastbill-style.
  */
-export function PositionsCard({ invoiceId }: { invoiceId: number }) {
+export function PositionsCard({ invoiceId }: { invoiceId: string }) {
   const ids = useQuery<PosIdRow>(
     `SELECT positions.id, positions.position_nr FROM positions ` +
-    `WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
-    ([id, nr]) => ({ id: id as number, position_nr: nr as number }),
+    `WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
+    ([id, nr]) => ({ id: id as string, position_nr: nr as number }),
   );
   const nextPositionNr = (ids.length > 0 ? ids[ids.length - 1].position_nr : 0) + 1;
 
-  const [autoFocusId, setAutoFocusId] = useState<number | null>(null);
+  const [autoFocusId, setAutoFocusId] = useState<string | null>(null);
 
   const positions = useInvoicePositions(invoiceId);
   const net = computeNetCents(positions);
@@ -49,8 +49,8 @@ export function PositionsCard({ invoiceId }: { invoiceId: number }) {
   // the latest ids snapshot.
   const nextNrRef = useRef(nextPositionNr);
   nextNrRef.current = nextPositionNr;
-  const lastIdRef = useRef<number>(ids.length > 0 ? ids[ids.length - 1].id : 0);
-  lastIdRef.current = ids.length > 0 ? ids[ids.length - 1].id : 0;
+  const lastIdRef = useRef<string>(ids.length > 0 ? ids[ids.length - 1].id : '');
+  lastIdRef.current = ids.length > 0 ? ids[ids.length - 1].id : '';
 
   const addEmptyRow = useCallback(() => {
     const id = nextId();
@@ -151,7 +151,7 @@ interface PosRowFull {
   quantity: number;
   unit_price: number;
   tax_rate: number;
-  product_id: number;
+  product_id: string;
   item_number: string;
   unit: string;
   discount_pct: number;
@@ -165,7 +165,7 @@ const PositionRow = memo(function PositionRow({
   autoFocus,
   onEnterIfLast,
 }: {
-  positionId: number;
+  positionId: string;
   displayNr: number;
   autoFocus: boolean;
   onEnterIfLast?: () => void;
@@ -174,13 +174,13 @@ const PositionRow = memo(function PositionRow({
     `SELECT positions.description, positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.product_id, positions.item_number, positions.unit, positions.discount_pct, ` +
     `positions.cost_price, positions.position_type ` +
-    `FROM positions WHERE positions.id = ${positionId}`,
+    `FROM positions WHERE positions.id = UUID '${positionId}'`,
     ([desc, qty, up, tr, pid, item, unit, disc, cost, pt]) => ({
       description: desc as string,
       quantity: qty as number,
       unit_price: up as number,
       tax_rate: tr as number,
-      product_id: pid as number,
+      product_id: pid as string,
       item_number: item as string,
       unit: unit as string,
       discount_pct: disc as number,

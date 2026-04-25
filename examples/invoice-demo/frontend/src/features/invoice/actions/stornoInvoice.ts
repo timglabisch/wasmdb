@@ -11,7 +11,7 @@ import { isoDate } from './isoDate.ts';
  * Storno: mark the invoice cancelled AND emit a mirror credit note in the same
  * atomic stream. Keeps the audit trail clean for accounting.
  */
-export async function stornoInvoice(invoiceId: number): Promise<number | null> {
+export async function stornoInvoice(invoiceId: string): Promise<string | null> {
   const inv = peekInvoice(invoiceId);
   if (!inv) return null;
   if (!confirm(`"${inv.number}" stornieren (status=cancelled) und Gutschrift erzeugen?`)) return null;

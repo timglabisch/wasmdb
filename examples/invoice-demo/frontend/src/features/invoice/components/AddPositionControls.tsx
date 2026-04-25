@@ -11,7 +11,7 @@ import { addPosition } from '@/commands/position/addPosition';
 import { formatEuro } from '@/shared/lib/format';
 
 interface ProductRow {
-  id: number;
+  id: string;
   sku: string;
   name: string;
   unit: string;
@@ -35,9 +35,9 @@ export const AddPositionControls = memo(function AddPositionControls({
   nextPositionNr,
   onAdded,
 }: {
-  invoiceId: number;
+  invoiceId: string;
   nextPositionNr: number;
-  onAdded: (id: number) => void;
+  onAdded: (id: string) => void;
 }) {
   const onEmpty = useCallback(() => {
     const id = nextId();
@@ -66,9 +66,9 @@ const ProductPicker = memo(function ProductPicker({
   nextPositionNr,
   onAdded,
 }: {
-  invoiceId: number;
+  invoiceId: string;
   nextPositionNr: number;
-  onAdded: (id: number) => void;
+  onAdded: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [term, setTerm] = useState('');
@@ -76,7 +76,7 @@ const ProductPicker = memo(function ProductPicker({
   const products = useQuery<ProductRow>(
     'SELECT products.id, products.sku, products.name, products.unit, products.unit_price, products.tax_rate, products.cost_price FROM products WHERE products.active = 1 ORDER BY products.name',
     ([id, sku, name, unit, unit_price, tax_rate, cost_price]) => ({
-      id: id as number,
+      id: id as string,
       sku: sku as string,
       name: name as string,
       unit: unit as string,

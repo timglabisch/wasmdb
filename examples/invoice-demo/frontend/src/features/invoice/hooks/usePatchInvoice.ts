@@ -10,7 +10,7 @@ import type { InvoiceRow } from '../types.ts';
  * not subscribe to invoice columns — re-renders only happen when invoiceId
  * changes.
  */
-export function usePatchInvoice(invoiceId: number) {
+export function usePatchInvoice(invoiceId: string) {
   return useCallback((partial: Partial<InvoiceRow>) => {
     const inv = peekInvoice(invoiceId);
     if (!inv) return;

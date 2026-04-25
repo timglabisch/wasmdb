@@ -27,11 +27,11 @@ interface HeaderBits {
  * Minimal subscription for the header's action bar:
  * only the columns that change availability of actions.
  */
-export const HeaderActions = memo(function HeaderActions({ invoiceId }: { invoiceId: number }) {
+export const HeaderActions = memo(function HeaderActions({ invoiceId }: { invoiceId: string }) {
   const navigate = useNavigate();
   const rows = useQuery<HeaderBits>(
     `SELECT invoices.status, invoices.doc_type, invoices.number ` +
-    `FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([status, doc_type, number]) => ({
       status: status as string,
       doc_type: doc_type as string,

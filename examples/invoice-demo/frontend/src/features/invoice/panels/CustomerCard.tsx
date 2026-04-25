@@ -10,7 +10,7 @@ import { toast } from '@/components/ui/sonner';
 import { useQuery } from '@/wasm';
 import { assignCustomer } from '@/features/invoice/actions/assignCustomer';
 
-interface InvoiceFk { customer_id: number }
+interface InvoiceFk { customer_id: string }
 
 /**
  * Invoice's customer slot. Subscribes to `invoices.customer_id` only and
@@ -19,26 +19,26 @@ interface InvoiceFk { customer_id: number }
  *   - customer set  → read view with actions (switch / detach)
  *   - switching     → inline picker pre-opened on top
  */
-export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceId: number }) {
+export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<InvoiceFk>(
-    `SELECT invoices.customer_id FROM invoices WHERE invoices.id = ${invoiceId}`,
-    ([customer_id]) => ({ customer_id: customer_id as number }),
+    `SELECT invoices.customer_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    ([customer_id]) => ({ customer_id: customer_id as string }),
   );
-  const customerId = rows[0]?.customer_id ?? 0;
+  const customerId = rows[0]?.customer_id ?? '';
   const [picking, setPicking] = useState(false);
 
-  const onPick = useCallback(async (newId: number) => {
+  const onPick = useCallback(async (newId: string) => {
     setPicking(false);
     await assignCustomer(invoiceId, newId);
-    toast.success(newId > 0 ? 'Kunde zugewiesen' : 'Kunde entfernt');
+    toast.success(newId ? 'Kunde zugewiesen' : 'Kunde entfernt');
   }, [invoiceId]);
 
   const onDetach = useCallback(async () => {
-    await assignCustomer(invoiceId, 0);
+    await assignCustomer(invoiceId, '');
     toast.success('Kunde entfernt');
   }, [invoiceId]);
 
-  const showPicker = customerId === 0 || picking;
+  const showPicker = !customerId || picking;
 
   return (
     <Card>
@@ -74,14 +74,14 @@ interface CustomerDisplay {
 const CustomerBody = memo(function CustomerBody({
   customerId, onSwitch, onDetach,
 }: {
-  customerId: number;
+  customerId: string;
   onSwitch: () => void;
   onDetach: () => void;
 }) {
   const rows = useQuery<CustomerDisplay>(
     `SELECT customers.name, customers.email, customers.billing_street, customers.billing_zip, ` +
     `customers.billing_city, customers.billing_country, customers.payment_terms_days ` +
-    `FROM customers WHERE customers.id = ${customerId}`,
+    `FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name, email, st, zip, city, country, terms]) => ({
       name: name as string,
       email: email as string,
@@ -145,7 +145,7 @@ const CustomerBody = memo(function CustomerBody({
 });
 
 interface CustomerOption {
-  id: number;
+  id: string;
   name: string;
   email: string;
   city: string;
@@ -154,15 +154,15 @@ interface CustomerOption {
 const CustomerPicker = memo(function CustomerPicker({
   currentId, onPick, onCancel,
 }: {
-  currentId: number;
-  onPick: (id: number) => void;
+  currentId: string;
+  onPick: (id: string) => void;
   onCancel?: () => void;
 }) {
   const [term, setTerm] = useState('');
   const customers = useQuery<CustomerOption>(
     'SELECT customers.id, customers.name, customers.email, customers.billing_city FROM customers ORDER BY customers.name',
     ([id, name, email, city]) => ({
-      id: id as number,
+      id: id as string,
       name: name as string,
       email: email as string,
       city: city as string,

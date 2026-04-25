@@ -7,7 +7,7 @@ export type EntityType = 'customer' | 'invoice' | 'payment' | 'recurring' | 'pro
 
 export interface ActivityInput {
   entityType: EntityType;
-  entityId: number;
+  entityId: string;
   action: string;
   detail: string;
 }

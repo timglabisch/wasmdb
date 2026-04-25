@@ -10,7 +10,7 @@ import { isoDate } from './isoDate.ts';
  * Create a credit note for an existing invoice: fresh draft with negated
  * quantities + parent_id link back to the source invoice.
  */
-export async function createCreditNote(invoiceId: number): Promise<number | null> {
+export async function createCreditNote(invoiceId: string): Promise<string | null> {
   const inv = peekInvoice(invoiceId);
   if (!inv) return null;
   if (!confirm(`Gutschrift zu "${inv.number}" erzeugen?`)) return null;

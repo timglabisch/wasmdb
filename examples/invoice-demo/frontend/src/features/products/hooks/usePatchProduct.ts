@@ -10,7 +10,7 @@ import type { ProductRow } from '../types';
  * not subscribe to product columns — re-renders only happen when productId
  * changes.
  */
-export function usePatchProduct(productId: number) {
+export function usePatchProduct(productId: string) {
   return useCallback((partial: Partial<ProductRow>) => {
     const p = peekProduct(productId);
     if (!p) return;

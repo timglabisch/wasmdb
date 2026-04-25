@@ -43,7 +43,7 @@ const invoicesIndexRoute = createRoute({
 const invoiceDetailRoute = createRoute({
   getParentRoute: () => invoicesLayoutRoute,
   path: '$invoiceId',
-  parseParams: (raw) => ({ invoiceId: Number(raw.invoiceId) }),
+  parseParams: (raw) => ({ invoiceId: String(raw.invoiceId) }),
   stringifyParams: ({ invoiceId }) => ({ invoiceId: String(invoiceId) }),
   component: InvoiceDetail,
 });
@@ -63,7 +63,7 @@ const customersIndexRoute = createRoute({
 const customerDetailRoute = createRoute({
   getParentRoute: () => customersLayoutRoute,
   path: '$customerId',
-  parseParams: (raw) => ({ customerId: Number(raw.customerId) }),
+  parseParams: (raw) => ({ customerId: String(raw.customerId) }),
   stringifyParams: ({ customerId }) => ({ customerId: String(customerId) }),
   component: CustomerDetailRoute,
 });
@@ -83,7 +83,7 @@ const productsIndexRoute = createRoute({
 const productDetailRoute = createRoute({
   getParentRoute: () => productsLayoutRoute,
   path: '$productId',
-  parseParams: (raw) => ({ productId: Number(raw.productId) }),
+  parseParams: (raw) => ({ productId: String(raw.productId) }),
   stringifyParams: ({ productId }) => ({ productId: String(productId) }),
   component: ProductDetailRoute,
 });
@@ -103,7 +103,7 @@ const recurringIndexRoute = createRoute({
 const recurringDetailRoute = createRoute({
   getParentRoute: () => recurringLayoutRoute,
   path: '$recurringId',
-  parseParams: (raw) => ({ recurringId: Number(raw.recurringId) }),
+  parseParams: (raw) => ({ recurringId: String(raw.recurringId) }),
   stringifyParams: ({ recurringId }) => ({ recurringId: String(recurringId) }),
   component: RecurringDetailRoute,
 });

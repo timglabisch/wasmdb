@@ -16,6 +16,7 @@ pub struct UpdateContact {
     pub email: String,
     pub phone: String,
     pub role: String,
+    #[ts(type = "number")]
     pub is_primary: i64,
 }
 

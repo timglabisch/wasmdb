@@ -14,13 +14,18 @@ pub struct AddRecurringPosition {
     pub id: Uuid,
     #[ts(type = "string")]
     pub recurring_id: Uuid,
+    #[ts(type = "number")]
     pub position_nr: i64,
     pub description: String,
+    #[ts(type = "number")]
     pub quantity: i64,
+    #[ts(type = "number")]
     pub unit_price: i64,
+    #[ts(type = "number")]
     pub tax_rate: i64,
     pub unit: String,
     pub item_number: String,
+    #[ts(type = "number")]
     pub discount_pct: i64,
 }
 

@@ -13,7 +13,7 @@ import { logActivity } from '@/commands/activity/logActivity';
 import { todayISO } from '../lib/util';
 
 /** Inline dialog for adding a SEPA-Mandat to a customer. */
-export function NewSepaMandateDialog({ customerId }: { customerId: number }) {
+export function NewSepaMandateDialog({ customerId }: { customerId: string }) {
   const [open, setOpen] = React.useState(false);
   const [mandateRef, setMandateRef] = React.useState('');
   const [iban, setIban] = React.useState('');

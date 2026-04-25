@@ -65,7 +65,7 @@ export default function ProductsTab() {
 }
 
 interface ProductListRow {
-  id: number;
+  id: string;
   sku: string;
   name: string;
 }
@@ -78,7 +78,7 @@ function ProductsList({ filter }: { filter: string }) {
     'SELECT products.id, products.sku, products.name FROM products.all() ' +
       'ORDER BY products.name ASC',
     ([id, sku, name]): ProductListRow => ({
-      id: id as number,
+      id: id as string,
       sku: sku as string,
       name: name as string,
     }),
@@ -154,12 +154,12 @@ interface ProductRowData {
   active: number;
 }
 
-const ProductListRow = React.memo(function ProductListRow({ productId }: { productId: number }) {
+const ProductListRow = React.memo(function ProductListRow({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const rows = useQuery(
     `SELECT products.sku, products.name, products.unit, products.unit_price, ` +
     `products.tax_rate, products.cost_price, products.active ` +
-    `FROM products WHERE products.id = ${productId}`,
+    `FROM products WHERE products.id = UUID '${productId}'`,
     ([sku, name, unit, unit_price, tax_rate, cost_price, active]): ProductRowData => ({
       sku: sku as string,
       name: name as string,

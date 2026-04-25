@@ -16,9 +16,13 @@ pub struct CreateProduct {
     pub name: String,
     pub description: String,
     pub unit: String,
+    #[ts(type = "number")]
     pub unit_price: i64,
+    #[ts(type = "number")]
     pub tax_rate: i64,
+    #[ts(type = "number")]
     pub cost_price: i64,
+    #[ts(type = "number")]
     pub active: i64,
 }
 

@@ -12,7 +12,7 @@ import { cn } from '@/lib/cn';
 const TOP_N = 10;
 
 interface InvoicePosition {
-  invoiceId: number;
+  invoiceId: string;
   quantity: number;
   unitPrice: number;
   taxRate: number;
@@ -21,7 +21,7 @@ interface InvoicePosition {
 }
 
 interface CustomerTotals {
-  customerId: number;
+  customerId: string;
   gross: number;
   paid: number;
   invoiceCount: number;
@@ -41,7 +41,7 @@ export function TopCustomers() {
   const invoices = useQuery(
     `SELECT invoices.id, invoices.customer_id FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice'`,
-    ([id, customerId]) => ({ id: id as number, customerId: customerId as number }),
+    ([id, customerId]) => ({ id: id as string, customerId: customerId as string }),
   );
 
   // All positions across all invoices. Gross is computed in JS because
@@ -50,7 +50,7 @@ export function TopCustomers() {
     `SELECT positions.invoice_id, positions.quantity, positions.unit_price, ` +
       `positions.tax_rate, positions.discount_pct, positions.position_type FROM positions`,
     ([invoiceId, quantity, unitPrice, taxRate, discountPct, positionType]): InvoicePosition => ({
-      invoiceId: invoiceId as number,
+      invoiceId: invoiceId as string,
       quantity: quantity as number,
       unitPrice: unitPrice as number,
       taxRate: taxRate as number,
@@ -63,14 +63,14 @@ export function TopCustomers() {
   const payments = useQuery(
     `SELECT payments.invoice_id, payments.amount FROM payments`,
     ([invoiceId, amount]) => ({
-      invoiceId: invoiceId as number,
+      invoiceId: invoiceId as string,
       amount: amount as number,
     }),
   );
 
   const totals = React.useMemo<CustomerTotals[]>(() => {
-    const invoiceToCustomer = new Map<number, number>();
-    const invoiceCountByCustomer = new Map<number, number>();
+    const invoiceToCustomer = new Map<string, string>();
+    const invoiceCountByCustomer = new Map<string, number>();
     for (const inv of invoices) {
       invoiceToCustomer.set(inv.id, inv.customerId);
       invoiceCountByCustomer.set(
@@ -79,7 +79,7 @@ export function TopCustomers() {
       );
     }
 
-    const grossByCustomer = new Map<number, number>();
+    const grossByCustomer = new Map<string, number>();
     for (const p of positions) {
       if (p.positionType !== 'service' && p.positionType !== 'product') continue;
       const customerId = invoiceToCustomer.get(p.invoiceId);
@@ -90,7 +90,7 @@ export function TopCustomers() {
       grossByCustomer.set(customerId, (grossByCustomer.get(customerId) ?? 0) + gross);
     }
 
-    const paidByCustomer = new Map<number, number>();
+    const paidByCustomer = new Map<string, number>();
     for (const pay of payments) {
       const customerId = invoiceToCustomer.get(pay.invoiceId);
       if (customerId === undefined) continue;
@@ -148,7 +148,7 @@ export function TopCustomers() {
 }
 
 interface TopCustomerRowProps {
-  customerId: number;
+  customerId: string;
   gross: number;
   paid: number;
   invoiceCount: number;
@@ -187,11 +187,11 @@ const CustomerIdentity = React.memo(function CustomerIdentity({
   customerId,
   invoiceCount,
 }: {
-  customerId: number;
+  customerId: string;
   invoiceCount: number;
 }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name]) => name as string,
   );
   const name = rows[0];

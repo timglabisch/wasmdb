@@ -25,14 +25,14 @@ import type { BadgeProps } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 
 export interface ActivityRowProps {
-  activityId: number;
+  activityId: string;
   searchTerm: string;
 }
 
 interface ActivityRow {
   timestamp: string;
   entityType: string;
-  entityId: number;
+  entityId: string;
   action: string;
   actor: string;
   detail: string;
@@ -57,11 +57,11 @@ export const ActivityRow = React.memo(function ActivityRow({
   const rows = useQuery(
     `SELECT activity_log.timestamp, activity_log.entity_type, activity_log.entity_id, ` +
     `activity_log.action, activity_log.actor, activity_log.detail ` +
-    `FROM activity_log WHERE activity_log.id = ${activityId}`,
+    `FROM activity_log WHERE activity_log.id = UUID '${activityId}'`,
     ([timestamp, entityType, entityId, action, actor, detail]) => ({
       timestamp: timestamp as string,
       entityType: entityType as string,
-      entityId: entityId as number,
+      entityId: entityId as string,
       action: action as string,
       actor: actor as string,
       detail: detail as string,
@@ -341,7 +341,7 @@ function routeFor(entityType: string): EntityRoute | null {
 
 interface EntityLabelProps {
   entityType: string;
-  entityId: number;
+  entityId: string;
 }
 
 const EntityLabel = React.memo(function EntityLabel({
@@ -370,7 +370,7 @@ function LabelText({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DeletedLabel({ entityId }: { entityId: number }) {
+function DeletedLabel({ entityId }: { entityId: string }) {
   return (
     <span className="truncate font-mono text-sm font-semibold text-muted-foreground line-through">
       #{entityId}
@@ -381,10 +381,10 @@ function DeletedLabel({ entityId }: { entityId: number }) {
 const InvoiceLabel = React.memo(function InvoiceLabel({
   entityId,
 }: {
-  entityId: number;
+  entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT invoices.number FROM invoices WHERE invoices.id = ${entityId}`,
+    `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${entityId}'`,
     ([number]) => number as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -395,10 +395,10 @@ const InvoiceLabel = React.memo(function InvoiceLabel({
 const CustomerLabel = React.memo(function CustomerLabel({
   entityId,
 }: {
-  entityId: number;
+  entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = ${entityId}`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${entityId}'`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -413,10 +413,10 @@ const CustomerLabel = React.memo(function CustomerLabel({
 const ProductLabel = React.memo(function ProductLabel({
   entityId,
 }: {
-  entityId: number;
+  entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT products.sku, products.name FROM products WHERE products.id = ${entityId}`,
+    `SELECT products.sku, products.name FROM products WHERE products.id = UUID '${entityId}'`,
     ([sku, name]) => ({ sku: sku as string, name: name as string }),
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -432,11 +432,11 @@ const ProductLabel = React.memo(function ProductLabel({
 const RecurringLabel = React.memo(function RecurringLabel({
   entityId,
 }: {
-  entityId: number;
+  entityId: string;
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name FROM recurring_invoices ` +
-    `WHERE recurring_invoices.id = ${entityId}`,
+    `WHERE recurring_invoices.id = UUID '${entityId}'`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -453,7 +453,7 @@ function FallbackLabel({
   entityId,
 }: {
   entityType: string;
-  entityId: number;
+  entityId: string;
 }) {
   const label = ENTITY_LABEL_DE[entityType] ?? entityType ?? 'Eintrag';
   return (

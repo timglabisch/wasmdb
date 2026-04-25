@@ -3,7 +3,7 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 type Variant = Extract<InvoiceCommand, { type: 'CreateCustomer' }>;
 
 const DEFAULTS: Omit<Variant, 'type'> = {
-  id: 0, name: '', email: '', created_at: '',
+  id: '', name: '', email: '', created_at: '',
   company_type: 'company', tax_id: '', vat_id: '',
   payment_terms_days: 14, default_discount_pct: 0,
   billing_street: '', billing_zip: '', billing_city: '', billing_country: 'DE',

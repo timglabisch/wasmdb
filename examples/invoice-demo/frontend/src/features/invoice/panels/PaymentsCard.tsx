@@ -30,20 +30,20 @@ const METHODS = [
 const METHOD_LABEL: Record<string, string> = Object.fromEntries(METHODS.map((m) => [m.value, m.label]));
 
 interface PaymentRow {
-  id: number;
+  id: string;
   paid_at: string;
   amount: number;
   method: string;
   reference: string;
 }
 
-export function PaymentsCard({ invoiceId }: { invoiceId: number }) {
+export function PaymentsCard({ invoiceId }: { invoiceId: string }) {
   const payments = useQuery<PaymentRow>(
     `SELECT payments.id, payments.paid_at, payments.amount, payments.method, payments.reference ` +
-    `FROM payments WHERE payments.invoice_id = ${invoiceId} ` +
+    `FROM payments WHERE payments.invoice_id = UUID '${invoiceId}' ` +
     `ORDER BY payments.paid_at DESC, payments.id`,
     ([id, paid_at, amount, method, ref]) => ({
-      id: id as number,
+      id: id as string,
       paid_at: paid_at as string,
       amount: amount as number,
       method: method as string,
@@ -96,7 +96,7 @@ function NewPaymentForm({
   invoiceId,
   defaultAmount,
 }: {
-  invoiceId: number;
+  invoiceId: string;
   defaultAmount: number;
 }) {
   const [paidAt, setPaidAt] = useState(() => isoDate(0));

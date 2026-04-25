@@ -17,7 +17,9 @@ pub struct UpdateCustomer {
     pub company_type: String,
     pub tax_id: String,
     pub vat_id: String,
+    #[ts(type = "number")]
     pub payment_terms_days: i64,
+    #[ts(type = "number")]
     pub default_discount_pct: i64,
     pub billing_street: String,
     pub billing_zip: String,

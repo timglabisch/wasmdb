@@ -26,7 +26,7 @@ import { runRecurringAction } from './actions/runRecurring';
 import { formatInterval, formatRelativeDays } from './lib/interval';
 
 interface RowId {
-  id: number;
+  id: string;
   nextRun: string;
 }
 
@@ -36,7 +36,7 @@ export default function RecurringTab() {
   const ids = useAsyncQuery(
     'SELECT recurring_invoices.id, recurring_invoices.next_run ' +
     'FROM recurring_invoices.all() ORDER BY recurring_invoices.next_run ASC',
-    ([id, nextRun]) => ({ id: id as number, nextRun: nextRun as string }),
+    ([id, nextRun]) => ({ id: id as string, nextRun: nextRun as string }),
   );
 
   return (
@@ -114,7 +114,7 @@ function EmptyState() {
 }
 
 interface RowProps {
-  recurringId: number;
+  recurringId: string;
   query: string;
 }
 
@@ -124,10 +124,10 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, ` +
     `recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
     `recurring_invoices.next_run, recurring_invoices.enabled, recurring_invoices.status_template ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
     ([name, cid, unit, value, next, enabled, status]) => ({
       name: name as string,
-      customerId: cid as number,
+      customerId: cid as string,
       intervalUnit: unit as string,
       intervalValue: value as number,
       nextRun: next as string,
@@ -242,9 +242,9 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
   );
 });
 
-const CustomerCell = React.memo(function CustomerCell({ customerId }: { customerId: number }) {
+const CustomerCell = React.memo(function CustomerCell({ customerId }: { customerId: string }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = ${customerId}`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([name]) => name as string,
   );
   const name = rows[0];

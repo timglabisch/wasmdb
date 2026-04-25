@@ -12,11 +12,11 @@ export interface GrossPosition {
  * Reactive planner rejects arithmetic inside SUM. So we subscribe to the raw
  * rows of an invoice and fold totals in JS.
  */
-export function useInvoicePositions(invoiceId: number): GrossPosition[] {
+export function useInvoicePositions(invoiceId: string): GrossPosition[] {
   return useQuery(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = ${invoiceId} ORDER BY positions.position_nr`,
+    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -55,7 +55,7 @@ export function countCalculated(positions: GrossPosition[]): number {
 }
 
 /** One-shot: fetch + gross. Useful for badges/totals that only need the sum. */
-export function useInvoiceGrossCents(invoiceId: number): number {
+export function useInvoiceGrossCents(invoiceId: string): number {
   return computeGrossCents(useInvoicePositions(invoiceId));
 }
 

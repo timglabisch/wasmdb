@@ -3,7 +3,7 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 type Variant = Extract<InvoiceCommand, { type: 'UpdateProduct' }>;
 
 const DEFAULTS: Omit<Variant, 'type'> = {
-  id: 0, sku: '', name: '', description: '',
+  id: '', sku: '', name: '', description: '',
   unit: 'Stk', unit_price: 0, tax_rate: 1900, cost_price: 0,
   active: 1,
 };

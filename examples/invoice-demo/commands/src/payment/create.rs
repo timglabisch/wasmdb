@@ -14,6 +14,7 @@ pub struct CreatePayment {
     pub id: Uuid,
     #[ts(type = "string")]
     pub invoice_id: Uuid,
+    #[ts(type = "number")]
     pub amount: i64,
     pub paid_at: String,
     pub method: String,

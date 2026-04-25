@@ -5,7 +5,7 @@ import { peekContact } from '../reads/peekCustomer';
 import type { ContactRow } from '../types';
 
 /** Stable patch for a contact row. */
-export function usePatchContact(contactId: number) {
+export function usePatchContact(contactId: string) {
   return useCallback((partial: Partial<ContactRow>) => {
     const row = peekContact(contactId);
     if (!row) return;

@@ -2,7 +2,7 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 
 type Variant = Extract<InvoiceCommand, { type: 'DeleteInvoice' }>;
 
-const DEFAULTS: Omit<Variant, 'type'> = { id: 0 };
+const DEFAULTS: Omit<Variant, 'type'> = { id: '' };
 
 /** Cascading delete — drops the invoice plus its positions and payments. */
 export function deleteInvoice(args: Partial<Omit<Variant, 'type'>> = {}): InvoiceCommand {

@@ -48,7 +48,7 @@ const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
 async function seedSample() {
   const stream = createStream(512);
 
-  const productIds: number[] = [];
+  const productIds: string[] = [];
   for (const p of PRODUCTS) {
     const pid = nextId();
     productIds.push(pid);
@@ -104,7 +104,7 @@ async function seedSample() {
       const status = pick(['draft', 'sent', 'paid']);
       executeOnStream(stream, createInvoice({
         id: invoiceId, customer_id: customerId,
-        number: `INV-2026-${String(invoiceId).padStart(4, '0')}`,
+        number: `INV-2026-${invoiceId.slice(0, 8)}`,
         status, date_issued: isoDate(issued), date_due: isoDate(issued + 14),
         doc_type: 'invoice', payment_method: pick(['transfer', 'sepa']),
         billing_street: 'Hauptstr. 10',

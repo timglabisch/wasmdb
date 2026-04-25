@@ -13,7 +13,7 @@ const STATUS_OPTIONS = Object.entries(STATUS_LABEL).map(([value, label]) => ({ v
  * Each logical field is its own memoized tile that subscribes to exactly one column
  * of `invoices`. That way a status edit doesn't re-render the due-date tile etc.
  */
-export function HeaderFieldsCard({ invoiceId }: { invoiceId: number }) {
+export function HeaderFieldsCard({ invoiceId }: { invoiceId: string }) {
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -33,9 +33,9 @@ export function HeaderFieldsCard({ invoiceId }: { invoiceId: number }) {
   );
 }
 
-const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: number }) {
+const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.number FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -47,9 +47,9 @@ const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: number }
   );
 });
 
-const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: number }) {
+const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.doc_type FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.doc_type FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -64,9 +64,9 @@ const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: number
   );
 });
 
-const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: number }) {
+const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.status FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.status FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -81,9 +81,9 @@ const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: number }
   );
 });
 
-const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: number }) {
+const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.date_issued FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.date_issued FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -95,9 +95,9 @@ const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: number }
 });
 
 interface DueBits { date_due: string; status: string }
-const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: number }) {
+const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<DueBits>(
-    `SELECT invoices.date_due, invoices.status FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.date_due, invoices.status FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([date_due, status]) => ({ date_due: date_due as string, status: status as string }),
   );
   const patch = usePatchInvoice(invoiceId);
@@ -117,9 +117,9 @@ const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: number }) {
   );
 });
 
-const ServiceDateTile = memo(function ServiceDateTile({ invoiceId }: { invoiceId: number }) {
+const ServiceDateTile = memo(function ServiceDateTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.service_date FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.service_date FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);

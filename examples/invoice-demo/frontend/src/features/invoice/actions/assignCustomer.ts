@@ -11,13 +11,13 @@ interface CustomerDefaults {
   shipping_street: string; shipping_zip: string; shipping_city: string; shipping_country: string;
 }
 
-function peekCustomer(customerId: number): CustomerDefaults | null {
-  if (customerId <= 0) return null;
+function peekCustomer(customerId: string): CustomerDefaults | null {
+  if (!customerId) return null;
   const rows = peekQuery(
     `SELECT customers.name, customers.payment_terms_days, ` +
     `customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country, ` +
     `customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country ` +
-    `FROM customers WHERE customers.id = ${customerId}`,
+    `FROM customers WHERE customers.id = UUID '${customerId}'`,
   );
   if (rows.length === 0) return null;
   const r = rows[0];
@@ -44,7 +44,7 @@ const addrIsEmpty = (inv: {
  * derives a sensible date_due from their payment-terms. Existing addresses are
  * kept as-is so we never clobber user edits.
  */
-export async function assignCustomer(invoiceId: number, customerId: number): Promise<void> {
+export async function assignCustomer(invoiceId: string, customerId: string): Promise<void> {
   const inv = peekInvoice(invoiceId);
   if (!inv) return;
   const cust = peekCustomer(customerId);

@@ -21,8 +21,11 @@ pub struct UpdateInvoiceHeader {
     #[ts(type = "string")]
     pub parent_id: Uuid,
     pub service_date: String,
+    #[ts(type = "number")]
     pub cash_allowance_pct: i64,
+    #[ts(type = "number")]
     pub cash_allowance_days: i64,
+    #[ts(type = "number")]
     pub discount_pct: i64,
     pub payment_method: String,
     #[ts(type = "string")]

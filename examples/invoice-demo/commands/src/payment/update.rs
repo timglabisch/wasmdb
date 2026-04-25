@@ -12,6 +12,7 @@ use crate::helpers::{execute_sql, p_int, p_str, p_uuid};
 pub struct UpdatePayment {
     #[ts(type = "string")]
     pub id: Uuid,
+    #[ts(type = "number")]
     pub amount: i64,
     pub paid_at: String,
     pub method: String,

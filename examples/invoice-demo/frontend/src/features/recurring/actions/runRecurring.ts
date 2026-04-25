@@ -8,7 +8,7 @@ import { advanceDate } from '../lib/interval';
 const DOC_PREFIX = 'INV';
 
 interface RunRecurringResult {
-  invoiceId: number;
+  invoiceId: string;
   invoiceNumber: string;
 }
 
@@ -18,35 +18,35 @@ function isoDate(offsetDays = 0): string {
   return d.toISOString().slice(0, 10);
 }
 
-function peekTemplateHeader(recurringId: number) {
+function peekTemplateHeader(recurringId: string) {
   const rows = peekQuery(
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, ` +
     `recurring_invoices.interval_unit, recurring_invoices.interval_value, recurring_invoices.next_run ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = ${recurringId}`,
+    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
   );
   if (rows.length === 0) return null;
   const r = rows[0];
   return {
     template_name: r[0] as string,
-    customer_id: r[1] as number,
+    customer_id: r[1] as string,
     interval_unit: r[2] as string,
     interval_value: r[3] as number,
     next_run: r[4] as string,
   };
 }
 
-function peekPositionCount(recurringId: number): number {
+function peekPositionCount(recurringId: string): number {
   const rows = peekQuery(
     `SELECT recurring_positions.id FROM recurring_positions ` +
-    `WHERE recurring_positions.recurring_id = ${recurringId}`,
+    `WHERE recurring_positions.recurring_id = UUID '${recurringId}'`,
   );
   return rows.length;
 }
 
-function peekPaymentTermsDays(customerId: number): number {
-  if (customerId <= 0) return 14;
+function peekPaymentTermsDays(customerId: string): number {
+  if (!customerId) return 14;
   const rows = peekQuery(
-    `SELECT customers.payment_terms_days FROM customers WHERE customers.id = ${customerId}`,
+    `SELECT customers.payment_terms_days FROM customers WHERE customers.id = UUID '${customerId}'`,
   );
   if (rows.length === 0) return 14;
   const v = rows[0][0] as number;
@@ -57,20 +57,20 @@ function peekPaymentTermsDays(customerId: number): number {
  * Materialize a recurring template into a concrete invoice + positions in one
  * atomic stream, plus an audit entry. Returns the created invoice id/number.
  */
-export async function runRecurringAction(recurringId: number): Promise<RunRecurringResult | null> {
+export async function runRecurringAction(recurringId: string): Promise<RunRecurringResult | null> {
   const header = peekTemplateHeader(recurringId);
   if (!header) return null;
 
   const newInvoiceId = nextId();
   const dueDays = peekPaymentTermsDays(header.customer_id);
-  const newNumber = `${DOC_PREFIX}-${new Date().getFullYear()}-${String(newInvoiceId).padStart(4, '0')}`;
+  const newNumber = `${DOC_PREFIX}-${new Date().getFullYear()}-${newInvoiceId.slice(0, 8)}`;
   const issueDate = header.next_run && header.next_run <= isoDate(7) ? header.next_run : isoDate();
   const dueDate = isoDate(dueDays);
   const newNextRun = advanceDate(header.next_run || issueDate, header.interval_unit, header.interval_value);
 
   // Allocate an id per position up-front so the command is fully self-contained.
   const positionCount = peekPositionCount(recurringId);
-  const positionIds: number[] = [];
+  const positionIds: string[] = [];
   for (let i = 0; i < positionCount; i++) positionIds.push(nextId());
 
   const stream = createStream(2);

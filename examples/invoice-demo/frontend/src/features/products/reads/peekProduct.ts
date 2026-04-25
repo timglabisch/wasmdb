@@ -13,11 +13,11 @@ const rowToProduct = (r: any[]): ProductRow => ({
 });
 
 /** One-shot non-reactive full-row read. Used at write time to compose UpdateProduct payloads. */
-export function peekProduct(productId: number): ProductRow | null {
+export function peekProduct(productId: string): ProductRow | null {
   const rows = peekQuery(
     `SELECT products.sku, products.name, products.description, products.unit, ` +
     `products.unit_price, products.tax_rate, products.cost_price, products.active ` +
-    `FROM products WHERE products.id = ${productId}`,
+    `FROM products WHERE products.id = UUID '${productId}'`,
   );
   if (rows.length === 0) return null;
   return rowToProduct(rows[0]);

@@ -5,10 +5,10 @@ import { useQuery } from '@/wasm';
  * full-row subscription means the detail shell only re-renders when the row
  * appears/disappears — not on every field edit.
  */
-export function useProductExists(productId: number): boolean {
+export function useProductExists(productId: string): boolean {
   const rows = useQuery(
-    `SELECT products.id FROM products WHERE products.id = ${productId}`,
-    ([id]) => id as number,
+    `SELECT products.id FROM products WHERE products.id = UUID '${productId}'`,
+    ([id]) => id as string,
   );
   return rows.length > 0;
 }

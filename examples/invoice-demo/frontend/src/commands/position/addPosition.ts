@@ -3,9 +3,9 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 type Variant = Extract<InvoiceCommand, { type: 'AddPosition' }>;
 
 const DEFAULTS: Omit<Variant, 'type'> = {
-  id: 0, invoice_id: 0, position_nr: 0,
+  id: '', invoice_id: '', position_nr: 0,
   description: '', quantity: 1000, unit_price: 0, tax_rate: 1900,
-  product_id: 0, item_number: '', unit: 'Stk',
+  product_id: '', item_number: '', unit: 'Stk',
   discount_pct: 0, cost_price: 0, position_type: 'service',
 };
 

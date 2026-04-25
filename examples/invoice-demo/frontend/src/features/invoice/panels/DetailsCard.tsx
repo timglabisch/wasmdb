@@ -30,7 +30,7 @@ const LANGUAGE_OPTIONS = [
   { value: 'en', label: 'Englisch' },
 ];
 
-export function DetailsCard({ invoiceId }: { invoiceId: number }) {
+export function DetailsCard({ invoiceId }: { invoiceId: string }) {
   return (
     <Card>
       <CardContent className="px-5 py-0">
@@ -69,18 +69,18 @@ export function DetailsCard({ invoiceId }: { invoiceId: number }) {
 
 interface PaymentBits {
   payment_method: string;
-  sepa_mandate_id: number;
-  customer_id: number;
+  sepa_mandate_id: string;
+  customer_id: string;
 }
 
-function PaymentSection({ invoiceId }: { invoiceId: number }) {
+function PaymentSection({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<PaymentBits>(
     `SELECT invoices.payment_method, invoices.sepa_mandate_id, invoices.customer_id ` +
-    `FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([pm, sm, ci]) => ({
       payment_method: pm as string,
-      sepa_mandate_id: sm as number,
-      customer_id: ci as number,
+      sepa_mandate_id: sm as string,
+      customer_id: ci as string,
     }),
   );
   const patch = usePatchInvoice(invoiceId);
@@ -111,41 +111,41 @@ function PaymentSection({ invoiceId }: { invoiceId: number }) {
   );
 }
 
-interface SepaMandate { id: number; mandate_ref: string; status: string }
+interface SepaMandate { id: string; mandate_ref: string; status: string }
 
 const SepaMandatePicker = memo(function SepaMandatePicker({
   customerId, value, onCommit,
 }: {
-  customerId: number;
-  value: number;
-  onCommit: (id: number) => void;
+  customerId: string;
+  value: string;
+  onCommit: (id: string) => void;
 }) {
   const mandates = useQuery<SepaMandate>(
     `SELECT sepa_mandates.id, sepa_mandates.mandate_ref, sepa_mandates.status ` +
-    `FROM sepa_mandates WHERE sepa_mandates.customer_id = ${customerId} ORDER BY sepa_mandates.id`,
+    `FROM sepa_mandates WHERE sepa_mandates.customer_id = UUID '${customerId}' ORDER BY sepa_mandates.id`,
     ([id, ref, status]) => ({
-      id: id as number,
+      id: id as string,
       mandate_ref: ref as string,
       status: status as string,
     }),
   );
   const active = mandates.filter((m) => m.status === 'active');
   const options = [
-    { value: '0', label: 'Kein Mandat' },
-    ...active.map((m) => ({ value: String(m.id), label: m.mandate_ref || `#${m.id}` })),
+    { value: '', label: 'Kein Mandat' },
+    ...active.map((m) => ({ value: m.id, label: m.mandate_ref || `#${m.id}` })),
   ];
   return (
     <BlurSelect
-      value={String(value)}
-      onCommit={(next) => onCommit(Number(next))}
+      value={value}
+      onCommit={(next) => onCommit(next)}
       options={options}
     />
   );
 });
 
-const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: { invoiceId: number }) {
+const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -156,9 +156,9 @@ const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: {
   );
 });
 
-const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }: { invoiceId: number }) {
+const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -169,9 +169,9 @@ const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }:
   );
 });
 
-const DiscountPctTile = memo(function DiscountPctTile({ invoiceId }: { invoiceId: number }) {
+const DiscountPctTile = memo(function DiscountPctTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.discount_pct FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.discount_pct FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -184,7 +184,7 @@ const DiscountPctTile = memo(function DiscountPctTile({ invoiceId }: { invoiceId
 
 /* ---------------- Format ---------------- */
 
-function FormatSection({ invoiceId }: { invoiceId: number }) {
+function FormatSection({ invoiceId }: { invoiceId: string }) {
   return (
     <div>
       <CurrencyTile invoiceId={invoiceId} />
@@ -193,9 +193,9 @@ function FormatSection({ invoiceId }: { invoiceId: number }) {
   );
 }
 
-const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: number }) {
+const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.currency FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.currency FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -210,9 +210,9 @@ const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: numb
   );
 });
 
-const LanguageTile = memo(function LanguageTile({ invoiceId }: { invoiceId: number }) {
+const LanguageTile = memo(function LanguageTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.language FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.language FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -229,13 +229,13 @@ const LanguageTile = memo(function LanguageTile({ invoiceId }: { invoiceId: numb
 
 /* ---------------- Addresses ---------------- */
 
-function AddressSection({ invoiceId }: { invoiceId: number }) {
+function AddressSection({ invoiceId }: { invoiceId: string }) {
   const patch = usePatchInvoice(invoiceId);
 
   const copyBillingToShipping = useCallback(() => {
     const rows = peekQuery(
       `SELECT invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country ` +
-      `FROM invoices WHERE invoices.id = ${invoiceId}`,
+      `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     );
     if (rows.length === 0) return;
     const r = rows[0];
@@ -273,10 +273,10 @@ function AddressSection({ invoiceId }: { invoiceId: number }) {
 
 interface Addr { street: string; zip: string; city: string; country: string }
 
-const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: { invoiceId: number }) {
+const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<Addr>(
     `SELECT invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country ` +
-    `FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -304,10 +304,10 @@ const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: {
   );
 });
 
-const ShippingAddressFields = memo(function ShippingAddressFields({ invoiceId }: { invoiceId: number }) {
+const ShippingAddressFields = memo(function ShippingAddressFields({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<Addr>(
     `SELECT invoices.shipping_street, invoices.shipping_zip, invoices.shipping_city, invoices.shipping_country ` +
-    `FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -337,7 +337,7 @@ const ShippingAddressFields = memo(function ShippingAddressFields({ invoiceId }:
 
 /* ---------------- Refs & Notes ---------------- */
 
-function RefsSection({ invoiceId }: { invoiceId: number }) {
+function RefsSection({ invoiceId }: { invoiceId: string }) {
   return (
     <div>
       <ProjectRefTile invoiceId={invoiceId} />
@@ -347,9 +347,9 @@ function RefsSection({ invoiceId }: { invoiceId: number }) {
   );
 }
 
-const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: number }) {
+const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.project_ref FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.project_ref FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -360,9 +360,9 @@ const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: 
   );
 });
 
-const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: number }) {
+const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.external_id FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.external_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -373,9 +373,9 @@ const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: 
   );
 });
 
-const NotesTile = memo(function NotesTile({ invoiceId }: { invoiceId: number }) {
+const NotesTile = memo(function NotesTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.notes FROM invoices WHERE invoices.id = ${invoiceId}`,
+    `SELECT invoices.notes FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
