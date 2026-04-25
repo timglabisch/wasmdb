@@ -21,7 +21,7 @@ export async function duplicateInvoice(invoiceId: string): Promise<string | null
     ...inv, id: newId, customer_id: inv.customer_id,
     number: newNumber, status: 'draft',
     date_issued: isoDate(0), date_due: isoDate(14),
-    parent_id: '',
+    parent_id: null,
   }));
   for (const p of positions) {
     executeOnStream(stream, addPosition({

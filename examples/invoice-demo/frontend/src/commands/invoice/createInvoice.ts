@@ -3,11 +3,11 @@ import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
 type Variant = Extract<InvoiceCommand, { type: 'CreateInvoice' }>;
 
 const DEFAULTS: Omit<Variant, 'type'> = {
-  id: '', customer_id: '', number: '', status: 'draft',
+  id: '', customer_id: null, number: '', status: 'draft',
   date_issued: '', date_due: '', notes: '',
-  doc_type: 'invoice', parent_id: '', service_date: '',
+  doc_type: 'invoice', parent_id: null, service_date: '',
   cash_allowance_pct: 0, cash_allowance_days: 0, discount_pct: 0,
-  payment_method: 'transfer', sepa_mandate_id: '',
+  payment_method: 'transfer', sepa_mandate_id: null,
   currency: 'EUR', language: 'de',
   project_ref: '', external_id: '',
   billing_street: '', billing_zip: '', billing_city: '', billing_country: 'DE',

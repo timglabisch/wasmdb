@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use crate::invoice::params::invoice_params;
 
 /// Creates a new invoice with positions copied from the recurring template.
@@ -84,13 +84,13 @@ impl Command for RunRecurringOnce {
 
         let mut acc = ZSet::new();
 
-        let nil = Uuid([0u8; 16]);
+        let some_customer = Some(customer_id);
         let inv_params = invoice_params(
-            &new_invoice_id, Some(&customer_id), new_number, &status,
+            &new_invoice_id, Some(&some_customer), new_number, &status,
             issue_date, due_date, &notes,
-            "invoice", &nil, "",
+            "invoice", &None, "",
             0, 0, 0,
-            "transfer", &nil, "EUR", "de",
+            "transfer", &None, "EUR", "de",
             "", "",
             "", "", "", "",
             "", "", "", "",
@@ -109,7 +109,7 @@ impl Command for RunRecurringOnce {
                 p_int("quantity", qtys[i]),
                 p_int("unit_price", prices[i]),
                 p_int("tax_rate", taxes[i]),
-                p_uuid("product_id", &nil),
+                p_uuid_opt("product_id", &None),
                 p_str("item_number", &items[i]),
                 p_str("unit", &units[i]),
                 p_int("discount_pct", discounts[i]),
@@ -200,8 +200,6 @@ mod server_impl {
                 )));
             }
 
-            let nil_uuid = [0u8; 16];
-
             sqlx::query(
                 "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
@@ -216,13 +214,13 @@ mod server_impl {
             .bind(&self.due_date)
             .bind(&notes)
             .bind("invoice")
-            .bind(&nil_uuid[..])
+            .bind(Option::<Vec<u8>>::None)
             .bind("")
             .bind(0_i64)
             .bind(0_i64)
             .bind(0_i64)
             .bind("transfer")
-            .bind(&nil_uuid[..])
+            .bind(Option::<Vec<u8>>::None)
             .bind("EUR")
             .bind("de")
             .bind("")
@@ -256,7 +254,7 @@ mod server_impl {
                 .bind(pos.quantity)
                 .bind(pos.unit_price)
                 .bind(pos.tax_rate)
-                .bind(&nil_uuid[..])
+                .bind(Option::<Vec<u8>>::None)
                 .bind(&pos.item_number)
                 .bind(&pos.unit)
                 .bind(pos.discount_pct)

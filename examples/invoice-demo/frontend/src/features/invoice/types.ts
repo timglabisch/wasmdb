@@ -10,12 +10,12 @@
 export interface InvoiceRow {
   number: string; status: string;
   date_issued: string; date_due: string; notes: string;
-  doc_type: string; parent_id: string; service_date: string;
+  doc_type: string; parent_id: string | null; service_date: string;
   cash_allowance_pct: number; cash_allowance_days: number; discount_pct: number;
-  payment_method: string; sepa_mandate_id: string;
+  payment_method: string; sepa_mandate_id: string | null;
   currency: string; language: string;
   project_ref: string; external_id: string;
   billing_street: string; billing_zip: string; billing_city: string; billing_country: string;
   shipping_street: string; shipping_zip: string; shipping_city: string; shipping_country: string;
-  customer_id: string;
+  customer_id: string | null;
 }

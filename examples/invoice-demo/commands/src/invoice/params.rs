@@ -1,16 +1,25 @@
 use sql_engine::execute::{Params, ParamValue};
 use sql_engine::storage::Uuid;
 
+fn uuid_param(u: &Option<Uuid>) -> ParamValue {
+    match u {
+        Some(u) => ParamValue::Uuid(u.0),
+        None => ParamValue::Null,
+    }
+}
+
 /// Shared builder for the invoices-table parameter map.
-/// `customer_id = None` is used for header updates (UPDATE doesn't touch the FK).
+/// `customer_id = None` skips the column entirely — used by UPDATE header
+/// (which never touches `customer_id`). To bind `customer_id = NULL` use
+/// `Some(&None)`.
 #[allow(clippy::too_many_arguments)]
 pub fn invoice_params(
     id: &Uuid,
-    customer_id: Option<&Uuid>,
+    customer_id: Option<&Option<Uuid>>,
     number: &str, status: &str, date_issued: &str, date_due: &str, notes: &str,
-    doc_type: &str, parent_id: &Uuid, service_date: &str,
+    doc_type: &str, parent_id: &Option<Uuid>, service_date: &str,
     cash_allowance_pct: i64, cash_allowance_days: i64, discount_pct: i64,
-    payment_method: &str, sepa_mandate_id: &Uuid, currency: &str, language: &str,
+    payment_method: &str, sepa_mandate_id: &Option<Uuid>, currency: &str, language: &str,
     project_ref: &str, external_id: &str,
     billing_street: &str, billing_zip: &str, billing_city: &str, billing_country: &str,
     shipping_street: &str, shipping_zip: &str, shipping_city: &str, shipping_country: &str,
@@ -18,7 +27,7 @@ pub fn invoice_params(
     let mut p = Params::new();
     p.insert("id".into(), ParamValue::Uuid(id.0));
     if let Some(cid) = customer_id {
-        p.insert("customer_id".into(), ParamValue::Uuid(cid.0));
+        p.insert("customer_id".into(), uuid_param(cid));
     }
     p.insert("number".into(), ParamValue::Text(number.into()));
     p.insert("status".into(), ParamValue::Text(status.into()));
@@ -26,13 +35,13 @@ pub fn invoice_params(
     p.insert("date_due".into(), ParamValue::Text(date_due.into()));
     p.insert("notes".into(), ParamValue::Text(notes.into()));
     p.insert("doc_type".into(), ParamValue::Text(doc_type.into()));
-    p.insert("parent_id".into(), ParamValue::Uuid(parent_id.0));
+    p.insert("parent_id".into(), uuid_param(parent_id));
     p.insert("service_date".into(), ParamValue::Text(service_date.into()));
     p.insert("cash_allowance_pct".into(), ParamValue::Int(cash_allowance_pct));
     p.insert("cash_allowance_days".into(), ParamValue::Int(cash_allowance_days));
     p.insert("discount_pct".into(), ParamValue::Int(discount_pct));
     p.insert("payment_method".into(), ParamValue::Text(payment_method.into()));
-    p.insert("sepa_mandate_id".into(), ParamValue::Uuid(sepa_mandate_id.0));
+    p.insert("sepa_mandate_id".into(), uuid_param(sepa_mandate_id));
     p.insert("currency".into(), ParamValue::Text(currency.into()));
     p.insert("language".into(), ParamValue::Text(language.into()));
     p.insert("project_ref".into(), ParamValue::Text(project_ref.into()));

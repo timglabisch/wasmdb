@@ -67,20 +67,20 @@ CREATE TABLE contacts (
 CREATE TABLE invoices (
     tenant_id            BIGINT       NOT NULL,
     id                   BINARY(16)   NOT NULL,
-    customer_id          BINARY(16)   NOT NULL,
+    customer_id          BINARY(16)   NULL,
     number               VARCHAR(64)  NOT NULL,
     status               VARCHAR(32)  NOT NULL,
     date_issued          VARCHAR(32)  NOT NULL,
     date_due             VARCHAR(32)  NOT NULL,
     notes                TEXT         NOT NULL,
     doc_type             VARCHAR(32)  NOT NULL,
-    parent_id            BINARY(16)   NOT NULL,
+    parent_id            BINARY(16)   NULL,
     service_date         VARCHAR(32)  NOT NULL,
     cash_allowance_pct   BIGINT       NOT NULL,
     cash_allowance_days  BIGINT       NOT NULL,
     discount_pct         BIGINT       NOT NULL,
     payment_method       VARCHAR(32)  NOT NULL,
-    sepa_mandate_id      BINARY(16)   NOT NULL,
+    sepa_mandate_id      BINARY(16)   NULL,
     currency             VARCHAR(8)   NOT NULL,
     language             VARCHAR(8)   NOT NULL,
     project_ref          VARCHAR(128) NOT NULL,
@@ -96,8 +96,9 @@ CREATE TABLE invoices (
     PRIMARY KEY (tenant_id, id),
     INDEX idx_invoices_customer (tenant_id, customer_id),
     FOREIGN KEY (tenant_id, customer_id) REFERENCES customers (tenant_id, id)
-    -- sepa_mandate_id / parent_id use sentinel UUIDs (00000…) for "unset",
-    -- so no FK constraint here.
+    -- customer_id, parent_id, sepa_mandate_id are nullable (unset on draft /
+    -- non-credit-note / non-SEPA). MySQL skips FK checks on NULL columns by
+    -- default, so the FK above only fires when customer_id is actually set.
 );
 
 CREATE TABLE positions (
@@ -109,7 +110,7 @@ CREATE TABLE positions (
     quantity      BIGINT       NOT NULL,
     unit_price    BIGINT       NOT NULL,
     tax_rate      BIGINT       NOT NULL,
-    product_id    BINARY(16)   NOT NULL,
+    product_id    BINARY(16)   NULL,
     item_number   VARCHAR(64)  NOT NULL,
     unit          VARCHAR(32)  NOT NULL,
     discount_pct  BIGINT       NOT NULL,
@@ -118,7 +119,7 @@ CREATE TABLE positions (
     PRIMARY KEY (tenant_id, id),
     INDEX idx_positions_invoice (tenant_id, invoice_id),
     FOREIGN KEY (tenant_id, invoice_id) REFERENCES invoices (tenant_id, id)
-    -- product_id uses sentinel UUID for "unset" → no FK.
+    -- product_id is nullable (free-text positions without a product link).
 );
 
 CREATE TABLE payments (

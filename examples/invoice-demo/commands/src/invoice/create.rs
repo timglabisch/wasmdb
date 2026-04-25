@@ -12,16 +12,16 @@ use super::params::invoice_params;
 pub struct CreateInvoice {
     #[ts(type = "string")]
     pub id: Uuid,
-    #[ts(type = "string")]
-    pub customer_id: Uuid,
+    #[ts(type = "string | null")]
+    pub customer_id: Option<Uuid>,
     pub number: String,
     pub status: String,
     pub date_issued: String,
     pub date_due: String,
     pub notes: String,
     pub doc_type: String,
-    #[ts(type = "string")]
-    pub parent_id: Uuid,
+    #[ts(type = "string | null")]
+    pub parent_id: Option<Uuid>,
     pub service_date: String,
     #[ts(type = "number")]
     pub cash_allowance_pct: i64,
@@ -30,8 +30,8 @@ pub struct CreateInvoice {
     #[ts(type = "number")]
     pub discount_pct: i64,
     pub payment_method: String,
-    #[ts(type = "string")]
-    pub sepa_mandate_id: Uuid,
+    #[ts(type = "string | null")]
+    pub sepa_mandate_id: Option<Uuid>,
     pub currency: String,
     pub language: String,
     pub project_ref: String,
@@ -89,20 +89,20 @@ mod server_impl {
             )
                 .bind(DEMO_TENANT_ID)
                 .bind(&self.id.0[..])
-                .bind(&self.customer_id.0[..])
+                .bind(self.customer_id.as_ref().map(|u| u.0.to_vec()))
                 .bind(&self.number)
                 .bind(&self.status)
                 .bind(&self.date_issued)
                 .bind(&self.date_due)
                 .bind(&self.notes)
                 .bind(&self.doc_type)
-                .bind(&self.parent_id.0[..])
+                .bind(self.parent_id.as_ref().map(|u| u.0.to_vec()))
                 .bind(&self.service_date)
                 .bind(self.cash_allowance_pct)
                 .bind(self.cash_allowance_days)
                 .bind(self.discount_pct)
                 .bind(&self.payment_method)
-                .bind(&self.sepa_mandate_id.0[..])
+                .bind(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()))
                 .bind(&self.currency)
                 .bind(&self.language)
                 .bind(&self.project_ref)

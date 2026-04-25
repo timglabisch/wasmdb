@@ -6,7 +6,7 @@ use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
+use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct AddPosition {
@@ -23,8 +23,8 @@ pub struct AddPosition {
     pub unit_price: i64,
     #[ts(type = "number")]
     pub tax_rate: i64,
-    #[ts(type = "string")]
-    pub product_id: Uuid,
+    #[ts(type = "string | null")]
+    pub product_id: Option<Uuid>,
     pub item_number: String,
     pub unit: String,
     #[ts(type = "number")]
@@ -47,7 +47,7 @@ impl Command for AddPosition {
             p_int("quantity", self.quantity),
             p_int("unit_price", self.unit_price),
             p_int("tax_rate", self.tax_rate),
-            p_uuid("product_id", &self.product_id),
+            p_uuid_opt("product_id", &self.product_id),
             p_str("item_number", &self.item_number),
             p_str("unit", &self.unit),
             p_int("discount_pct", self.discount_pct),
@@ -88,7 +88,7 @@ mod server_impl {
                 .bind(self.quantity)
                 .bind(self.unit_price)
                 .bind(self.tax_rate)
-                .bind(&self.product_id.0[..])
+                .bind(self.product_id.as_ref().map(|u| u.0.to_vec()))
                 .bind(&self.item_number)
                 .bind(&self.unit)
                 .bind(self.discount_pct)

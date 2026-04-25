@@ -121,3 +121,33 @@ async fn double_insert_idempotent() {
 
     cleanup_tenants(&pool, &[T]).await;
 }
+
+#[tokio::test]
+#[ignore]
+async fn schema_validator_rejects_wrong_uuid_length() {
+    use sql_engine::schema::{ColumnSchema, DataType, TableSchema};
+    use std::collections::HashMap;
+
+    let pool = pool().await;
+
+    sqlx::query("DROP TABLE IF EXISTS schema_probe").execute(&pool).await.unwrap();
+    sqlx::query("CREATE TABLE schema_probe (id BINARY(20) NOT NULL, PRIMARY KEY(id))")
+        .execute(&pool).await.unwrap();
+
+    let mut schemas = HashMap::new();
+    schemas.insert("schema_probe".to_string(), TableSchema {
+        name: "schema_probe".into(),
+        columns: vec![
+            ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+        ],
+        primary_key: vec![0],
+        indexes: vec![],
+    });
+
+    let result = invoice_demo_server::schema::assert_mysql_matches(&pool, &schemas).await;
+    sqlx::query("DROP TABLE schema_probe").execute(&pool).await.ok();
+
+    let err = result.expect_err("validator should reject BINARY(20) for DataType::Uuid");
+    assert!(err.contains("BINARY(16)") && err.contains("binary(20)"),
+        "expected error mentioning BINARY(16) and binary(20), got: {err}");
+}

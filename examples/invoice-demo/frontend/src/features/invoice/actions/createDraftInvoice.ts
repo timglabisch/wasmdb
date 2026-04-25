@@ -40,7 +40,7 @@ function peekCustomerDefaults(customerId: string): CustomerDefaults | null {
  */
 export function useCreateDraftInvoice() {
   const navigate = useNavigate();
-  return useCallback(async (customerId: string = '') => {
+  return useCallback(async (customerId: string | null = null) => {
     const id = nextId();
     const defaults = customerId ? peekCustomerDefaults(customerId) : null;
     const dueDays = defaults?.payment_terms_days ?? 14;

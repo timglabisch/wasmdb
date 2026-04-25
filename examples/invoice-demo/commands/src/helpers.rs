@@ -36,6 +36,14 @@ pub fn p_uuid(k: &str, v: &Uuid) -> (String, ParamValue) {
     (k.into(), ParamValue::Uuid(v.0))
 }
 
+pub fn p_uuid_opt(k: &str, v: &Option<Uuid>) -> (String, ParamValue) {
+    let pv = match v {
+        Some(u) => ParamValue::Uuid(u.0),
+        None => ParamValue::Null,
+    };
+    (k.into(), pv)
+}
+
 pub fn read_uuid_col(
     db: &mut Database,
     sql: &str,

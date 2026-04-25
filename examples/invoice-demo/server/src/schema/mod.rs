@@ -35,8 +35,8 @@ pub async fn assert_mysql_matches(
     schemas: &HashMap<String, TableSchema>,
 ) -> Result<(), String> {
     for (table, schema) in schemas {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT COLUMN_NAME, DATA_TYPE
+        let rows: Vec<(String, String, Option<i64>, String)> = sqlx::query_as(
+            "SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
              FROM INFORMATION_SCHEMA.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
              ORDER BY ORDINAL_POSITION",
@@ -54,9 +54,9 @@ pub async fn assert_mysql_matches(
 
         let known: std::collections::HashSet<&str> =
             schema.columns.iter().map(|c| c.name.as_str()).collect();
-        let filtered: Vec<&(String, String)> = rows
+        let filtered: Vec<&(String, String, Option<i64>, String)> = rows
             .iter()
-            .filter(|(name, _)| known.contains(name.as_str()))
+            .filter(|(name, _, _, _)| known.contains(name.as_str()))
             .collect();
 
         if filtered.len() != schema.columns.len() {
@@ -67,7 +67,7 @@ pub async fn assert_mysql_matches(
             ));
         }
         for (i, col) in schema.columns.iter().enumerate() {
-            let (name, dtype) = filtered[i];
+            let (name, dtype, length, is_nullable) = filtered[i];
             if name != &col.name {
                 return Err(format!(
                     "table `{table}` column #{i}: expected `{}`, TiDB has `{}` (after filtering server-only columns)",
@@ -79,14 +79,29 @@ pub async fn assert_mysql_matches(
                 DataType::String => {
                     matches!(dtype.as_str(), "varchar" | "char" | "text" | "longtext")
                 }
-                DataType::Uuid => {
-                    matches!(dtype.as_str(), "binary" | "char" | "varchar")
-                }
+                DataType::Uuid => dtype == "binary" && *length == Some(16),
             };
             if !ok {
+                let actual = match length {
+                    Some(n) => format!("{dtype}({n})"),
+                    None => dtype.clone(),
+                };
+                let expected = match col.data_type {
+                    DataType::Uuid => "BINARY(16)".to_string(),
+                    other => format!("{other:?}"),
+                };
                 return Err(format!(
-                    "table `{table}` column `{}`: expected `{:?}`, TiDB has `{}`",
-                    col.name, col.data_type, dtype,
+                    "table `{table}` column `{}`: expected `{expected}`, TiDB has `{actual}`",
+                    col.name,
+                ));
+            }
+            let mysql_nullable = is_nullable.eq_ignore_ascii_case("YES");
+            if mysql_nullable != col.nullable {
+                return Err(format!(
+                    "table `{table}` column `{}`: nullability mismatch — schema says {}, TiDB says {}",
+                    col.name,
+                    if col.nullable { "NULL" } else { "NOT NULL" },
+                    if mysql_nullable { "NULL" } else { "NOT NULL" },
                 ));
             }
         }

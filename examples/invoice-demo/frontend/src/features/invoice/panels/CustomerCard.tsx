@@ -10,7 +10,7 @@ import { toast } from '@/components/ui/sonner';
 import { useQuery } from '@/wasm';
 import { assignCustomer } from '@/features/invoice/actions/assignCustomer';
 
-interface InvoiceFk { customer_id: string }
+interface InvoiceFk { customer_id: string | null }
 
 /**
  * Invoice's customer slot. Subscribes to `invoices.customer_id` only and
@@ -22,9 +22,9 @@ interface InvoiceFk { customer_id: string }
 export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<InvoiceFk>(
     `SELECT invoices.customer_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
-    ([customer_id]) => ({ customer_id: customer_id as string }),
+    ([customer_id]) => ({ customer_id: (customer_id as string | null) ?? null }),
   );
-  const customerId = rows[0]?.customer_id ?? '';
+  const customerId = rows[0]?.customer_id ?? null;
   const [picking, setPicking] = useState(false);
 
   const onPick = useCallback(async (newId: string) => {
@@ -34,7 +34,7 @@ export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceI
   }, [invoiceId]);
 
   const onDetach = useCallback(async () => {
-    await assignCustomer(invoiceId, '');
+    await assignCustomer(invoiceId, null);
     toast.success('Kunde entfernt');
   }, [invoiceId]);
 
@@ -43,7 +43,7 @@ export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceI
   return (
     <Card>
       <CardContent className="p-0">
-        {showPicker ? (
+        {showPicker || customerId === null ? (
           <CustomerPicker
             currentId={customerId}
             onPick={onPick}
@@ -154,7 +154,7 @@ interface CustomerOption {
 const CustomerPicker = memo(function CustomerPicker({
   currentId, onPick, onCancel,
 }: {
-  currentId: string;
+  currentId: string | null;
   onPick: (id: string) => void;
   onCancel?: () => void;
 }) {

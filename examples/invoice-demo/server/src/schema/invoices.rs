@@ -1,22 +1,22 @@
 use std::collections::HashMap;
 
 use sql_engine::schema::{IndexSchema, IndexType, TableSchema};
-use super::cols::{i64_col, str_col, uuid_col};
+use super::cols::{i64_col, nullable_uuid_col, str_col, uuid_col};
 
 /// Invoices + positions + payments — tied together by invoice_id FKs.
 pub fn register(schemas: &mut HashMap<String, TableSchema>) {
     schemas.insert("invoices".into(), TableSchema {
         name: "invoices".into(),
         columns: vec![
-            uuid_col("id"), uuid_col("customer_id"),
+            uuid_col("id"), nullable_uuid_col("customer_id"),
             str_col("number"), str_col("status"),
             str_col("date_issued"), str_col("date_due"), str_col("notes"),
             str_col("doc_type"),
-            uuid_col("parent_id"),
+            nullable_uuid_col("parent_id"),
             str_col("service_date"),
             i64_col("cash_allowance_pct"), i64_col("cash_allowance_days"), i64_col("discount_pct"),
             str_col("payment_method"),
-            uuid_col("sepa_mandate_id"),
+            nullable_uuid_col("sepa_mandate_id"),
             str_col("currency"), str_col("language"),
             str_col("project_ref"), str_col("external_id"),
             str_col("billing_street"), str_col("billing_zip"), str_col("billing_city"), str_col("billing_country"),
@@ -34,7 +34,7 @@ pub fn register(schemas: &mut HashMap<String, TableSchema>) {
             uuid_col("id"), uuid_col("invoice_id"), i64_col("position_nr"),
             str_col("description"),
             i64_col("quantity"), i64_col("unit_price"), i64_col("tax_rate"),
-            uuid_col("product_id"),
+            nullable_uuid_col("product_id"),
             str_col("item_number"), str_col("unit"),
             i64_col("discount_pct"), i64_col("cost_price"),
             str_col("position_type"),
