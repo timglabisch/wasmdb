@@ -69,8 +69,8 @@ export function DetailsCard({ invoiceId }: { invoiceId: string }) {
 
 interface PaymentBits {
   payment_method: string;
-  sepa_mandate_id: string;
-  customer_id: string;
+  sepa_mandate_id: string | null;
+  customer_id: string | null;
 }
 
 function PaymentSection({ invoiceId }: { invoiceId: string }) {
@@ -79,8 +79,8 @@ function PaymentSection({ invoiceId }: { invoiceId: string }) {
     `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
     ([pm, sm, ci]) => ({
       payment_method: pm as string,
-      sepa_mandate_id: sm as string,
-      customer_id: ci as string,
+      sepa_mandate_id: (sm as string | null) ?? null,
+      customer_id: (ci as string | null) ?? null,
     }),
   );
   const patch = usePatchInvoice(invoiceId);
@@ -95,7 +95,7 @@ function PaymentSection({ invoiceId }: { invoiceId: string }) {
           options={METHOD_OPTIONS}
         />
       </Field>
-      {bits?.payment_method === 'sepa' && (
+      {bits?.payment_method === 'sepa' && bits.customer_id && (
         <Field label="SEPA-Mandat">
           <SepaMandatePicker
             customerId={bits.customer_id}
@@ -117,8 +117,8 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
   customerId, value, onCommit,
 }: {
   customerId: string;
-  value: string;
-  onCommit: (id: string) => void;
+  value: string | null;
+  onCommit: (id: string | null) => void;
 }) {
   const mandates = useQuery<SepaMandate>(
     `SELECT sepa_mandates.id, sepa_mandates.mandate_ref, sepa_mandates.status ` +
@@ -136,8 +136,8 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
   ];
   return (
     <BlurSelect
-      value={value}
-      onCommit={(next) => onCommit(next)}
+      value={value ?? ''}
+      onCommit={(next) => onCommit(next === '' ? null : next)}
       options={options}
     />
   );

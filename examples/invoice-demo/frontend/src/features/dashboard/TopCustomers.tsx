@@ -41,7 +41,7 @@ export function TopCustomers() {
   const invoices = useQuery(
     `SELECT invoices.id, invoices.customer_id FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice'`,
-    ([id, customerId]) => ({ id: id as string, customerId: customerId as string }),
+    ([id, customerId]) => ({ id: id as string, customerId: (customerId as string | null) ?? null }),
   );
 
   // All positions across all invoices. Gross is computed in JS because
@@ -72,6 +72,7 @@ export function TopCustomers() {
     const invoiceToCustomer = new Map<string, string>();
     const invoiceCountByCustomer = new Map<string, number>();
     for (const inv of invoices) {
+      if (!inv.customerId) continue;
       invoiceToCustomer.set(inv.id, inv.customerId);
       invoiceCountByCustomer.set(
         inv.customerId,

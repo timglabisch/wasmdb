@@ -45,6 +45,23 @@ pub(crate) fn try_uuid(
     Ok(sql_engine::storage::Uuid(arr))
 }
 
+/// Same as `try_uuid` but tolerates SQL NULL by returning `None`.
+pub(crate) fn try_uuid_opt(
+    row: &sqlx::mysql::MySqlRow,
+    col: &str,
+) -> Result<Option<sql_engine::storage::Uuid>, sqlx::Error> {
+    use sqlx::Row;
+    let Some(bytes): Option<Vec<u8>> = row.try_get(col)? else {
+        return Ok(None);
+    };
+    let arr: [u8; 16] = bytes.try_into().map_err(|v: Vec<u8>| {
+        sqlx::Error::Decode(
+            format!("column {col}: expected 16 bytes, got {}", v.len()).into(),
+        )
+    })?;
+    Ok(Some(sql_engine::storage::Uuid(arr)))
+}
+
 pub mod __generated {
     include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 }

@@ -6,7 +6,7 @@ export interface ActionPosition {
   quantity: number;
   unit_price: number;
   tax_rate: number;
-  product_id: string;
+  product_id: string | null;
   item_number: string;
   unit: string;
   discount_pct: number;
@@ -28,7 +28,7 @@ export function peekPositions(invoiceId: string): ActionPosition[] {
     quantity: r[3] as number,
     unit_price: r[4] as number,
     tax_rate: r[5] as number,
-    product_id: r[6] as string,
+    product_id: (r[6] as string | null) ?? null,
     item_number: r[7] as string,
     unit: r[8] as string,
     discount_pct: r[9] as number,

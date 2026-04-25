@@ -43,7 +43,7 @@ export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceI
   return (
     <Card>
       <CardContent className="p-0">
-        {showPicker || customerId === null ? (
+        {customerId === null || showPicker ? (
           <CustomerPicker
             currentId={customerId}
             onPick={onPick}

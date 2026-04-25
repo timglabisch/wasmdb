@@ -24,7 +24,7 @@ interface Header {
   status: string;
   date_issued: string;
   date_due: string;
-  customer_id: string;
+  customer_id: string | null;
 }
 
 interface GrossPos {
@@ -59,7 +59,7 @@ export const InvoiceListRow = memo(function InvoiceListRow({
       status: status as string,
       date_issued: date_issued as string,
       date_due: date_due as string,
-      customer_id: customer_id as string,
+      customer_id: (customer_id as string | null) ?? null,
     }),
   );
 
@@ -137,12 +137,13 @@ export const InvoiceListRow = memo(function InvoiceListRow({
 });
 
 /** Subscribes to customers.name for the given id. */
-const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: string }) {
+const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: string | null }) {
+  const lookupId = customerId ?? '00000000-0000-0000-0000-000000000000';
   const rows = useQuery<string>(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${lookupId}'`,
     ([name]) => name as string,
   );
-  return <span className="text-sm">{rows[0] ?? '—'}</span>;
+  return <span className="text-sm">{customerId ? (rows[0] ?? '—') : '—'}</span>;
 });
 
 /** Subscribes to all positions of this invoice and shows gross. */

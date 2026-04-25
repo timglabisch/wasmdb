@@ -73,7 +73,7 @@ const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps
     ([number, dateDue, customerId, status, docType]) => ({
       number: number as string,
       dateDue: dateDue as string,
-      customerId: customerId as string,
+      customerId: (customerId as string | null) ?? null,
       status: status as string,
       docType: docType as string,
     }),
@@ -108,12 +108,16 @@ const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps
   );
 });
 
-const CustomerName = React.memo(function CustomerName({ customerId }: { customerId: string }) {
+const CustomerName = React.memo(function CustomerName({ customerId }: { customerId: string | null }) {
+  const lookupId = customerId ?? '00000000-0000-0000-0000-000000000000';
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE customers.id = UUID '${lookupId}'`,
     ([name]) => name as string,
   );
   const name = rows[0];
+  if (!customerId) {
+    return <span className="min-w-0 truncate text-sm text-muted-foreground">—</span>;
+  }
   if (name === undefined) {
     return <Skeleton className="h-3.5 w-32" />;
   }

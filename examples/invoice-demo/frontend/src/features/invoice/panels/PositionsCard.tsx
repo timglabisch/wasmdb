@@ -151,7 +151,7 @@ interface PosRowFull {
   quantity: number;
   unit_price: number;
   tax_rate: number;
-  product_id: string;
+  product_id: string | null;
   item_number: string;
   unit: string;
   discount_pct: number;
@@ -180,7 +180,7 @@ const PositionRow = memo(function PositionRow({
       quantity: qty as number,
       unit_price: up as number,
       tax_rate: tr as number,
-      product_id: pid as string,
+      product_id: (pid as string | null) ?? null,
       item_number: item as string,
       unit: unit as string,
       discount_pct: disc as number,

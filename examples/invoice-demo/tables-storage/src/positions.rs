@@ -2,7 +2,7 @@ use sql_engine::storage::Uuid;
 use sqlx::Row;
 use tables_storage::{query, row};
 
-use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
+use crate::{try_uuid, try_uuid_opt, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "positions")]
 pub struct Position {
@@ -14,7 +14,7 @@ pub struct Position {
     pub quantity: i64,
     pub unit_price: i64,
     pub tax_rate: i64,
-    pub product_id: Uuid,
+    pub product_id: Option<Uuid>,
     pub item_number: String,
     pub unit: String,
     pub discount_pct: i64,
@@ -44,7 +44,7 @@ async fn all(ctx: &AppCtx) -> Result<Vec<Position>, sqlx::Error> {
                 quantity: r.try_get("quantity")?,
                 unit_price: r.try_get("unit_price")?,
                 tax_rate: r.try_get("tax_rate")?,
-                product_id: try_uuid(&r, "product_id")?,
+                product_id: try_uuid_opt(&r, "product_id")?,
                 item_number: r.try_get("item_number")?,
                 unit: r.try_get("unit")?,
                 discount_pct: r.try_get("discount_pct")?,
