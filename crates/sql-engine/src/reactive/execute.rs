@@ -196,6 +196,7 @@ fn format_row(row: &[CellValue]) -> String {
     let vals: Vec<String> = row.iter().map(|v| match v {
         CellValue::I64(n) => n.to_string(),
         CellValue::Str(s) => format!("'{s}'"),
+        CellValue::Uuid(b) => format!("UUID '{}'", sql_parser::uuid::format_uuid(b)),
         CellValue::Null => "NULL".to_string(),
     }).collect();
     format!("[{}]", vals.join(", "))

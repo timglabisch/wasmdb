@@ -204,8 +204,10 @@ pub fn debug_database() -> Result<JsValue, JsError> {
                 bytes += match col {
                     TypedColumn::I64(v) => v.len() * 8,
                     TypedColumn::Str(v) => v.iter().map(|s| s.len() + 24).sum::<usize>(),
+                    TypedColumn::Uuid(v) => v.len() * 16,
                     TypedColumn::NullableI64 { values, .. } => values.len() * 8 + values.len() / 8,
                     TypedColumn::NullableStr { values, .. } => values.iter().map(|s| s.len() + 24).sum::<usize>() + values.len() / 8,
+                    TypedColumn::NullableUuid { values, .. } => values.len() * 16 + values.len() / 8,
                 };
             }
             for idx in t.indexes() {

@@ -156,3 +156,71 @@ Select
 ReactivePlan (no conditions)",
     );
 }
+
+// ── UUID cross-type negatives ───────────────────────────────────────
+
+#[test]
+fn caller_uuid_arg_against_i64_param_rejects_at_plan_time() {
+    use tables_e2e::AppCtx;
+    let mut db = setup_db(AppCtx::with_default_fixtures());
+    db.register_caller(Caller::new(
+        "customers::probe_int",
+        RequirementMeta {
+            row_table: "customer".into(),
+            params: vec![RequirementParamDef { name: "id".into(), data_type: DataType::I64 }],
+        },
+        Arc::new(|_args| {
+            Box::pin(async move { Ok(vec![]) }) as FetcherFuture
+        }),
+    ));
+    let sql = "SELECT customer.name FROM customers.probe_int(\
+        UUID '00000000-0000-0000-0000-000000000001'\
+    )";
+    let err = run_err(&mut db, sql);
+    let msg = format!("{err:?}");
+    assert!(msg.contains("CallerArgTypeMismatch"), "got {msg}");
+}
+
+#[test]
+fn caller_int_arg_against_uuid_param_rejects_at_plan_time() {
+    use tables_e2e::AppCtx;
+    let mut db = setup_db(AppCtx::with_default_fixtures());
+    db.register_caller(Caller::new(
+        "customers::probe_uuid",
+        RequirementMeta {
+            row_table: "customer".into(),
+            params: vec![RequirementParamDef { name: "id".into(), data_type: DataType::Uuid }],
+        },
+        Arc::new(|_args| {
+            Box::pin(async move { Ok(vec![]) }) as FetcherFuture
+        }),
+    ));
+    let sql = "SELECT customer.name FROM customers.probe_uuid(42)";
+    let err = run_err(&mut db, sql);
+    let msg = format!("{err:?}");
+    assert!(msg.contains("CallerArgTypeMismatch"), "got {msg}");
+}
+
+#[test]
+fn cross_type_str_eq_uuid_returns_no_rows() {
+    use tables_e2e::AppCtx;
+    let mut db = setup_db(AppCtx::with_default_fixtures());
+    // customer.name is STRING; comparing to a UUID literal must compile but
+    // match nothing — pinning behavior for cross-type equality.
+    let cols = run(
+        &mut db,
+        "SELECT customer.name FROM customer \
+         WHERE customer.name = UUID '00000000-0000-0000-0000-000000000001'"
+    );
+    assert!(cols[0].is_empty(), "cross-type comparison must not match");
+}
+
+#[test]
+fn invalid_uuid_literal_rejected_at_parse_time() {
+    use tables_e2e::AppCtx;
+    let mut db = setup_db(AppCtx::with_default_fixtures());
+    let err = run_err(&mut db, "SELECT customer.name FROM customer \
+        WHERE customer.id = UUID 'definitely-not-a-uuid'");
+    let msg = format!("{err:?}");
+    assert!(msg.contains("invalid UUID"), "got {msg}");
+}

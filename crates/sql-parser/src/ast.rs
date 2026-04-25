@@ -39,6 +39,7 @@ pub struct AstColumnDef {
 pub enum AstDataType {
     I64,
     String,
+    Uuid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +181,9 @@ pub enum Value {
     Text(String),
     Bool(bool),
     Null,
+    /// Native UUID literal (16 raw bytes). Parsed from `UUID 'xxxx-...'` syntax;
+    /// the wire format is the canonical hyphenated 8-4-4-4-12 hex form.
+    Uuid([u8; 16]),
     Placeholder(String),
 }
 

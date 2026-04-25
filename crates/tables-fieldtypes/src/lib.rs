@@ -15,8 +15,10 @@ use syn::Type;
 pub enum FieldKind {
     I64,
     Str,
+    Uuid,
     OptI64,
     OptStr,
+    OptUuid,
 }
 
 impl FieldKind {
@@ -28,8 +30,10 @@ impl FieldKind {
         match self {
             FieldKind::I64 => (quote! { ::sql_engine::schema::DataType::I64 }, false),
             FieldKind::Str => (quote! { ::sql_engine::schema::DataType::String }, false),
+            FieldKind::Uuid => (quote! { ::sql_engine::schema::DataType::Uuid }, false),
             FieldKind::OptI64 => (quote! { ::sql_engine::schema::DataType::I64 }, true),
             FieldKind::OptStr => (quote! { ::sql_engine::schema::DataType::String }, true),
+            FieldKind::OptUuid => (quote! { ::sql_engine::schema::DataType::Uuid }, true),
         }
     }
 }
@@ -37,17 +41,23 @@ impl FieldKind {
 /// Match a `syn::Type` against the supported shape set. `None` means
 /// the type is unsupported — callers turn that into a compile-error /
 /// `CodegenError` with a type-specific message.
+///
+/// `Uuid` is recognized as the bare ident — callers are expected to pull
+/// in a 16-byte representation (typically a tuple-struct around `[u8; 16]`)
+/// and either bring it into scope with that name or `use ... as Uuid`.
 pub fn classify(ty: &Type) -> Option<FieldKind> {
     if let Some(inner) = option_inner(ty) {
         return match simple_ident_name(inner)?.as_str() {
             "i64" => Some(FieldKind::OptI64),
             "String" => Some(FieldKind::OptStr),
+            "Uuid" => Some(FieldKind::OptUuid),
             _ => None,
         };
     }
     match simple_ident_name(ty)?.as_str() {
         "i64" => Some(FieldKind::I64),
         "String" => Some(FieldKind::Str),
+        "Uuid" => Some(FieldKind::Uuid),
         _ => None,
     }
 }

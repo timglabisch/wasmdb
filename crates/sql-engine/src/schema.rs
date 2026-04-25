@@ -4,6 +4,7 @@ use sql_parser::ast;
 pub enum DataType {
     I64,
     String,
+    Uuid,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +154,7 @@ fn convert_data_type(dt: ast::AstDataType) -> DataType {
     match dt {
         ast::AstDataType::I64 => DataType::I64,
         ast::AstDataType::String => DataType::String,
+        ast::AstDataType::Uuid => DataType::Uuid,
     }
 }
 
@@ -255,6 +257,48 @@ mod tests {
             "CREATE TABLE t (id I64, INDEX idx_id (id) USING BTREE)"
         ).unwrap();
         assert_eq!(schema.indexes[0].index_type, IndexType::BTree);
+    }
+
+    #[test]
+    fn test_uuid_column_resolves() {
+        let schema = resolve_sql(
+            "CREATE TABLE customers (id UUID NOT NULL PRIMARY KEY, name STRING)"
+        ).unwrap();
+        assert_eq!(schema.columns[0].data_type, DataType::Uuid);
+        assert!(!schema.columns[0].nullable);
+        assert_eq!(schema.primary_key, vec![0]);
+    }
+
+    #[test]
+    fn test_uuid_nullable_column() {
+        let schema = resolve_sql(
+            "CREATE TABLE t (id I64 NOT NULL PRIMARY KEY, external UUID)"
+        ).unwrap();
+        assert_eq!(schema.columns[1].data_type, DataType::Uuid);
+        assert!(schema.columns[1].nullable);
+    }
+
+    #[test]
+    fn test_uuid_nullable_pk_rejected() {
+        let err = resolve_sql(
+            "CREATE TABLE t (id UUID, name STRING, PRIMARY KEY (id))"
+        ).unwrap_err();
+        assert!(matches!(err, SchemaError::PrimaryKeyNullable { .. }));
+    }
+
+    #[test]
+    fn test_composite_pk_i64_uuid() {
+        let schema = resolve_sql(
+            "CREATE TABLE customers (\
+                tenant_id I64 NOT NULL, \
+                id UUID NOT NULL, \
+                name STRING, \
+                PRIMARY KEY (tenant_id, id)\
+            )"
+        ).unwrap();
+        assert_eq!(schema.primary_key, vec![0, 1]);
+        assert_eq!(schema.columns[0].data_type, DataType::I64);
+        assert_eq!(schema.columns[1].data_type, DataType::Uuid);
     }
 
     #[test]

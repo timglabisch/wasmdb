@@ -316,10 +316,11 @@ pub fn query_confirmed(
 
 /// Convert a JS object `{ name: value, ... }` into `Params`. Accepts:
 /// - `number` (integer) → `ParamValue::Int`
-/// - `string` → `ParamValue::Text`
+/// - `string` matching the canonical UUID form → `ParamValue::Uuid`
+/// - any other `string` → `ParamValue::Text`
 /// - `null` / `undefined` (value) → `ParamValue::Null`
 /// - `number[]` → `ParamValue::IntList`
-/// - `string[]` → `ParamValue::TextList`
+/// - `string[]` of UUIDs → `ParamValue::UuidList`; otherwise `ParamValue::TextList`
 ///
 /// `null` or `undefined` for the whole argument yields an empty `Params`.
 fn js_to_params(value: JsValue) -> Result<Params, JsError> {
@@ -351,6 +352,9 @@ fn js_to_param_value(value: JsValue, key: &str) -> Result<ParamValue, JsError> {
         return Ok(ParamValue::Null);
     }
     if let Some(s) = value.as_string() {
+        if let Some(bytes) = sql_parser::uuid::parse_uuid(&s) {
+            return Ok(ParamValue::Uuid(bytes));
+        }
         return Ok(ParamValue::Text(s));
     }
     if let Some(n) = value.as_f64() {
@@ -368,15 +372,26 @@ fn js_to_param_value(value: JsValue, key: &str) -> Result<ParamValue, JsError> {
         }
         let first = arr.get(0);
         if first.is_string() {
-            let mut out = Vec::with_capacity(len as usize);
+            let mut strs = Vec::with_capacity(len as usize);
+            let mut all_uuid = true;
+            let mut uuids = Vec::with_capacity(len as usize);
             for i in 0..len {
                 let v = arr.get(i);
                 let s = v.as_string().ok_or_else(|| {
                     JsError::new(&format!("param '{key}' array must be all strings"))
                 })?;
-                out.push(s);
+                if all_uuid {
+                    match sql_parser::uuid::parse_uuid(&s) {
+                        Some(b) => uuids.push(b),
+                        None => all_uuid = false,
+                    }
+                }
+                strs.push(s);
             }
-            return Ok(ParamValue::TextList(out));
+            if all_uuid {
+                return Ok(ParamValue::UuidList(uuids));
+            }
+            return Ok(ParamValue::TextList(strs));
         }
         if first.as_f64().is_some() {
             let mut out = Vec::with_capacity(len as usize);

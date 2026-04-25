@@ -65,6 +65,9 @@ pub async fn assert_mysql_matches(
                 DataType::String => {
                     matches!(dtype.as_str(), "varchar" | "char" | "text" | "longtext")
                 }
+                DataType::Uuid => {
+                    matches!(dtype.as_str(), "binary" | "char" | "varchar")
+                }
             };
             if !ok {
                 return Err(format!(

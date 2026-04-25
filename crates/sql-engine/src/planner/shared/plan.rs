@@ -474,6 +474,7 @@ pub fn val(v: &Value) -> String {
         Value::Float(f) => f.to_string(),
         Value::Text(s) => format!("'{s}'"),
         Value::Bool(b) => b.to_string(),
+        Value::Uuid(b) => format!("UUID '{}'", sql_parser::uuid::format_uuid(b)),
         Value::Null => "NULL".to_string(),
         Value::Placeholder(name) => format!(":{name}"),
     }

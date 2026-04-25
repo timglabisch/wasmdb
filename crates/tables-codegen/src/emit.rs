@@ -181,6 +181,9 @@ fn emit_dbtable_impl(
             FieldKind::Str => quote! {
                 out.push(::sql_engine::storage::CellValue::Str(self.#ident));
             },
+            FieldKind::Uuid => quote! {
+                out.push(::sql_engine::storage::CellValue::Uuid(self.#ident.0));
+            },
             FieldKind::OptI64 => quote! {
                 out.push(match self.#ident {
                     ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::I64(v),
@@ -190,6 +193,12 @@ fn emit_dbtable_impl(
             FieldKind::OptStr => quote! {
                 out.push(match self.#ident {
                     ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::Str(v),
+                    ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
+                });
+            },
+            FieldKind::OptUuid => quote! {
+                out.push(match self.#ident {
+                    ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::Uuid(v.0),
                     ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
                 });
             },
@@ -469,8 +478,10 @@ fn emit_arg_bindings(
             let err_prefix = format!("arg {idx} ({name}): ");
             let err_int = format!("{err_prefix}expected Int");
             let err_text = format!("{err_prefix}expected Text");
+            let err_uuid = format!("{err_prefix}expected Uuid");
             let err_non_null_int = format!("{err_prefix}expected Int, got NULL");
             let err_non_null_text = format!("{err_prefix}expected Text, got NULL");
+            let err_non_null_uuid = format!("{err_prefix}expected Uuid, got NULL");
 
             let binding = match kind {
                 FieldKind::I64 => quote! {
@@ -491,6 +502,15 @@ fn emit_arg_bindings(
                         _ => return ::core::result::Result::Err(#err_text.into()),
                     };
                 },
+                FieldKind::Uuid => quote! {
+                    let #ident: ::sql_engine::storage::Uuid = match args.get(#idx_lit) {
+                        ::core::option::Option::Some(::sql_parser::ast::Value::Uuid(b)) => ::sql_engine::storage::Uuid(*b),
+                        ::core::option::Option::Some(::sql_parser::ast::Value::Null) => {
+                            return ::core::result::Result::Err(#err_non_null_uuid.into());
+                        }
+                        _ => return ::core::result::Result::Err(#err_uuid.into()),
+                    };
+                },
                 FieldKind::OptI64 => quote! {
                     let #ident: ::core::option::Option<i64> = match args.get(#idx_lit) {
                         ::core::option::Option::Some(::sql_parser::ast::Value::Int(v)) => ::core::option::Option::Some(*v),
@@ -505,6 +525,13 @@ fn emit_arg_bindings(
                         _ => return ::core::result::Result::Err(#err_text.into()),
                     };
                 },
+                FieldKind::OptUuid => quote! {
+                    let #ident: ::core::option::Option<::sql_engine::storage::Uuid> = match args.get(#idx_lit) {
+                        ::core::option::Option::Some(::sql_parser::ast::Value::Uuid(b)) => ::core::option::Option::Some(::sql_engine::storage::Uuid(*b)),
+                        ::core::option::Option::Some(::sql_parser::ast::Value::Null) => ::core::option::Option::None,
+                        _ => return ::core::result::Result::Err(#err_uuid.into()),
+                    };
+                },
             };
             Ok(binding)
         })
@@ -512,7 +539,14 @@ fn emit_arg_bindings(
 }
 
 fn wrap_in_mods(path: &[String], content: TokenStream) -> TokenStream {
-    let mut ts = content;
+    // Re-import every type that user-side row/query field declarations might
+    // refer to by bare ident (the codegen passes those types through verbatim).
+    // Today: `Uuid`. If we add more "default-in-scope" types, list them here.
+    let prelude = quote! {
+        #[allow(unused_imports)]
+        use ::sql_engine::storage::Uuid;
+    };
+    let mut ts = quote! { #prelude #content };
     for name in path.iter().rev() {
         let ident = format_ident!("{name}");
         ts = quote! { pub mod #ident { #ts } };

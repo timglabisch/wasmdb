@@ -3,6 +3,42 @@ use std::collections::{BTreeMap, HashMap};
 use crate::bitmap::Bitmap;
 use crate::schema::{DataType, IndexType, TableSchema};
 
+/// Convenience newtype for the UUID column type. Used by `#[row]` /
+/// `#[query]` codegen so user-facing struct fields can be typed `Uuid`
+/// without pulling in the `uuid` crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
+pub struct Uuid(pub [u8; 16]);
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for Uuid {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&sql_parser::uuid::format_uuid(&self.0))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Uuid {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        sql_parser::uuid::parse_uuid(&s)
+            .map(Uuid)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid UUID: {s}")))
+    }
+}
+
+impl Uuid {
+    pub fn from_bytes(b: [u8; 16]) -> Self { Uuid(b) }
+    pub fn as_bytes(&self) -> &[u8; 16] { &self.0 }
+    pub fn into_bytes(self) -> [u8; 16] { self.0 }
+}
+
+impl std::fmt::Display for Uuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", sql_parser::uuid::format_uuid(&self.0))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "borsh", derive(borsh::BorshSerialize, borsh::BorshDeserialize))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -10,15 +46,37 @@ use crate::schema::{DataType, IndexType, TableSchema};
 pub enum CellValue {
     I64(i64),
     Str(String),
+    /// 16 raw bytes; serde emits/parses the canonical hyphenated form.
+    Uuid(
+        #[cfg_attr(feature = "serde", serde(with = "uuid_serde"))]
+        [u8; 16],
+    ),
     Null,
+}
+
+#[cfg(feature = "serde")]
+mod uuid_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8; 16], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&sql_parser::uuid::format_uuid(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 16], D::Error> {
+        let s = String::deserialize(d)?;
+        sql_parser::uuid::parse_uuid(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid UUID: {s}")))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum TypedColumn {
     I64(Vec<i64>),
     Str(Vec<String>),
+    Uuid(Vec<[u8; 16]>),
     NullableI64 { values: Vec<i64>, nulls: Bitmap },
     NullableStr { values: Vec<String>, nulls: Bitmap },
+    NullableUuid { values: Vec<[u8; 16]>, nulls: Bitmap },
 }
 
 impl TypedColumn {
@@ -26,8 +84,10 @@ impl TypedColumn {
         match (data_type, nullable) {
             (DataType::I64, false) => TypedColumn::I64(Vec::new()),
             (DataType::String, false) => TypedColumn::Str(Vec::new()),
+            (DataType::Uuid, false) => TypedColumn::Uuid(Vec::new()),
             (DataType::I64, true) => TypedColumn::NullableI64 { values: Vec::new(), nulls: Bitmap::with_capacity(0) },
             (DataType::String, true) => TypedColumn::NullableStr { values: Vec::new(), nulls: Bitmap::with_capacity(0) },
+            (DataType::Uuid, true) => TypedColumn::NullableUuid { values: Vec::new(), nulls: Bitmap::with_capacity(0) },
         }
     }
 
@@ -35,6 +95,7 @@ impl TypedColumn {
         match (self, value) {
             (TypedColumn::I64(v), CellValue::I64(val)) => v.push(*val),
             (TypedColumn::Str(v), CellValue::Str(val)) => v.push(val.clone()),
+            (TypedColumn::Uuid(v), CellValue::Uuid(val)) => v.push(*val),
 
             (TypedColumn::NullableI64 { values, nulls }, CellValue::I64(val)) => {
                 values.push(*val);
@@ -52,9 +113,18 @@ impl TypedColumn {
                 values.push(String::new());
                 nulls.push(true);
             }
+            (TypedColumn::NullableUuid { values, nulls }, CellValue::Uuid(val)) => {
+                values.push(*val);
+                nulls.push(false);
+            }
+            (TypedColumn::NullableUuid { values, nulls }, CellValue::Null) => {
+                values.push([0u8; 16]);
+                nulls.push(true);
+            }
 
             (TypedColumn::I64(_), CellValue::Null)
-            | (TypedColumn::Str(_), CellValue::Null) => {
+            | (TypedColumn::Str(_), CellValue::Null)
+            | (TypedColumn::Uuid(_), CellValue::Null) => {
                 return Err(StorageError::NullInNonNullable);
             }
 
@@ -67,11 +137,15 @@ impl TypedColumn {
         match self {
             TypedColumn::I64(v) => CellValue::I64(v[row_idx]),
             TypedColumn::Str(v) => CellValue::Str(v[row_idx].clone()),
+            TypedColumn::Uuid(v) => CellValue::Uuid(v[row_idx]),
             TypedColumn::NullableI64 { values, nulls } => {
                 if nulls.get(row_idx) { CellValue::Null } else { CellValue::I64(values[row_idx]) }
             }
             TypedColumn::NullableStr { values, nulls } => {
                 if nulls.get(row_idx) { CellValue::Null } else { CellValue::Str(values[row_idx].clone()) }
+            }
+            TypedColumn::NullableUuid { values, nulls } => {
+                if nulls.get(row_idx) { CellValue::Null } else { CellValue::Uuid(values[row_idx]) }
             }
         }
     }
@@ -81,11 +155,15 @@ impl TypedColumn {
         match self {
             TypedColumn::I64(v) => row_ids.iter().map(|&i| CellValue::I64(v[i])).collect(),
             TypedColumn::Str(v) => row_ids.iter().map(|&i| CellValue::Str(v[i].clone())).collect(),
+            TypedColumn::Uuid(v) => row_ids.iter().map(|&i| CellValue::Uuid(v[i])).collect(),
             TypedColumn::NullableI64 { values, nulls } => row_ids.iter().map(|&i| {
                 if nulls.get(i) { CellValue::Null } else { CellValue::I64(values[i]) }
             }).collect(),
             TypedColumn::NullableStr { values, nulls } => row_ids.iter().map(|&i| {
                 if nulls.get(i) { CellValue::Null } else { CellValue::Str(values[i].clone()) }
+            }).collect(),
+            TypedColumn::NullableUuid { values, nulls } => row_ids.iter().map(|&i| {
+                if nulls.get(i) { CellValue::Null } else { CellValue::Uuid(values[i]) }
             }).collect(),
         }
     }
@@ -94,8 +172,10 @@ impl TypedColumn {
         match self {
             TypedColumn::I64(v) => v.len(),
             TypedColumn::Str(v) => v.len(),
+            TypedColumn::Uuid(v) => v.len(),
             TypedColumn::NullableI64 { values, .. } => values.len(),
             TypedColumn::NullableStr { values, .. } => values.len(),
+            TypedColumn::NullableUuid { values, .. } => values.len(),
         }
     }
 }
@@ -427,7 +507,7 @@ impl Table {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::ColumnSchema;
+    use crate::schema::{ColumnSchema, IndexSchema};
 
     fn users_schema() -> TableSchema {
         TableSchema {
@@ -585,6 +665,249 @@ mod tests {
         assert!(CellValue::I64(1) < CellValue::I64(2));
         assert!(CellValue::Str("a".into()) < CellValue::Str("b".into()));
         assert!(CellValue::I64(-1) < CellValue::I64(1));
+    }
+
+    #[test]
+    fn test_uuid_column_round_trip() {
+        let schema = TableSchema {
+            name: "things".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "label".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let a = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let b = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        t.insert(&[CellValue::Uuid(a), CellValue::Str("first".into())]).unwrap();
+        t.insert(&[CellValue::Uuid(b), CellValue::Str("second".into())]).unwrap();
+        assert_eq!(t.get(0, 0), CellValue::Uuid(a));
+        assert_eq!(t.get(1, 0), CellValue::Uuid(b));
+        // PK index lookup
+        let idx = t.index_for_column(0).unwrap();
+        let hit = idx.lookup_eq(&[CellValue::Uuid(a)]).unwrap();
+        assert_eq!(hit, &[0usize]);
+    }
+
+    #[test]
+    fn test_uuid_type_mismatch_str_into_uuid() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let err = t.insert(&[CellValue::Str("not-a-uuid".into())]).unwrap_err();
+        assert!(matches!(err, StorageError::TypeMismatch));
+    }
+
+    #[test]
+    fn test_uuid_type_mismatch_uuid_into_str() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let err = t.insert(&[CellValue::Uuid(u)]).unwrap_err();
+        assert!(matches!(err, StorageError::TypeMismatch));
+    }
+
+    #[test]
+    fn test_uuid_null_in_non_nullable() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let err = t.insert(&[CellValue::Null]).unwrap_err();
+        assert!(matches!(err, StorageError::NullInNonNullable));
+    }
+
+    #[test]
+    fn test_uuid_to_cells_batch() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let a = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        let b = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000002").unwrap();
+        let c = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000003").unwrap();
+        t.insert(&[CellValue::Uuid(a)]).unwrap();
+        t.insert(&[CellValue::Uuid(b)]).unwrap();
+        t.insert(&[CellValue::Uuid(c)]).unwrap();
+        let cells = t.columns[0].to_cells(&[0, 2]);
+        assert_eq!(cells, vec![CellValue::Uuid(a), CellValue::Uuid(c)]);
+    }
+
+    #[test]
+    fn test_uuid_nullable_to_cells_batch() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "external".into(), data_type: DataType::Uuid, nullable: true },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        t.insert(&[CellValue::Uuid(u)]).unwrap();
+        t.insert(&[CellValue::Null]).unwrap();
+        t.insert(&[CellValue::Uuid(u)]).unwrap();
+        let cells = t.columns[0].to_cells(&[0, 1, 2]);
+        assert_eq!(cells, vec![CellValue::Uuid(u), CellValue::Null, CellValue::Uuid(u)]);
+    }
+
+    #[test]
+    fn test_uuid_upsert_by_pk_overwrites() {
+        let schema = TableSchema {
+            name: "customers".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        t.insert(&[CellValue::Uuid(u), CellValue::Str("Alice".into())]).unwrap();
+        t.upsert_by_pk(&[CellValue::Uuid(u), CellValue::Str("Alice 2".into())]).unwrap();
+        assert_eq!(t.len(), 1);
+        let live: Vec<usize> = t.row_ids().collect();
+        assert_eq!(live.len(), 1);
+        assert_eq!(t.get(live[0], 1), CellValue::Str("Alice 2".into()));
+    }
+
+    #[test]
+    fn test_uuid_btree_index_range_lex_order() {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![
+                IndexSchema { name: Some("idx_id".into()), columns: vec![0], index_type: IndexType::BTree },
+            ],
+        };
+        let mut t = Table::new(schema);
+        let a = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        let b = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000005").unwrap();
+        let c = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-00000000000a").unwrap();
+        t.insert(&[CellValue::Uuid(a)]).unwrap();
+        t.insert(&[CellValue::Uuid(b)]).unwrap();
+        t.insert(&[CellValue::Uuid(c)]).unwrap();
+        let idx = t.index_for_column(0).unwrap();
+        let hits = idx.lookup_range(RangeOp::Gt, &CellValue::Uuid(a)).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn test_uuid_composite_index_lookup() {
+        let schema = TableSchema {
+            name: "customers".into(),
+            columns: vec![
+                ColumnSchema { name: "tenant_id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![0, 1],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let a = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        let b = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000002").unwrap();
+        t.insert(&[CellValue::I64(0), CellValue::Uuid(a)]).unwrap();
+        t.insert(&[CellValue::I64(0), CellValue::Uuid(b)]).unwrap();
+        t.insert(&[CellValue::I64(1), CellValue::Uuid(a)]).unwrap();
+        let pk_idx = t.indexes().iter().find(|i| i.columns() == [0, 1]).unwrap();
+        let hit = pk_idx.lookup_eq(&[CellValue::I64(0), CellValue::Uuid(a)]).unwrap();
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0], 0);
+    }
+
+    #[test]
+    fn test_uuid_cell_ordering_lex_byte_order() {
+        let a = CellValue::Uuid([0x00; 16]);
+        let mut b_bytes = [0u8; 16];
+        b_bytes[0] = 0x01;
+        let b = CellValue::Uuid(b_bytes);
+        let c = CellValue::Uuid([0xff; 16]);
+        assert!(a < b);
+        assert!(b < c);
+        assert!(a < c);
+    }
+
+    #[test]
+    fn test_uuid_cross_type_ordering_pinned() {
+        // Cross-type ordering follows derive(PartialOrd) discriminant order:
+        // I64=0, Str=1, Uuid=2, Null=3. We pin this so any future enum
+        // reordering forces an explicit decision.
+        let i = CellValue::I64(0);
+        let s = CellValue::Str("a".into());
+        let u = CellValue::Uuid([0u8; 16]);
+        let n = CellValue::Null;
+        assert!(i < s);
+        assert!(s < u);
+        assert!(u < n);
+    }
+
+    #[test]
+    fn test_uuid_hash_via_index() {
+        // CellValue::Uuid must work as a hash-map key (used by Hash indexes
+        // and IN-list HashSets).
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        t.insert(&[CellValue::Uuid(u)]).unwrap();
+        let hit = t.index_for_column(0).unwrap()
+            .lookup_eq(&[CellValue::Uuid(u)]).unwrap();
+        assert_eq!(hit, &[0usize]);
+    }
+
+    #[test]
+    fn test_nullable_uuid_column() {
+        let schema = TableSchema {
+            name: "things".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "external".into(), data_type: DataType::Uuid, nullable: true },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        t.insert(&[CellValue::I64(1), CellValue::Uuid(u)]).unwrap();
+        t.insert(&[CellValue::I64(2), CellValue::Null]).unwrap();
+        assert_eq!(t.get(0, 1), CellValue::Uuid(u));
+        assert_eq!(t.get(1, 1), CellValue::Null);
     }
 
     #[test]

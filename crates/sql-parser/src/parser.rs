@@ -530,6 +530,244 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_create_table_uuid_column() {
+        let stmt = parse_statement(
+            "CREATE TABLE customers (id UUID NOT NULL PRIMARY KEY, name STRING)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.columns[0].data_type, AstDataType::Uuid);
+                assert!(ct.columns[0].not_null);
+                assert!(ct.columns[0].primary_key);
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_where() {
+        let select = parse(
+            "SELECT customers.name FROM customers \
+             WHERE customers.id = UUID '550e8400-e29b-41d4-a716-446655440000'"
+        ).unwrap();
+        let filter = &select.filter[0];
+        match filter {
+            AstExpr::Binary { right, .. } => match right.as_ref() {
+                AstExpr::Literal(Value::Uuid(b)) => {
+                    assert_eq!(
+                        crate::uuid::format_uuid(b),
+                        "550e8400-e29b-41d4-a716-446655440000",
+                    );
+                }
+                other => panic!("expected Uuid literal, got {other:?}"),
+            },
+            other => panic!("expected Binary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_invalid() {
+        let err = parse(
+            "SELECT customers.name FROM customers \
+             WHERE customers.id = UUID 'not-a-uuid'"
+        ).unwrap_err();
+        assert!(err.message.contains("invalid UUID"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_parse_create_table_uuid_nullable() {
+        let stmt = parse_statement(
+            "CREATE TABLE customers (id UUID NOT NULL PRIMARY KEY, external UUID)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.columns[0].data_type, AstDataType::Uuid);
+                assert!(ct.columns[0].not_null);
+                assert_eq!(ct.columns[1].data_type, AstDataType::Uuid);
+                assert!(!ct.columns[1].not_null);
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_table_uuid_lowercase_keyword() {
+        let stmt = parse_statement(
+            "CREATE TABLE t (id uuid NOT NULL PRIMARY KEY)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.columns[0].data_type, AstDataType::Uuid);
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_table_uuid_mixed_case_keyword() {
+        let stmt = parse_statement(
+            "CREATE TABLE t (id Uuid NOT NULL PRIMARY KEY)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.columns[0].data_type, AstDataType::Uuid);
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_table_composite_pk_with_uuid() {
+        let stmt = parse_statement(
+            "CREATE TABLE customers (\
+                tenant_id I64 NOT NULL, \
+                id UUID NOT NULL, \
+                name STRING, \
+                PRIMARY KEY (tenant_id, id)\
+            )"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                assert_eq!(ct.columns[0].data_type, AstDataType::I64);
+                assert_eq!(ct.columns[1].data_type, AstDataType::Uuid);
+                let has_pk = ct.constraints.iter().any(|c| matches!(c,
+                    AstTableConstraint::PrimaryKey { columns } if columns == &["tenant_id", "id"]
+                ));
+                assert!(has_pk, "expected composite PK constraint");
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_table_uuid_with_hash_index() {
+        let stmt = parse_statement(
+            "CREATE TABLE t (id UUID NOT NULL PRIMARY KEY, INDEX idx_id (id) USING HASH)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                let has_hash = ct.constraints.iter().any(|c| matches!(c,
+                    AstTableConstraint::Index { index_type, .. } if *index_type == AstIndexType::Hash
+                ));
+                assert!(has_hash, "expected hash index");
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_create_table_uuid_with_btree_index() {
+        let stmt = parse_statement(
+            "CREATE TABLE t (id UUID NOT NULL PRIMARY KEY, INDEX idx_id (id) USING BTREE)"
+        ).unwrap();
+        match stmt {
+            Statement::CreateTable(ct) => {
+                let has_btree = ct.constraints.iter().any(|c| matches!(c,
+                    AstTableConstraint::Index { index_type, .. } if *index_type == AstIndexType::BTree
+                ));
+                assert!(has_btree, "expected btree index");
+            }
+            _ => panic!("expected CreateTable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_in_list() {
+        let select = parse(
+            "SELECT customers.name FROM customers \
+             WHERE customers.id IN (\
+                UUID '550e8400-e29b-41d4-a716-446655440000', \
+                UUID '00000000-0000-0000-0000-000000000001'\
+             )"
+        ).unwrap();
+        match &select.filter[0] {
+            AstExpr::InList { values, .. } => {
+                assert_eq!(values.len(), 2);
+                assert!(matches!(&values[0], AstExpr::Literal(Value::Uuid(_))));
+                assert!(matches!(&values[1], AstExpr::Literal(Value::Uuid(_))));
+            }
+            other => panic!("expected InList, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_insert() {
+        let stmt = parse_statement(
+            "INSERT INTO customers (id, name) \
+             VALUES (UUID '550e8400-e29b-41d4-a716-446655440000', 'Alice')"
+        ).unwrap();
+        match stmt {
+            Statement::Insert(ins) => {
+                assert_eq!(ins.values[0].len(), 2);
+                assert!(matches!(&ins.values[0][0], AstExpr::Literal(Value::Uuid(_))));
+            }
+            _ => panic!("expected Insert"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_update() {
+        let stmt = parse_statement(
+            "UPDATE customers \
+             SET id = UUID '550e8400-e29b-41d4-a716-446655440000' \
+             WHERE customers.name = 'Alice'"
+        ).unwrap();
+        match stmt {
+            Statement::Update(upd) => {
+                assert_eq!(upd.assignments.len(), 1);
+                assert!(matches!(&upd.assignments[0].1, AstExpr::Literal(Value::Uuid(_))));
+            }
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_delete() {
+        let stmt = parse_statement(
+            "DELETE FROM customers \
+             WHERE customers.id = UUID '550e8400-e29b-41d4-a716-446655440000'"
+        ).unwrap();
+        match stmt {
+            Statement::Delete(del) => {
+                let filter = del.filter.expect("filter");
+                assert!(matches!(
+                    &filter,
+                    AstExpr::Binary { right, .. }
+                        if matches!(right.as_ref(), AstExpr::Literal(Value::Uuid(_)))
+                ));
+            }
+            _ => panic!("expected Delete"),
+        }
+    }
+
+    #[test]
+    fn test_parse_uuid_literal_in_join_on() {
+        let select = parse(
+            "SELECT users.id FROM users \
+             INNER JOIN customers ON customers.id = UUID '550e8400-e29b-41d4-a716-446655440000'"
+        ).unwrap();
+        let join = select.sources[1].join.as_ref().unwrap();
+        let on = &join.on[0];
+        assert!(matches!(
+            on,
+            AstExpr::Binary { right, .. }
+                if matches!(right.as_ref(), AstExpr::Literal(Value::Uuid(_)))
+        ));
+    }
+
+    #[test]
+    fn test_parse_uuid_keyword_without_string_errors() {
+        let err = parse_statement(
+            "SELECT customers.name FROM customers WHERE customers.id = UUID 42"
+        ).unwrap_err();
+        assert!(
+            err.message.contains("UUID string literal"),
+            "got: {}",
+            err.message
+        );
+    }
+
+    #[test]
     fn test_parse_create_table_not_null() {
         let stmt = parse_statement("CREATE TABLE t (name STRING NOT NULL)").unwrap();
         match stmt {

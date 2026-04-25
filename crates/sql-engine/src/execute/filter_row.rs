@@ -71,3 +71,59 @@ pub fn eval_predicate<F: Fn(ColumnRef) -> CellValue>(pred: &PlanFilterPredicate,
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sql_parser::ast::Value;
+
+    fn uuid_n(n: u8) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[15] = n;
+        b
+    }
+
+    #[test]
+    fn cmp_cell_uuid_eq() {
+        let a = CellValue::Uuid(uuid_n(1));
+        assert!(cmp_cell(&a, &CellValue::Uuid(uuid_n(1)), CmpOp::Eq));
+        assert!(!cmp_cell(&a, &CellValue::Uuid(uuid_n(2)), CmpOp::Eq));
+    }
+
+    #[test]
+    fn cmp_cell_uuid_lt_lex_byte() {
+        let a = CellValue::Uuid(uuid_n(1));
+        let b = CellValue::Uuid(uuid_n(2));
+        assert!(cmp_cell(&a, &b, CmpOp::Lt));
+        assert!(!cmp_cell(&b, &a, CmpOp::Lt));
+    }
+
+    #[test]
+    fn cmp_cell_uuid_against_null_is_false() {
+        let a = CellValue::Uuid(uuid_n(1));
+        assert!(!cmp_cell(&a, &CellValue::Null, CmpOp::Eq));
+        assert!(!cmp_cell(&CellValue::Null, &a, CmpOp::Eq));
+        assert!(!cmp_cell(&a, &CellValue::Null, CmpOp::Neq));
+    }
+
+    #[test]
+    fn eval_predicate_uuid_in_list() {
+        let row = vec![CellValue::Uuid(uuid_n(2))];
+        let get = |cr: ColumnRef| row[cr.col].clone();
+        let pred = PlanFilterPredicate::In {
+            col: ColumnRef { source: 0, col: 0 },
+            values: vec![Value::Uuid(uuid_n(1)), Value::Uuid(uuid_n(2))],
+        };
+        assert!(eval_predicate(&pred, &get));
+    }
+
+    #[test]
+    fn eval_predicate_uuid_in_list_skips_null() {
+        let row = vec![CellValue::Null];
+        let get = |cr: ColumnRef| row[cr.col].clone();
+        let pred = PlanFilterPredicate::In {
+            col: ColumnRef { source: 0, col: 0 },
+            values: vec![Value::Uuid(uuid_n(1))],
+        };
+        assert!(!eval_predicate(&pred, &get));
+    }
+}

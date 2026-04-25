@@ -141,6 +141,9 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
             FieldKind::Str => quote! {
                 out.push(::sql_engine::storage::CellValue::Str(self.#ident));
             },
+            FieldKind::Uuid => quote! {
+                out.push(::sql_engine::storage::CellValue::Uuid(self.#ident.0));
+            },
             FieldKind::OptI64 => quote! {
                 out.push(match self.#ident {
                     ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::I64(v),
@@ -150,6 +153,12 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
             FieldKind::OptStr => quote! {
                 out.push(match self.#ident {
                     ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::Str(v),
+                    ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
+                });
+            },
+            FieldKind::OptUuid => quote! {
+                out.push(match self.#ident {
+                    ::core::option::Option::Some(v) => ::sql_engine::storage::CellValue::Uuid(v.0),
                     ::core::option::Option::None => ::sql_engine::storage::CellValue::Null,
                 });
             },

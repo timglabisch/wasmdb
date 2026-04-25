@@ -298,3 +298,97 @@ fn test_update_with_and_filter() {
     // Alice(30→99), Bob(25→25), Carol(35→99)
     assert_eq!(result[1], vec![CellValue::I64(99), CellValue::I64(25), CellValue::I64(99)]);
 }
+
+// ── UUID mutations ──────────────────────────────────────────────────
+
+fn db_with_uuid_customers() -> Database {
+    let mut db = Database::new();
+    db.execute_all("
+        CREATE TABLE customers (
+            id UUID NOT NULL PRIMARY KEY,
+            name STRING NOT NULL
+        );
+        INSERT INTO customers VALUES (UUID '00000000-0000-0000-0000-000000000001', 'Alice');
+        INSERT INTO customers VALUES (UUID '00000000-0000-0000-0000-000000000002', 'Bob')
+    ").unwrap();
+    db
+}
+
+#[test]
+fn test_insert_uuid_via_sql() {
+    let mut db = db_with_uuid_customers();
+    db.execute(
+        "INSERT INTO customers VALUES (UUID '00000000-0000-0000-0000-000000000003', 'Carol')"
+    ).unwrap();
+    let result = db.execute(
+        "SELECT customers.name FROM customers \
+         WHERE customers.id = UUID '00000000-0000-0000-0000-000000000003'"
+    ).unwrap();
+    assert_eq!(result[0], vec![CellValue::Str("Carol".into())]);
+}
+
+#[test]
+fn test_insert_uuid_with_placeholder() {
+    use std::collections::HashMap;
+    use sql_engine::execute::ParamValue;
+    let mut id = [0u8; 16]; id[15] = 9;
+    let params = HashMap::from([
+        ("id".into(), ParamValue::Uuid(id)),
+        ("name".into(), ParamValue::Text("Dave".into())),
+    ]);
+    let mut db = db_with_uuid_customers();
+    db.execute_with_params(
+        "INSERT INTO customers VALUES (:id, :name)",
+        params,
+    ).unwrap();
+    let result = db.execute(
+        "SELECT customers.name FROM customers \
+         WHERE customers.id = UUID '00000000-0000-0000-0000-000000000009'"
+    ).unwrap();
+    assert_eq!(result[0], vec![CellValue::Str("Dave".into())]);
+}
+
+#[test]
+fn test_update_uuid_pk_target() {
+    let mut db = db_with_uuid_customers();
+    db.execute_mut(
+        "UPDATE customers SET name = 'Alice 2.0' \
+         WHERE customers.id = UUID '00000000-0000-0000-0000-000000000001'"
+    ).unwrap();
+    let result = db.execute("SELECT customers.name FROM customers ORDER BY customers.id ASC").unwrap();
+    assert_eq!(result[0], vec![
+        CellValue::Str("Alice 2.0".into()),
+        CellValue::Str("Bob".into()),
+    ]);
+}
+
+#[test]
+fn test_delete_by_uuid_pk() {
+    let mut db = db_with_uuid_customers();
+    db.execute_mut(
+        "DELETE FROM customers \
+         WHERE customers.id = UUID '00000000-0000-0000-0000-000000000001'"
+    ).unwrap();
+    let result = db.execute("SELECT COUNT(customers.id) FROM customers").unwrap();
+    assert_eq!(result[0], vec![CellValue::I64(1)]);
+}
+
+#[test]
+fn test_insert_string_into_uuid_column_rejected() {
+    // Cross-type guard: passing a Text literal where the column is UUID
+    // must fail at insert (storage TypeMismatch). We do NOT auto-coerce.
+    let mut db = db_with_uuid_customers();
+    let err = db.execute(
+        "INSERT INTO customers VALUES ('00000000-0000-0000-0000-000000000003', 'Carol')"
+    );
+    assert!(err.is_err(), "expected TypeMismatch error");
+}
+
+#[test]
+fn test_insert_int_into_uuid_column_rejected() {
+    let mut db = db_with_uuid_customers();
+    let err = db.execute(
+        "INSERT INTO customers VALUES (42, 'Carol')"
+    );
+    assert!(err.is_err(), "expected TypeMismatch error");
+}

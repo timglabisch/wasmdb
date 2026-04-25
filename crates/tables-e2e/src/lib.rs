@@ -5,10 +5,12 @@
 //! the generated `DbTable`s and `DbCaller`s with a `Database` and drive SQL
 //! through `execute_async` — see `tests/common/mod.rs` for the harness.
 
+mod contacts;
 mod customers;
 mod invoices;
 mod products;
 
+pub use contacts::Contact;
 pub use customers::Customer;
 pub use invoices::Invoice;
 pub use products::Product;
@@ -20,6 +22,7 @@ pub struct AppCtx {
     pub customers: Vec<Customer>,
     pub products: Vec<Product>,
     pub invoices: Vec<Invoice>,
+    pub contacts: Vec<Contact>,
 }
 
 impl AppCtx {
@@ -50,8 +53,24 @@ impl AppCtx {
                 Invoice { id: 12, customer_id: 2, amount: 50, note: Some("urgent rush".into()) },
                 Invoice { id: 13, customer_id: 3, amount: 300, note: None },
             ],
+            contacts: contact_fixtures(),
         }
     }
+}
+
+/// Stable UUID fixtures so tests can match by bytes without parsing.
+pub fn contact_uuid(n: u8) -> sql_engine::storage::Uuid {
+    let mut b = [0u8; 16];
+    b[15] = n;
+    sql_engine::storage::Uuid(b)
+}
+
+fn contact_fixtures() -> Vec<Contact> {
+    vec![
+        Contact { id: contact_uuid(1), name: "Alice".into(), external_id: Some(contact_uuid(101)) },
+        Contact { id: contact_uuid(2), name: "Bob".into(),   external_id: None },
+        Contact { id: contact_uuid(3), name: "Carol".into(), external_id: Some(contact_uuid(103)) },
+    ]
 }
 
 pub mod __generated {

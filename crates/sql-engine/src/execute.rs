@@ -23,9 +23,11 @@ use sql_parser::ast::Value;
 pub enum ParamValue {
     Int(i64),
     Text(String),
+    Uuid([u8; 16]),
     Null,
     IntList(Vec<i64>),
     TextList(Vec<String>),
+    UuidList(Vec<[u8; 16]>),
 }
 
 pub type Params = HashMap<String, ParamValue>;
@@ -79,6 +81,7 @@ pub fn value_to_cell(v: &Value) -> CellValue {
     match v {
         Value::Int(n) => CellValue::I64(*n),
         Value::Text(s) => CellValue::Str(s.clone()),
+        Value::Uuid(b) => CellValue::Uuid(*b),
         Value::Null => CellValue::Null,
         Value::Bool(b) => CellValue::I64(if *b { 1 } else { 0 }),
         Value::Float(f) => CellValue::I64(*f as i64),
@@ -90,6 +93,7 @@ pub(crate) fn cell_to_value(cell: &CellValue) -> Value {
     match cell {
         CellValue::I64(n) => Value::Int(*n),
         CellValue::Str(s) => Value::Text(s.clone()),
+        CellValue::Uuid(b) => Value::Uuid(*b),
         CellValue::Null => Value::Null,
     }
 }

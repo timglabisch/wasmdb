@@ -1604,6 +1604,7 @@ dependencies = [
  "fnv",
  "pollster 0.3.0",
  "serde",
+ "serde_json",
  "sql-parser",
  "web-time",
 ]

@@ -196,6 +196,10 @@ fn build_requirement_arg(
             typecheck_arg(expected, DataType::String, caller_id, arg_idx)?;
             Ok(bind_literal(lit.clone(), source_idx, arg_idx, ctx))
         }
+        ast::Value::Uuid(_) => {
+            typecheck_arg(expected, DataType::Uuid, caller_id, arg_idx)?;
+            Ok(bind_literal(lit.clone(), source_idx, arg_idx, ctx))
+        }
         ast::Value::Null => Ok(bind_literal(lit.clone(), source_idx, arg_idx, ctx)),
         ast::Value::Float(_) => Err(PlanError::UnsupportedExpr(format!(
             "caller `{caller_id}` arg {arg_idx}: float literals not supported"
@@ -828,6 +832,154 @@ mod tests {
             matches!(&err, PlanError::UnknownTable(t) if t == "ghosts"),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn call_with_uuid_literal_typechecks_against_uuid_param() {
+        let schemas = schemas_with(&[customers_schema()]);
+        let mut registry = RequirementRegistry::new();
+        registry.insert(
+            "customers::by_id".into(),
+            meta("customers", vec![("external_id", DataType::Uuid)]),
+        );
+
+        let (plan, bound) = run(
+            "SELECT customers.id FROM customers.by_id(UUID '550e8400-e29b-41d4-a716-446655440000')",
+            &schemas,
+            &registry,
+        )
+        .expect("plan");
+
+        let PlanSource::Requirement { args, .. } = &plan.sources[0].source else {
+            panic!("expected Requirement source");
+        };
+        match &args[0] {
+            RequirementArg::Placeholder(name) => {
+                assert_eq!(name, "__caller_0_arg_0");
+                let bound_val = bound.get(name).unwrap();
+                let expected = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+                assert!(matches!(bound_val, Value::Uuid(b) if *b == expected));
+            }
+        }
+    }
+
+    #[test]
+    fn call_uuid_literal_against_i64_param_is_type_mismatch() {
+        let schemas = schemas_with(&[customers_schema()]);
+        let mut registry = RequirementRegistry::new();
+        registry.insert(
+            "customers::by_id".into(),
+            meta("customers", vec![("external_id", DataType::I64)]),
+        );
+
+        let err = run(
+            "SELECT customers.id FROM customers.by_id(UUID '550e8400-e29b-41d4-a716-446655440000')",
+            &schemas,
+            &registry,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                PlanError::CallerArgTypeMismatch { id, arg_idx: 0, .. }
+                    if id == "customers::by_id"
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn call_int_literal_against_uuid_param_is_type_mismatch() {
+        let schemas = schemas_with(&[customers_schema()]);
+        let mut registry = RequirementRegistry::new();
+        registry.insert(
+            "customers::by_id".into(),
+            meta("customers", vec![("external_id", DataType::Uuid)]),
+        );
+
+        let err = run(
+            "SELECT customers.id FROM customers.by_id(42)",
+            &schemas,
+            &registry,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                PlanError::CallerArgTypeMismatch { id, arg_idx: 0, .. }
+                    if id == "customers::by_id"
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn call_with_uuid_placeholder_passes_through_without_typecheck() {
+        // User placeholders aren't type-checked at plan time — they're
+        // resolved at bind time. Only the registry shape matters.
+        let schemas = schemas_with(&[customers_schema()]);
+        let mut registry = RequirementRegistry::new();
+        registry.insert(
+            "customers::by_id".into(),
+            meta("customers", vec![("external_id", DataType::Uuid)]),
+        );
+
+        let (plan, bound) = run(
+            "SELECT customers.id FROM customers.by_id(:external_id)",
+            &schemas,
+            &registry,
+        )
+        .expect("plan");
+
+        let PlanSource::Requirement { args, .. } = &plan.sources[0].source else {
+            panic!("expected Requirement source");
+        };
+        match &args[0] {
+            RequirementArg::Placeholder(name) => assert_eq!(name, "external_id"),
+        }
+        assert!(bound.is_empty(), "user placeholders must not bind values");
+    }
+
+    #[test]
+    fn call_with_mixed_uuid_str_int_args() {
+        let schemas = schemas_with(&[customers_schema()]);
+        let mut registry = RequirementRegistry::new();
+        registry.insert(
+            "customers::find".into(),
+            RequirementMeta {
+                row_table: "customers".into(),
+                params: vec![
+                    RequirementParamDef { name: "id".into(), data_type: DataType::Uuid },
+                    RequirementParamDef { name: "name".into(), data_type: DataType::String },
+                    RequirementParamDef { name: "min_age".into(), data_type: DataType::I64 },
+                ],
+            },
+        );
+
+        let (plan, bound) = run(
+            "SELECT customers.id FROM customers.find(\
+                UUID '550e8400-e29b-41d4-a716-446655440000', \
+                'Alice', \
+                30\
+             )",
+            &schemas,
+            &registry,
+        )
+        .expect("plan");
+
+        let PlanSource::Requirement { args, .. } = &plan.sources[0].source else {
+            panic!("expected Requirement source");
+        };
+        assert_eq!(args.len(), 3);
+        let names: Vec<&str> = args.iter().map(|a| match a {
+            RequirementArg::Placeholder(n) => n.as_str(),
+        }).collect();
+        let expected_uuid = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        assert!(matches!(bound.get(names[0]), Some(Value::Uuid(b)) if *b == expected_uuid));
+        assert!(matches!(bound.get(names[1]), Some(Value::Text(s)) if s == "Alice"));
+        assert!(matches!(bound.get(names[2]), Some(Value::Int(30))));
     }
 
     #[test]

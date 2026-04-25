@@ -61,6 +61,7 @@ fn fmt_cell(v: &CellValue) -> String {
     match v {
         CellValue::I64(n) => n.to_string(),
         CellValue::Str(s) => format!("'{s}'"),
+        CellValue::Uuid(b) => format!("UUID '{}'", sql_parser::uuid::format_uuid(b)),
         CellValue::Null => "NULL".to_string(),
     }
 }
@@ -170,6 +171,7 @@ fn const_eval_literal(
     match lit {
         ast::Value::Int(n) => Ok(CellValue::I64(*n)),
         ast::Value::Text(s) => Ok(CellValue::Str(s.clone())),
+        ast::Value::Uuid(b) => Ok(CellValue::Uuid(*b)),
         ast::Value::Null => Ok(CellValue::Null),
         other => Err(PlanError::UnsupportedExpr(format!(
             "caller `{schema}.{function}(...)` arg {arg_idx}: unsupported literal {other:?}"

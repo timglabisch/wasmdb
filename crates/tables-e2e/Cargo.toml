@@ -13,7 +13,7 @@ publish = false
 [dependencies]
 tables = { path = "../tables" }
 tables-storage = { path = "../tables-storage" }
-sql-engine = { path = "../sql-engine" }
+sql-engine = { path = "../sql-engine", features = ["serde", "borsh"] }
 sql-parser = { path = "../sql-parser" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

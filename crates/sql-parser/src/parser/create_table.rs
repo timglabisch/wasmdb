@@ -71,6 +71,9 @@ fn parse_data_type(p: &mut ParserCore) -> Result<AstDataType, ParseError> {
     } else if p.at_keyword("STRING")? {
         p.eat()?;
         Ok(AstDataType::String)
+    } else if p.at_keyword("UUID")? {
+        p.eat()?;
+        Ok(AstDataType::Uuid)
     } else {
         let tok = p.eat()?;
         Err(ParseError::new(

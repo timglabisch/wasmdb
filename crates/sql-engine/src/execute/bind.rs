@@ -106,8 +106,14 @@ pub fn resolve_filter(
                                 values: list.iter().map(|s| Value::Text(s.clone())).collect(),
                             })
                         }
+                        Some(ParamValue::UuidList(list)) => {
+                            Ok(PlanFilterPredicate::In {
+                                col: *col,
+                                values: list.iter().map(|b| Value::Uuid(*b)).collect(),
+                            })
+                        }
                         Some(_) => Err(ExecuteError::BindError(
-                            format!("IN(:{name}) requires IntList or TextList parameter"),
+                            format!("IN(:{name}) requires IntList, TextList or UuidList parameter"),
                         )),
                         None => Err(ExecuteError::BindError(
                             format!("missing parameter :{name}"),
@@ -141,8 +147,9 @@ pub fn resolve_value(value: &Value, params: &Params) -> Result<Value, ExecuteErr
         Value::Placeholder(name) => match params.get(name) {
             Some(ParamValue::Int(n)) => Ok(Value::Int(*n)),
             Some(ParamValue::Text(s)) => Ok(Value::Text(s.clone())),
+            Some(ParamValue::Uuid(b)) => Ok(Value::Uuid(*b)),
             Some(ParamValue::Null) => Ok(Value::Null),
-            Some(ParamValue::IntList(_) | ParamValue::TextList(_)) => {
+            Some(ParamValue::IntList(_) | ParamValue::TextList(_) | ParamValue::UuidList(_)) => {
                 Err(ExecuteError::BindError(
                     format!("parameter :{name} is a list, but scalar expected"),
                 ))
@@ -281,7 +288,7 @@ mod tests {
         });
         let params = HashMap::from([("val".into(), ParamValue::Int(42))]);
         let err = resolve_params(&plan, &params).unwrap_err();
-        assert!(matches!(err, ExecuteError::BindError(ref msg) if msg.contains("IntList or TextList")));
+        assert!(matches!(err, ExecuteError::BindError(ref msg) if msg.contains("List")));
     }
 
     #[test]
@@ -331,6 +338,73 @@ mod tests {
             }
             _ => panic!("expected And"),
         }
+    }
+
+    #[test]
+    fn test_bind_scalar_uuid() {
+        let plan = empty_plan(PlanFilterPredicate::Equals {
+            col: c(0, 0),
+            value: Value::Placeholder("id".into()),
+        });
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let params = HashMap::from([("id".into(), ParamValue::Uuid(u))]);
+        let resolved = resolve_params(&plan, &params).unwrap();
+        assert!(matches!(
+            resolved.filter,
+            PlanFilterPredicate::Equals { value: Value::Uuid(b), .. } if b == u
+        ));
+    }
+
+    #[test]
+    fn test_bind_uuid_list_for_in() {
+        let plan = empty_plan(PlanFilterPredicate::In {
+            col: c(0, 0),
+            values: vec![Value::Placeholder("ids".into())],
+        });
+        let a = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        let b = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000002").unwrap();
+        let params = HashMap::from([("ids".into(), ParamValue::UuidList(vec![a, b]))]);
+        let resolved = resolve_params(&plan, &params).unwrap();
+        match &resolved.filter {
+            PlanFilterPredicate::In { values, .. } => {
+                assert_eq!(values, &[Value::Uuid(a), Value::Uuid(b)]);
+            }
+            _ => panic!("expected In"),
+        }
+    }
+
+    #[test]
+    fn test_bind_uuid_list_where_scalar_expected_error() {
+        let plan = empty_plan(PlanFilterPredicate::Equals {
+            col: c(0, 0),
+            value: Value::Placeholder("val".into()),
+        });
+        let a = sql_parser::uuid::parse_uuid("00000000-0000-0000-0000-000000000001").unwrap();
+        let params = HashMap::from([("val".into(), ParamValue::UuidList(vec![a]))]);
+        let err = resolve_params(&plan, &params).unwrap_err();
+        assert!(matches!(err, ExecuteError::BindError(ref msg) if msg.contains("list")));
+    }
+
+    #[test]
+    fn test_bind_mixed_param_types() {
+        // Same plan, params map contains Int + Uuid + Null + UuidList — only
+        // the referenced placeholder gets resolved, others are ignored.
+        let plan = empty_plan(PlanFilterPredicate::Equals {
+            col: c(0, 0),
+            value: Value::Placeholder("u".into()),
+        });
+        let u = sql_parser::uuid::parse_uuid("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let params = HashMap::from([
+            ("n".into(), ParamValue::Int(42)),
+            ("u".into(), ParamValue::Uuid(u)),
+            ("missing".into(), ParamValue::Null),
+            ("ids".into(), ParamValue::UuidList(vec![u])),
+        ]);
+        let resolved = resolve_params(&plan, &params).unwrap();
+        assert!(matches!(
+            resolved.filter,
+            PlanFilterPredicate::Equals { value: Value::Uuid(b), .. } if b == u
+        ));
     }
 
     #[test]

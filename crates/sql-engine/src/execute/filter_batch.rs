@@ -19,6 +19,7 @@ use super::ExecutionContext;
 enum NormalizedValue<'a> {
     I64(i64),
     Str(&'a str),
+    Uuid([u8; 16]),
     Null,
 }
 
@@ -26,6 +27,7 @@ fn normalize_value<'a>(v: &'a Value) -> NormalizedValue<'a> {
     match v {
         Value::Int(n) => NormalizedValue::I64(*n),
         Value::Text(s) => NormalizedValue::Str(s),
+        Value::Uuid(b) => NormalizedValue::Uuid(*b),
         Value::Null => NormalizedValue::Null,
         Value::Bool(b) => NormalizedValue::I64(if *b { 1 } else { 0 }),
         Value::Float(f) => NormalizedValue::I64(*f as i64),
@@ -145,6 +147,15 @@ fn filter_typed_cmp(
             }
             _ => Vec::new(),
         },
+        NormalizedValue::Uuid(needle) => match col {
+            TypedColumn::Uuid(data) => {
+                row_ids.iter().filter(|&&i| cmp_uuid(&data[i], &needle, op)).copied().collect()
+            }
+            TypedColumn::NullableUuid { values, nulls } => {
+                row_ids.iter().filter(|&&i| !nulls.get(i) && cmp_uuid(&values[i], &needle, op)).copied().collect()
+            }
+            _ => Vec::new(),
+        },
     }
 }
 
@@ -161,11 +172,17 @@ fn filter_typed_col_col(
         (TypedColumn::Str(l), TypedColumn::Str(r)) => {
             row_ids.iter().filter(|&&i| cmp_str(&l[i], &r[i], op)).copied().collect()
         }
+        (TypedColumn::Uuid(l), TypedColumn::Uuid(r)) => {
+            row_ids.iter().filter(|&&i| cmp_uuid(&l[i], &r[i], op)).copied().collect()
+        }
         (TypedColumn::NullableI64 { values: lv, nulls: ln }, TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
             row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_i64(lv[i], rv[i], op)).copied().collect()
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::NullableStr { values: rv, nulls: rn }) => {
             row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_str(&lv[i], &rv[i], op)).copied().collect()
+        }
+        (TypedColumn::NullableUuid { values: lv, nulls: ln }, TypedColumn::NullableUuid { values: rv, nulls: rn }) => {
+            row_ids.iter().filter(|&&i| !ln.get(i) && !rn.get(i) && cmp_uuid(&lv[i], &rv[i], op)).copied().collect()
         }
         (TypedColumn::I64(l), TypedColumn::NullableI64 { values: rv, nulls: rn }) => {
             row_ids.iter().filter(|&&i| !rn.get(i) && cmp_i64(l[i], rv[i], op)).copied().collect()
@@ -178,6 +195,12 @@ fn filter_typed_col_col(
         }
         (TypedColumn::NullableStr { values: lv, nulls: ln }, TypedColumn::Str(r)) => {
             row_ids.iter().filter(|&&i| !ln.get(i) && cmp_str(&lv[i], &r[i], op)).copied().collect()
+        }
+        (TypedColumn::Uuid(l), TypedColumn::NullableUuid { values: rv, nulls: rn }) => {
+            row_ids.iter().filter(|&&i| !rn.get(i) && cmp_uuid(&l[i], &rv[i], op)).copied().collect()
+        }
+        (TypedColumn::NullableUuid { values: lv, nulls: ln }, TypedColumn::Uuid(r)) => {
+            row_ids.iter().filter(|&&i| !ln.get(i) && cmp_uuid(&lv[i], &r[i], op)).copied().collect()
         }
         _ => Vec::new(),
     }
@@ -193,13 +216,16 @@ fn filter_typed_in(col: &TypedColumn, row_ids: &[usize], values: &[Value]) -> Ve
 
 fn filter_typed_is_null(col: &TypedColumn, row_ids: &[usize], want_null: bool) -> Vec<usize> {
     match col {
-        TypedColumn::I64(_) | TypedColumn::Str(_) => {
+        TypedColumn::I64(_) | TypedColumn::Str(_) | TypedColumn::Uuid(_) => {
             if want_null { Vec::new() } else { row_ids.to_vec() }
         }
         TypedColumn::NullableI64 { nulls, .. } => {
             row_ids.iter().filter(|&&i| nulls.get(i) == want_null).copied().collect()
         }
         TypedColumn::NullableStr { nulls, .. } => {
+            row_ids.iter().filter(|&&i| nulls.get(i) == want_null).copied().collect()
+        }
+        TypedColumn::NullableUuid { nulls, .. } => {
             row_ids.iter().filter(|&&i| nulls.get(i) == want_null).copied().collect()
         }
     }
@@ -219,6 +245,18 @@ fn cmp_i64(left: i64, right: i64, op: CmpOp) -> bool {
 
 #[inline]
 fn cmp_str(left: &str, right: &str, op: CmpOp) -> bool {
+    match op {
+        CmpOp::Eq => left == right,
+        CmpOp::Neq => left != right,
+        CmpOp::Lt => left < right,
+        CmpOp::Lte => left <= right,
+        CmpOp::Gt => left > right,
+        CmpOp::Gte => left >= right,
+    }
+}
+
+#[inline]
+fn cmp_uuid(left: &[u8; 16], right: &[u8; 16], op: CmpOp) -> bool {
     match op {
         CmpOp::Eq => left == right,
         CmpOp::Neq => left != right,
@@ -441,6 +479,254 @@ mod tests {
             values: vec![Value::Int(25), Value::Int(30)],
         };
         assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 1]);
+    }
+
+    fn make_uuid_table(values: &[[u8; 16]]) -> Table {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        for v in values {
+            t.insert(&[CellValue::Uuid(*v)]).unwrap();
+        }
+        t
+    }
+
+    fn make_nullable_uuid_table(values: &[Option<[u8; 16]>]) -> Table {
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::I64, nullable: false },
+                ColumnSchema { name: "external".into(), data_type: DataType::Uuid, nullable: true },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut t = Table::new(schema);
+        for (i, v) in values.iter().enumerate() {
+            let cell = match v {
+                Some(b) => CellValue::Uuid(*b),
+                None => CellValue::Null,
+            };
+            t.insert(&[CellValue::I64(i as i64), cell]).unwrap();
+        }
+        t
+    }
+
+    fn uuid_n(n: u8) -> [u8; 16] {
+        let mut b = [0u8; 16];
+        b[15] = n;
+        b
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_eq() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(2), uuid_n(3)]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Uuid(uuid_n(2)) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_neq() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(2), uuid_n(3)]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::NotEquals { col: c(0, 0), value: Value::Uuid(uuid_n(2)) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_lt_lex_order() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(5), uuid_n(0xa)]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::LessThan { col: c(0, 0), value: Value::Uuid(uuid_n(5)) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_gte() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(5), uuid_n(0xa)]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::GreaterThanOrEqual {
+            col: c(0, 0),
+            value: Value::Uuid(uuid_n(5)),
+        };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_in_list() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(2), uuid_n(3), uuid_n(4)]);
+        let row_ids: Vec<usize> = (0..4).collect();
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 0),
+            values: vec![Value::Uuid(uuid_n(2)), Value::Uuid(uuid_n(4))],
+        };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1, 3]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_in_skips_null() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_nullable_uuid_table(&[Some(uuid_n(1)), None, Some(uuid_n(2))]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::In {
+            col: c(0, 1),
+            values: vec![Value::Uuid(uuid_n(1)), Value::Uuid(uuid_n(2))],
+        };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_is_null() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_nullable_uuid_table(&[Some(uuid_n(1)), None, Some(uuid_n(2))]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::IsNull { col: c(0, 1) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_is_not_null() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_nullable_uuid_table(&[Some(uuid_n(1)), None, Some(uuid_n(2))]);
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::IsNotNull { col: c(0, 1) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_column_equals() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "b".into(), data_type: DataType::Uuid, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.insert(&[CellValue::Uuid(uuid_n(1)), CellValue::Uuid(uuid_n(1))]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(2)), CellValue::Uuid(uuid_n(9))]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(3)), CellValue::Uuid(uuid_n(3))]).unwrap();
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_column_equals_with_nullable() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "b".into(), data_type: DataType::Uuid, nullable: true },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.insert(&[CellValue::Uuid(uuid_n(1)), CellValue::Uuid(uuid_n(1))]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(2)), CellValue::Null]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(3)), CellValue::Uuid(uuid_n(3))]).unwrap();
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
+        // Row 1 must be excluded — NULL never compares equal under SQL semantics.
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![0, 2]);
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_vs_str_column_returns_empty() {
+        // Cross-type column comparison returns no rows (not an error).
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let schema = TableSchema {
+            name: "t".into(),
+            columns: vec![
+                ColumnSchema { name: "a".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "b".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.insert(&[CellValue::Uuid(uuid_n(1)), CellValue::Str("foo".into())]).unwrap();
+        let row_ids: Vec<usize> = (0..1).collect();
+        let pred = PlanFilterPredicate::ColumnEquals { left: c(0, 0), right: c(0, 1) };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_vs_str_literal_returns_empty() {
+        // A `Value::Text` against a UUID column finds nothing — coercion is
+        // explicitly NOT performed; callers must use `UUID 'xxx'`.
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1)]);
+        let row_ids: Vec<usize> = (0..1).collect();
+        let pred = PlanFilterPredicate::Equals {
+            col: c(0, 0),
+            value: Value::Text("00000000-0000-0000-0000-000000000001".into()),
+        };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_null_value_always_false() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let table = make_uuid_table(&[uuid_n(1), uuid_n(2)]);
+        let row_ids: Vec<usize> = (0..2).collect();
+        let pred = PlanFilterPredicate::Equals { col: c(0, 0), value: Value::Null };
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn test_filter_batch_uuid_and_str_combined() {
+        let db = HashMap::new();
+        let mut ctx = ExecutionContext::new(&db);
+        let schema = TableSchema {
+            name: "customers".into(),
+            columns: vec![
+                ColumnSchema { name: "id".into(), data_type: DataType::Uuid, nullable: false },
+                ColumnSchema { name: "name".into(), data_type: DataType::String, nullable: false },
+            ],
+            primary_key: vec![0],
+            indexes: vec![],
+        };
+        let mut table = Table::new(schema);
+        table.insert(&[CellValue::Uuid(uuid_n(1)), CellValue::Str("Alice".into())]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(2)), CellValue::Str("Alice".into())]).unwrap();
+        table.insert(&[CellValue::Uuid(uuid_n(3)), CellValue::Str("Bob".into())]).unwrap();
+        let row_ids: Vec<usize> = (0..3).collect();
+        let pred = PlanFilterPredicate::And(
+            Box::new(PlanFilterPredicate::Equals { col: c(0, 1), value: Value::Text("Alice".into()) }),
+            Box::new(PlanFilterPredicate::GreaterThan { col: c(0, 0), value: Value::Uuid(uuid_n(1)) }),
+        );
+        assert_eq!(pred.filter_batch(&mut ctx, &table, &row_ids), vec![1]);
     }
 
     #[test]

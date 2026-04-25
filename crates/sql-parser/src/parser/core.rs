@@ -191,6 +191,25 @@ impl<'a> ParserCore<'a> {
                 })
             }
 
+            TokenKind::Ident(name) if name.eq_ignore_ascii_case("UUID") => {
+                // Typed-string literal: `UUID 'xxxxxxxx-...'`
+                let uuid_tok = self.eat()?;
+                let next = self.eat()?;
+                let TokenKind::Str(s) = next.kind else {
+                    return Err(ParseError::new(
+                        format!("expected UUID string literal, got {}", next.kind.name()),
+                        next.span,
+                    ));
+                };
+                let bytes = crate::uuid::parse_uuid(&s).ok_or_else(|| {
+                    ParseError::new(
+                        format!("invalid UUID literal: '{s}'"),
+                        uuid_tok.span,
+                    )
+                })?;
+                Ok(AstExpr::Literal(Value::Uuid(bytes)))
+            }
+
             TokenKind::Ident(_) => {
                 let (table, _) = self.expect_ident()?;
                 self.expect(TokenKind::Dot)?;

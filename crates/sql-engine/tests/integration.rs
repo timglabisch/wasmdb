@@ -126,6 +126,203 @@ fn i(v: i64) -> CellValue {
 fn s(v: &str) -> CellValue {
     CellValue::Str(v.into())
 }
+fn u(n: u8) -> CellValue {
+    let mut b = [0u8; 16];
+    b[15] = n;
+    CellValue::Uuid(b)
+}
+fn uuid_lit(n: u8) -> String {
+    let mut b = [0u8; 16];
+    b[15] = n;
+    format!("UUID '{}'", sql_parser::uuid::format_uuid(&b))
+}
+
+// ── UUID end-to-end via SQL plan + execute ────────────────────────────────
+
+#[test]
+fn uuid_select_eq_via_pk_index() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    db.tables.get_mut("customers").unwrap()
+        .insert(&[u(1), s("Alice")]).unwrap();
+    db.tables.get_mut("customers").unwrap()
+        .insert(&[u(2), s("Bob")]).unwrap();
+    let sql = format!("SELECT customers.name FROM customers WHERE customers.id = {}", uuid_lit(2));
+    let cols = db.run(&sql);
+    assert_eq!(cols[0], vec![s("Bob")]);
+}
+
+#[test]
+fn uuid_select_in_list() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    for (n, name) in [(1u8, "Alice"), (2, "Bob"), (3, "Carol")] {
+        db.tables.get_mut("customers").unwrap()
+            .insert(&[u(n), s(name)]).unwrap();
+    }
+    let sql = format!(
+        "SELECT customers.name FROM customers WHERE customers.id IN ({}, {})",
+        uuid_lit(1),
+        uuid_lit(3),
+    );
+    let cols = db.run(&sql);
+    assert_eq!(cols[0], vec![s("Alice"), s("Carol")]);
+}
+
+#[test]
+fn uuid_select_in_placeholder_list() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    for (n, name) in [(1u8, "Alice"), (2, "Bob")] {
+        db.tables.get_mut("customers").unwrap()
+            .insert(&[u(n), s(name)]).unwrap();
+    }
+    let mut a = [0u8; 16]; a[15] = 1;
+    let mut b = [0u8; 16]; b[15] = 2;
+    let mut params = execute::Params::new();
+    params.insert("ids".into(), execute::ParamValue::UuidList(vec![a, b]));
+    let cols = db.run_with_params(
+        "SELECT customers.name FROM customers WHERE customers.id IN (:ids)",
+        params,
+    );
+    assert_eq!(cols[0].len(), 2);
+}
+
+#[test]
+fn uuid_count_aggregate() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    for n in 1u8..=3 {
+        db.tables.get_mut("customers").unwrap()
+            .insert(&[u(n), s("x")]).unwrap();
+    }
+    let cols = db.run("SELECT COUNT(customers.id) FROM customers");
+    assert_eq!(cols[0], vec![i(3)]);
+}
+
+#[test]
+fn uuid_min_max_lex_byte_order() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    for n in [5u8, 1, 0xa] {
+        db.tables.get_mut("customers").unwrap()
+            .insert(&[u(n), s("x")]).unwrap();
+    }
+    let cols = db.run("SELECT MIN(customers.id), MAX(customers.id) FROM customers");
+    assert_eq!(cols[0], vec![u(1)]);
+    assert_eq!(cols[1], vec![u(0xa)]);
+}
+
+#[test]
+fn uuid_order_by_asc_desc_lex_byte_order() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    for n in [5u8, 1, 0xa, 3] {
+        db.tables.get_mut("customers").unwrap()
+            .insert(&[u(n), s("x")]).unwrap();
+    }
+    let cols = db.run("SELECT customers.id FROM customers ORDER BY customers.id ASC");
+    assert_eq!(cols[0], vec![u(1), u(3), u(5), u(0xa)]);
+    let cols = db.run("SELECT customers.id FROM customers ORDER BY customers.id DESC");
+    assert_eq!(cols[0], vec![u(0xa), u(5), u(3), u(1)]);
+}
+
+#[test]
+fn uuid_group_by_distinct_groups() {
+    let mut db = TestDb::new();
+    db.add_table("orders", &[
+        ("id", DataType::I64, false),
+        ("customer_id", DataType::Uuid, false),
+    ]);
+    db.tables.get_mut("orders").unwrap().insert(&[i(1), u(7)]).unwrap();
+    db.tables.get_mut("orders").unwrap().insert(&[i(2), u(7)]).unwrap();
+    db.tables.get_mut("orders").unwrap().insert(&[i(3), u(8)]).unwrap();
+    let cols = db.run(
+        "SELECT orders.customer_id, COUNT(orders.id) \
+         FROM orders GROUP BY orders.customer_id ORDER BY orders.customer_id ASC",
+    );
+    assert_eq!(cols[0], vec![u(7), u(8)]);
+    assert_eq!(cols[1], vec![i(2), i(1)]);
+}
+
+#[test]
+fn uuid_count_skips_null() {
+    let mut db = TestDb::new();
+    db.add_table("t", &[
+        ("id", DataType::I64, false),
+        ("external", DataType::Uuid, true),
+    ]);
+    db.tables.get_mut("t").unwrap().insert(&[i(1), u(1)]).unwrap();
+    db.tables.get_mut("t").unwrap().insert(&[i(2), CellValue::Null]).unwrap();
+    db.tables.get_mut("t").unwrap().insert(&[i(3), u(2)]).unwrap();
+    let cols = db.run("SELECT COUNT(t.external) FROM t");
+    assert_eq!(cols[0], vec![i(2)]);
+}
+
+#[test]
+fn uuid_join_on_uuid_column() {
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    db.add_table("invoices", &[
+        ("id", DataType::I64, false),
+        ("customer_id", DataType::Uuid, false),
+    ]);
+    db.tables.get_mut("customers").unwrap().insert(&[u(1), s("Alice")]).unwrap();
+    db.tables.get_mut("customers").unwrap().insert(&[u(2), s("Bob")]).unwrap();
+    db.tables.get_mut("invoices").unwrap().insert(&[i(10), u(1)]).unwrap();
+    db.tables.get_mut("invoices").unwrap().insert(&[i(11), u(2)]).unwrap();
+    db.tables.get_mut("invoices").unwrap().insert(&[i(12), u(1)]).unwrap();
+    let cols = db.run(
+        "SELECT invoices.id, customers.name FROM invoices \
+         INNER JOIN customers ON invoices.customer_id = customers.id \
+         ORDER BY invoices.id ASC"
+    );
+    assert_eq!(cols[0], vec![i(10), i(11), i(12)]);
+    assert_eq!(cols[1], vec![s("Alice"), s("Bob"), s("Alice")]);
+}
+
+#[test]
+fn uuid_join_against_str_column_returns_no_rows() {
+    // Cross-type ON-condition compiles but matches zero rows — pin behavior.
+    let mut db = TestDb::new();
+    db.add_table("customers", &[
+        ("id", DataType::Uuid, false),
+        ("name", DataType::String, false),
+    ]);
+    db.add_table("legacy_invoices", &[
+        ("id", DataType::I64, false),
+        ("customer_id_str", DataType::String, false),
+    ]);
+    db.tables.get_mut("customers").unwrap().insert(&[u(1), s("Alice")]).unwrap();
+    db.tables.get_mut("legacy_invoices").unwrap()
+        .insert(&[i(1), s("00000000-0000-0000-0000-000000000001")]).unwrap();
+    let cols = db.run(
+        "SELECT legacy_invoices.id FROM legacy_invoices \
+         INNER JOIN customers ON legacy_invoices.customer_id_str = customers.id"
+    );
+    assert!(cols[0].is_empty(), "cross-type join must not match");
+}
 
 fn make_db() -> TestDb {
     let mut db = TestDb::new();

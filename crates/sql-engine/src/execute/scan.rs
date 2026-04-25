@@ -135,8 +135,9 @@ fn param_value_to_value(pv: &ParamValue) -> Option<Value> {
     match pv {
         ParamValue::Int(n) => Some(Value::Int(*n)),
         ParamValue::Text(s) => Some(Value::Text(s.clone())),
+        ParamValue::Uuid(b) => Some(Value::Uuid(*b)),
         ParamValue::Null => Some(Value::Null),
-        ParamValue::IntList(_) | ParamValue::TextList(_) => None,
+        ParamValue::IntList(_) | ParamValue::TextList(_) | ParamValue::UuidList(_) => None,
     }
 }
 
