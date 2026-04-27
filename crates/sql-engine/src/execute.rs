@@ -7,7 +7,6 @@ pub mod join;
 pub mod materialize;
 pub mod pipeline;
 pub mod project;
-pub mod requirement;
 pub mod rowset;
 pub mod scan;
 pub mod sort;
@@ -40,12 +39,7 @@ pub type Columns = Vec<Column>; // columns[col_idx][row_idx]
 pub use bind::{resolve_filter, resolve_params, resolve_value};
 pub use context::{ExecutionContext, ScanMethod, Span, SpanOperation};
 pub use materialize::execute_plan;
-pub use pipeline::{execute, execute_and_resolve_requirements};
-pub use requirement::{
-    apply_fetched, collect_fetch_plan, fetch_requirements, resolve_requirements,
-    AsyncFetcherFn, FetchedEntry, FetchedRequirements, FetcherFuture, FetcherRuntime,
-    RequirementKey, RequirementsResult, ResolvedInvocation,
-};
+pub use pipeline::execute;
 pub use rowset::{RowSet, NULL_ROW};
 
 // ── Error ─────────────────────────────────────────────────────────────────
@@ -56,9 +50,6 @@ pub enum ExecuteError {
     MaterializeError(String),
     BindError(String),
     NotImplemented(String),
-    /// Caller wasn't registered, args didn't resolve, closure returned an
-    /// error, or a PK the caller produced isn't present in `row_table`.
-    CallerError(String),
 }
 
 impl std::fmt::Display for ExecuteError {
@@ -68,7 +59,6 @@ impl std::fmt::Display for ExecuteError {
             ExecuteError::MaterializeError(msg) => write!(f, "subquery materialization error: {msg}"),
             ExecuteError::BindError(msg) => write!(f, "bind error: {msg}"),
             ExecuteError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
-            ExecuteError::CallerError(msg) => write!(f, "caller error: {msg}"),
         }
     }
 }

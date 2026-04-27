@@ -1,7 +1,6 @@
 pub mod shared;
 pub mod sql;
 pub mod reactive;
-pub mod requirement;
 
 use std::collections::HashMap;
 
@@ -9,7 +8,6 @@ use sql_parser::ast;
 use sql_parser::ast::Value;
 use sql_parser::schema::{ColumnDef, Schema};
 use crate::schema::TableSchema;
-use requirement::RequirementRegistry;
 use shared::plan::*;
 use shared::translate;
 
@@ -18,13 +16,9 @@ use shared::translate;
 
 pub struct PlanContext<'a> {
     pub table_schemas: &'a HashMap<String, TableSchema>,
-    /// Caller metadata — parallel to `table_schemas`, describes which
-    /// `schema.function(args)` FROM sources can be resolved.
-    pub requirements: &'a RequirementRegistry,
     pub query_schemas: HashMap<String, Schema>,
     pub materializations: Vec<sql::plan::MaterializeStep>,
-    /// Values bound to internal placeholders. Requirement-args from SQL
-    /// (P3) land here so the plan stays value-free.
+    /// Values bound to internal placeholders.
     pub bound_values: HashMap<String, Value>,
 }
 
@@ -47,14 +41,12 @@ impl<'a> PlanContext<'a> {
 
 pub(crate) fn make_plan_context<'a>(
     table_schemas: &'a HashMap<String, TableSchema>,
-    requirements: &'a RequirementRegistry,
 ) -> PlanContext<'a> {
     let query_schemas: HashMap<String, Schema> = table_schemas.iter()
         .map(|(name, ts)| (name.clone(), derive_query_schema(name, ts)))
         .collect();
     PlanContext {
         table_schemas,
-        requirements,
         query_schemas,
         materializations: Vec::new(),
         bound_values: HashMap::new(),
@@ -69,9 +61,6 @@ pub enum PlanError {
     UnknownColumn { table: String, column: String },
     UnsupportedExpr(String),
     EmptySources,
-    UnknownRequirement(String),
-    CallerArgCountMismatch { id: String, expected: usize, got: usize },
-    CallerArgTypeMismatch { id: String, arg_idx: usize, expected: String, got: String },
 }
 
 impl std::fmt::Display for PlanError {
@@ -83,15 +72,6 @@ impl std::fmt::Display for PlanError {
             }
             PlanError::UnsupportedExpr(msg) => write!(f, "unsupported expression: {msg}"),
             PlanError::EmptySources => write!(f, "query has no sources"),
-            PlanError::UnknownRequirement(id) => write!(f, "unknown requirement: {id}"),
-            PlanError::CallerArgCountMismatch { id, expected, got } => write!(
-                f,
-                "caller `{id}` wrong number of args: expected {expected}, got {got}"
-            ),
-            PlanError::CallerArgTypeMismatch { id, arg_idx, expected, got } => write!(
-                f,
-                "caller `{id}` arg {arg_idx}: expected {expected}, got {got}"
-            ),
         }
     }
 }
@@ -472,39 +452,6 @@ mod tests {
         assert!(matches!(err, PlanError::EmptySources));
     }
 
-    // ── Empty-registry smoketest for call sources and FROM aliases ──
-    //
-    // The parser accepts `schema.fn(args)` call syntax and FROM-clause
-    // aliases. Callers are resolved against a `RequirementRegistry`;
-    // with an empty registry, the planner must reject calls with
-    // `UnknownRequirement`. FROM-AS is still globally unsupported.
-
-    #[test]
-    fn test_planner_rejects_call() {
-        let select = AstSelect {
-            sources: vec![AstSourceEntry {
-                source: AstSource::Call {
-                    schema: "customers".into(),
-                    function: "by_owner".into(),
-                    args: vec![AstExpr::Literal(Value::Int(42))],
-                },
-                alias: None,
-                join: None,
-            }],
-            filter: vec![],
-            group_by: vec![],
-            order_by: vec![],
-            limit: None,
-            result_columns: vec![],
-        };
-
-        let err = plan_select(&select, &table_schemas()).unwrap_err();
-        assert!(
-            matches!(&err, PlanError::UnknownRequirement(id) if id == "customers::by_owner"),
-            "expected UnknownRequirement, got {err:?}",
-        );
-    }
-
     #[test]
     fn test_planner_rejects_from_alias() {
         let select = AstSelect {
@@ -527,55 +474,6 @@ mod tests {
             }
             other => panic!("expected UnsupportedExpr for alias, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn test_planner_rejects_call_in_join_position() {
-        // Even a call source that appears as the right-hand side of a
-        // JOIN must be rejected — the guard runs on every source entry,
-        // not only the first.
-        let select = AstSelect {
-            sources: vec![
-                AstSourceEntry {
-                    source: AstSource::Table("users".into()),
-                    alias: None,
-                    join: None,
-                },
-                AstSourceEntry {
-                    source: AstSource::Call {
-                        schema: "orders".into(),
-                        function: "for_user".into(),
-                        args: vec![AstExpr::Literal(Value::Int(1))],
-                    },
-                    alias: None,
-                    join: Some(AstJoinClause {
-                        join_type: JoinType::Inner,
-                        on: vec![AstExpr::Binary {
-                            left: Box::new(AstExpr::Column(AstColumnRef {
-                                table: "users".into(),
-                                column: "id".into(),
-                            })),
-                            op: Operator::Eq,
-                            right: Box::new(AstExpr::Column(AstColumnRef {
-                                table: "orders".into(),
-                                column: "user_id".into(),
-                            })),
-                        }],
-                    }),
-                },
-            ],
-            filter: vec![],
-            group_by: vec![],
-            order_by: vec![],
-            limit: None,
-            result_columns: vec![],
-        };
-
-        let err = plan_select(&select, &table_schemas()).unwrap_err();
-        assert!(
-            matches!(&err, PlanError::UnknownRequirement(id) if id == "orders::for_user"),
-            "expected UnknownRequirement, got {err:?}",
-        );
     }
 
     #[test]

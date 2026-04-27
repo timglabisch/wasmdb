@@ -8,9 +8,6 @@ pub enum DbError {
     Execute(ExecuteError),
     TableAlreadyExists(String),
     TableNotFound(String),
-    /// The SELECT references a `schema.fn(args)` source that needs Phase 0
-    /// fetcher resolution; call one of the `*_async` methods instead.
-    RequiresAsync,
 }
 
 impl std::fmt::Display for DbError {
@@ -21,10 +18,6 @@ impl std::fmt::Display for DbError {
             DbError::Execute(e) => write!(f, "execute error: {e}"),
             DbError::TableAlreadyExists(t) => write!(f, "table already exists: {t}"),
             DbError::TableNotFound(t) => write!(f, "table not found: {t}"),
-            DbError::RequiresAsync => write!(
-                f,
-                "query references a fetcher source; use an async execute method",
-            ),
         }
     }
 }

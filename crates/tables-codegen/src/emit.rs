@@ -314,14 +314,14 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
         // `AsyncFetcherFn` aliases in sql-engine drop the `Send` bound
         // there to match.
         #[cfg(target_arch = "wasm32")]
-        impl ::sql_engine::DbCaller for #marker {
+        impl ::requirements::DbRequirement for #marker {
             const ID: &'static str = #id_lit;
             type Ctx = ();
             type Row = #row_ty;
 
-            fn meta() -> ::sql_engine::planner::requirement::RequirementMeta {
-                ::sql_engine::planner::requirement::RequirementMeta {
-                    row_table: <<Self as ::sql_engine::DbCaller>::Row as ::sql_engine::DbTable>::TABLE.into(),
+            fn meta() -> ::requirements::RequirementMeta {
+                ::requirements::RequirementMeta {
+                    row_table: <<Self as ::requirements::DbRequirement>::Row as ::sql_engine::DbTable>::TABLE.into(),
                     params: ::std::vec![ #(#param_defs),* ],
                 }
             }
@@ -330,7 +330,7 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
                 #[allow(unused_variables)]
                 args: ::std::vec::Vec<::sql_parser::ast::Value>,
                 _ctx: ::std::sync::Arc<Self::Ctx>,
-            ) -> ::sql_engine::execute::FetcherFuture {
+            ) -> ::requirements::RequirementFuture {
                 ::std::boxed::Box::pin(async move {
                     #(#arg_bindings)*
                     let params = #marker { #(#param_names),* };
@@ -424,14 +424,14 @@ fn emit_server_query(
             type Row = #row_path;
         }
 
-        impl ::sql_engine::DbCaller for #marker {
+        impl ::requirements::DbRequirement for #marker {
             const ID: &'static str = #id_lit;
             type Ctx = #ctx_ty;
             type Row = #row_path;
 
-            fn meta() -> ::sql_engine::planner::requirement::RequirementMeta {
-                ::sql_engine::planner::requirement::RequirementMeta {
-                    row_table: <<Self as ::sql_engine::DbCaller>::Row as ::sql_engine::DbTable>::TABLE.into(),
+            fn meta() -> ::requirements::RequirementMeta {
+                ::requirements::RequirementMeta {
+                    row_table: <<Self as ::requirements::DbRequirement>::Row as ::sql_engine::DbTable>::TABLE.into(),
                     params: ::std::vec![ #(#param_defs),* ],
                 }
             }
@@ -440,7 +440,7 @@ fn emit_server_query(
                 #[allow(unused_variables)]
                 args: ::std::vec::Vec<::sql_parser::ast::Value>,
                 ctx: ::std::sync::Arc<Self::Ctx>,
-            ) -> ::sql_engine::execute::FetcherFuture {
+            ) -> ::requirements::RequirementFuture {
                 ::std::boxed::Box::pin(async move {
                     #(#arg_bindings)*
                     let rows = #user_mod::#fn_name(#(#param_idents,)* &*ctx).await
@@ -480,7 +480,7 @@ fn emit_param_defs(
             })?;
             let (dt_tokens, _nullable) = kind.column_meta();
             Ok(quote! {
-                ::sql_engine::planner::requirement::RequirementParamDef {
+                ::requirements::RequirementParamDef {
                     name: #name.into(),
                     data_type: #dt_tokens,
                 }

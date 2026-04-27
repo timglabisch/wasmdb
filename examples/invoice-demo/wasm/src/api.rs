@@ -25,22 +25,10 @@ use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle
 pub fn init() {
     #[allow(unused_mut)]
     let mut db = make_db();
-    // `DbCaller` impls on generated markers are `#[cfg(target_arch = "wasm32")]`
-    // because the HTTP fetcher uses `JsFuture` (`!Send`); gate registration
-    // the same way so native `cargo check` stays green.
-    #[cfg(target_arch = "wasm32")]
-    {
-        db.register_caller_of::<customers::All>(Arc::new(()));
-        db.register_caller_of::<contacts::All>(Arc::new(()));
-        db.register_caller_of::<invoices::All>(Arc::new(()));
-        db.register_caller_of::<positions::All>(Arc::new(()));
-        db.register_caller_of::<payments::All>(Arc::new(()));
-        db.register_caller_of::<products::All>(Arc::new(()));
-        db.register_caller_of::<recurring_invoices::All>(Arc::new(()));
-        db.register_caller_of::<recurring_positions::All>(Arc::new(()));
-        db.register_caller_of::<sepa_mandates::All>(Arc::new(()));
-        db.register_caller_of::<activity_log::All>(Arc::new(()));
-    }
+    // TODO(requirements-rebuild): the per-marker fetcher registration moves
+    // into the new `requirements` runtime store. The old `DbCaller`-based
+    // `register_caller_of` path was removed when first-class Requirements
+    // were lifted out of `sql-engine`.
     let mut client = SyncClient::new(db);
     let stream_id_val = client.create_stream().0;
     install_client(client);
@@ -248,39 +236,15 @@ pub fn query(sql: &str, params: JsValue) -> Result<JsValue, JsError> {
     })
 }
 
-/// Async sibling of [`query`] — use whenever the SQL may contain a
-/// `schema.fn(args)` source, which triggers an HTTP roundtrip to
-/// `/table-fetch` during Phase 0. Plain SELECTs also work but pay the
-/// async overhead, so the JS client reserves this for the fetcher path.
-///
-/// Fetch/execute-split: `with_client` holds the client only during the
-/// sync prepare (phase 0a) and the sync apply+execute (phases 0c+1). The
-/// HTTP roundtrip in between runs without any client borrow — parallel
-/// `query_async` calls overlap their fetches and never double-borrow.
+/// Async sibling of [`query`]. TODO(requirements-rebuild): the old
+/// fetcher-resolution pipeline was removed when first-class Requirements
+/// moved into the dedicated `requirements` crate. This stub keeps the
+/// JS-facing wasm export compiling; it currently runs the same sync path
+/// as `query` and ignores any `schema.fn(args)` source (those are no
+/// longer parsed as fetcher calls anyway).
 #[wasm_bindgen]
 pub async fn query_async(sql: String, params: JsValue) -> Result<JsValue, JsError> {
-    let params = js_to_params(params)?;
-
-    let (prepared, fetchers) = with_client(|client| {
-        let db = client.db_mut().db_mut_raw();
-        let prepared = db.prepare_select(&sql, params)
-            .map_err(|e| JsError::new(&e.to_string()))?;
-        Ok::<_, JsError>((prepared, db.fetchers()))
-    })?;
-
-    let fetched = database::fetch_for(&prepared, &fetchers).await
-        .map_err(|e| JsError::new(&e.to_string()))?;
-
-    let columns = with_client(|client| {
-        client.db_mut().db_mut_raw().apply_and_execute_select(prepared, fetched)
-            .map_err(|e| JsError::new(&e.to_string()))
-    })?;
-
-    let rows = columns_to_rows(columns);
-    // No per-step spans from the async path yet — record a zero-span row
-    // so the debug panel still sees the query.
-    record_query(&sql, "optimistic", vec![], rows.len());
-    serde_wasm_bindgen::to_value(&rows).map_err(|e| JsError::new(&e.to_string()))
+    query(&sql, params)
 }
 
 #[wasm_bindgen]

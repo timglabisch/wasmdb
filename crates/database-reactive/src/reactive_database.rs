@@ -210,7 +210,6 @@ impl ReactiveDatabase {
             let plan = sql_engine::planner::reactive::plan_reactive(
                 &select,
                 &table_schemas,
-                self.db.requirements(),
             )?;
             let sub_id = self.registry.subscribe(&plan.conditions, &plan.sources, &HashMap::new())?;
 

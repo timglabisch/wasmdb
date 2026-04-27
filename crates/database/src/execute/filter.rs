@@ -44,11 +44,9 @@ pub(crate) fn build_predicate(
     let table_schemas: HashMap<String, TableSchema> = tables.iter()
         .map(|(name, t)| (name.clone(), t.schema.clone()))
         .collect();
-    let requirements = sql_engine::planner::requirement::RequirementRegistry::new();
 
     let mut ctx = PlanContext {
         table_schemas: &table_schemas,
-        requirements: &requirements,
         query_schemas: HashMap::new(),
         materializations: Vec::new(),
         bound_values: HashMap::new(),

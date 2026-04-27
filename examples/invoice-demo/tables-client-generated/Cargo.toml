@@ -13,6 +13,7 @@ tables = { path = "../../../crates/tables" }
 tables-client = { path = "../../../crates/tables-client" }
 sql-engine = { path = "../../../crates/sql-engine" }
 sql-parser = { path = "../../../crates/sql-parser" }
+requirements = { path = "../../../crates/requirements" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"

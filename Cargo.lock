@@ -846,6 +846,7 @@ name = "invoice-demo-tables-client-generated"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "requirements",
  "serde",
  "serde-wasm-bindgen",
  "sql-engine",
@@ -862,6 +863,7 @@ name = "invoice-demo-tables-storage"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "requirements",
  "serde",
  "sql-engine",
  "sql-parser",
@@ -1365,6 +1367,14 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "requirements"
+version = "0.1.0"
+dependencies = [
+ "sql-engine",
+ "sql-parser",
+]
 
 [[package]]
 name = "rsa"
@@ -1984,6 +1994,7 @@ dependencies = [
  "borsh",
  "database",
  "pollster 0.4.0",
+ "requirements",
  "serde",
  "sql-engine",
  "sql-parser",

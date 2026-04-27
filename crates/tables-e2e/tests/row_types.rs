@@ -2,7 +2,6 @@
 //! impls — `i64`, `String`, `Option<i64>`, `Option<String>` — both at
 //! the schema level and across the `into_cells` round-trip.
 
-mod common;
 
 use sql_engine::schema::DataType;
 use sql_engine::storage::CellValue;

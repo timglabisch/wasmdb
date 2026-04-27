@@ -11,6 +11,7 @@ tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
 sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde"] }
 sql-parser = { path = "../../../crates/sql-parser" }
+requirements = { path = "../../../crates/requirements" }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }

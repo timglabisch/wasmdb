@@ -2,6 +2,7 @@
 members = [
     "crates/sql-parser",
     "crates/sql-engine",
+    "crates/requirements",
     "crates/database",
     "crates/database-reactive",
     "crates/dirty-set",

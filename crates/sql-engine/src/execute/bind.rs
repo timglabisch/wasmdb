@@ -37,19 +37,10 @@ pub fn resolve_params(
         if let Some(ref mut join) = source.join {
             join.on = resolve_filter(&join.on, params)?;
         }
-        match &mut source.source {
-            PlanSource::Table { scan_method, .. } => {
-                if let PlanScanMethod::Index { index_predicates, .. } = scan_method {
-                    for pred in index_predicates.iter_mut() {
-                        *pred = resolve_filter(pred, params)?;
-                    }
-                }
-            }
-            PlanSource::Requirement { args: _, .. } => {
-                // TODO(P3): resolve RequirementArg::Placeholder against `params`
-                // once the translator produces Requirement sources. Keeping this
-                // as an explicit match arm so adding variants or arg kinds
-                // forces a compile error here.
+        let PlanSource::Table { scan_method, .. } = &mut source.source;
+        if let PlanScanMethod::Index { index_predicates, .. } = scan_method {
+            for pred in index_predicates.iter_mut() {
+                *pred = resolve_filter(pred, params)?;
             }
         }
     }

@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 
 use sql_engine::execute::{self, Columns, ParamValue};
 use sql_engine::planner;
-use sql_engine::CallerRegistry;
 use sql_engine::reactive::registry::SubscriptionRegistry;
 use sql_engine::storage::{CellValue, Table};
 use sql_parser::parser;
@@ -29,7 +28,6 @@ fn make_table_schema(name: &str, cols: &[(&str, DataType, bool)]) -> TableSchema
 struct TestDb {
     tables: HashMap<String, Table>,
     table_schemas: HashMap<String, TableSchema>,
-    callers: CallerRegistry,
 }
 
 impl TestDb {
@@ -37,7 +35,6 @@ impl TestDb {
         Self {
             tables: HashMap::new(),
             table_schemas: HashMap::new(),
-            callers: CallerRegistry::new(),
         }
     }
 
@@ -50,14 +47,14 @@ impl TestDb {
 
     fn run_with_params(&self, sql: &str, params: execute::Params) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.callers.requirements).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
     }
 
     fn run_with_triggered(&self, sql: &str, params: execute::Params, triggered: HashSet<usize>) -> Columns {
         let ast = parser::parse(sql).expect("parse failed");
-        let plan = planner::sql::plan(&ast, &self.table_schemas, &self.callers.requirements).expect("plan failed");
+        let plan = planner::sql::plan(&ast, &self.table_schemas).expect("plan failed");
         let mut ctx = execute::ExecutionContext::with_params(&self.tables, params);
         ctx.triggered_conditions = Some(triggered);
         execute::execute_plan(&mut ctx, &plan).expect("execute failed")
@@ -97,7 +94,7 @@ fn plan_and_subscribe(
     params: &execute::Params,
 ) -> (SubscriptionRegistry, sql_engine::reactive::SubscriptionId) {
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements)
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect("plan_reactive failed");
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, params).unwrap();
@@ -113,7 +110,7 @@ fn reactive_pk_watch() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).expect("plan_reactive failed");
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
     assert_eq!(plan.conditions.len(), 1);
     assert_eq!(plan.conditions[0].table, "users");
 
@@ -134,7 +131,7 @@ fn reactive_with_verify_filter() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).expect("plan_reactive failed");
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -151,7 +148,7 @@ fn reactive_unsubscribe() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).expect("plan_reactive failed");
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -167,7 +164,7 @@ fn reactive_delete_triggers() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).expect("plan_reactive failed");
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -182,7 +179,7 @@ fn reactive_update_leaving_filter() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).expect("plan_reactive failed");
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).expect("plan_reactive failed");
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -224,7 +221,7 @@ fn reactive_column_in_sql_execution_plan() {
     let db = make_db();
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv, users.name FROM users WHERE users.id = :uid";
     let ast = parser::parse(sql).expect("parse failed");
-    let exec_plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).expect("plan failed");
+    let exec_plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     let pp = exec_plan.pretty_print();
     assert!(pp.contains("REACTIVE[0] AS inv"));
 }
@@ -238,7 +235,6 @@ fn reactive_multi_eq_verify_filter_regression() {
     let plan = sql_engine::planner::reactive::plan_reactive(
         &parser::parse(sql).unwrap(),
         &db.table_schemas,
-        &db.callers.requirements,
     ).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
@@ -262,7 +258,7 @@ fn reactive_multiple_subs_same_table() {
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
@@ -287,7 +283,7 @@ fn reactive_multiple_subs_same_key() {
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
@@ -324,8 +320,8 @@ fn reactive_separate_table_subscriptions() {
 
     let ast_u = parser::parse(sql_users).unwrap();
     let ast_o = parser::parse(sql_orders).unwrap();
-    let plan_u = sql_engine::planner::reactive::plan_reactive(&ast_u, &db.table_schemas, &db.callers.requirements).unwrap();
-    let plan_o = sql_engine::planner::reactive::plan_reactive(&ast_o, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan_u = sql_engine::planner::reactive::plan_reactive(&ast_u, &db.table_schemas).unwrap();
+    let plan_o = sql_engine::planner::reactive::plan_reactive(&ast_o, &db.table_schemas).unwrap();
 
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
     let mut registry = SubscriptionRegistry::new();
@@ -492,7 +488,7 @@ fn reactive_zset_multiple_entries() {
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
 
     let ast = parser::parse(sql).unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
@@ -532,8 +528,8 @@ fn reactive_zset_mixed_tables() {
 
     let ast_u = parser::parse(sql_users).unwrap();
     let ast_o = parser::parse(sql_orders).unwrap();
-    let plan_u = sql_engine::planner::reactive::plan_reactive(&ast_u, &db.table_schemas, &db.callers.requirements).unwrap();
-    let plan_o = sql_engine::planner::reactive::plan_reactive(&ast_o, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan_u = sql_engine::planner::reactive::plan_reactive(&ast_u, &db.table_schemas).unwrap();
+    let plan_o = sql_engine::planner::reactive::plan_reactive(&ast_o, &db.table_schemas).unwrap();
 
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
     let mut registry = SubscriptionRegistry::new();
@@ -592,13 +588,13 @@ fn reactive_plan_condition_count() {
 
     // Single REACTIVE → 1 condition
     let ast = parser::parse("SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid").unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     assert_eq!(plan.conditions[0].table, "users");
 
     // Table-level REACTIVE → 1 condition
     let ast = parser::parse("SELECT REACTIVE(users.id) AS inv FROM users").unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     assert_eq!(plan.conditions[0].table, "users");
 }
@@ -608,7 +604,7 @@ fn reactive_plan_range_condition_is_table_scan() {
     let db = make_db();
     // Range-only → no equality key → TableScan strategy
     let ast = parser::parse("SELECT REACTIVE(users.age > 30) AS inv FROM users").unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     assert!(matches!(
         plan.conditions[0].strategy,
@@ -620,7 +616,7 @@ fn reactive_plan_range_condition_is_table_scan() {
 fn reactive_plan_eq_condition_is_index_lookup() {
     let db = make_db();
     let ast = parser::parse("SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid").unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     match &plan.conditions[0].strategy {
         sql_engine::planner::reactive::ReactiveLookupStrategy::IndexLookup { lookup_key_sets } => {
@@ -636,7 +632,7 @@ fn reactive_plan_eq_condition_is_index_lookup() {
 fn reactive_plan_mixed_eq_range_extracts_eq_key() {
     let db = make_db();
     let ast = parser::parse("SELECT REACTIVE(orders.user_id = :uid AND orders.amount > 100) AS inv FROM orders WHERE orders.user_id = :uid").unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     match &plan.conditions[0].strategy {
         sql_engine::planner::reactive::ReactiveLookupStrategy::IndexLookup { lookup_key_sets } => {
@@ -656,7 +652,7 @@ fn reactive_unsubscribe_one_of_many() {
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv FROM users WHERE users.id = :uid";
 
     let ast = parser::parse(sql).unwrap();
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::from([("uid".into(), ParamValue::Int(1))])).unwrap();
@@ -733,7 +729,7 @@ fn reactive_with_join_monitors_single_table() {
 
     // Plan should work — reactive condition targets orders table
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     assert_eq!(plan.conditions[0].table, "orders");
 
@@ -769,7 +765,7 @@ fn reactive_join_query_executes() {
 
 fn reactive_plan(db: &TestDb, sql: &str) -> String {
     let ast = parser::parse(sql).expect("parse failed");
-    sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements)
+    sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect("plan_reactive failed")
         .pretty_print()
 }
@@ -862,13 +858,13 @@ fn reactive_two_conditions_same_table() {
     // Two REACTIVE() columns on the same table, different predicates
     let sql = "SELECT REACTIVE(users.id = :uid) AS inv_id, REACTIVE(users.age > 30) AS inv_age, users.name FROM users WHERE users.id = :uid";
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 2, "should extract 2 reactive conditions");
     assert_eq!(plan.conditions[0].table, "users");
     assert_eq!(plan.conditions[1].table, "users");
 
     // Plan should have REACTIVE[0] and REACTIVE[1]
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).expect("plan failed");
+    let plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     let pp = plan.pretty_print();
     assert!(pp.contains("REACTIVE[0] AS inv_id"), "pp: {pp}");
     assert!(pp.contains("REACTIVE[1] AS inv_age"), "pp: {pp}");
@@ -885,7 +881,7 @@ fn reactive_two_conditions_different_tables() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 2);
     assert_eq!(plan.conditions[0].table, "users");
     assert_eq!(plan.conditions[1].table, "orders");
@@ -913,7 +909,7 @@ fn reactive_two_conditions_triggered_indices() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -989,7 +985,7 @@ fn reactive_with_in_subquery_plans() {
     let ast = parser::parse(sql).expect("parse failed");
 
     // Plan should work — materialization step + reactive condition
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).expect("plan failed");
+    let plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     assert!(!plan.materializations.is_empty(), "should have materialization step");
 
     let pp = plan.pretty_print();
@@ -997,7 +993,7 @@ fn reactive_with_in_subquery_plans() {
     assert!(pp.contains("Materialize"));
 
     // Reactive conditions should be extractable
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions.len(), 1);
     assert_eq!(plan.conditions[0].table, "users");
 }
@@ -1027,7 +1023,7 @@ fn reactive_with_in_subquery_subscription() {
     let params: execute::Params = HashMap::from([("uid".into(), ParamValue::Int(1))]);
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
@@ -1050,7 +1046,7 @@ fn reactive_with_scalar_subquery_plans() {
                WHERE users.age > (SELECT orders.amount FROM orders WHERE orders.id = 1)";
 
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).expect("plan failed");
+    let plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     assert!(!plan.materializations.is_empty(), "should have scalar materialization");
 
     let pp = plan.pretty_print();
@@ -1068,7 +1064,7 @@ fn reactive_rejects_in_subquery_inside_argument() {
                FROM users";
 
     let ast = parser::parse(sql).expect("parse failed");
-    let err = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements)
+    let err = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect_err("expected plan error for subquery inside REACTIVE()");
     let msg = format!("{err}");
     assert!(
@@ -1084,7 +1080,7 @@ fn reactive_rejects_scalar_subquery_inside_argument() {
                FROM users";
 
     let ast = parser::parse(sql).expect("parse failed");
-    let err = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements)
+    let err = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas)
         .expect_err("expected plan error for scalar subquery inside REACTIVE()");
     assert!(format!("{err}").contains("subqueries are not supported"));
 }
@@ -1102,12 +1098,12 @@ fn reactive_with_left_join() {
 
     // Plan should work with LEFT JOIN
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = planner::sql::plan(&ast, &db.table_schemas, &db.callers.requirements).expect("plan failed");
+    let plan = planner::sql::plan(&ast, &db.table_schemas).expect("plan failed");
     let pp = plan.pretty_print();
     assert!(pp.contains("Join type=Left"));
 
     // Reactive condition targets orders
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     assert_eq!(plan.conditions[0].table, "orders");
 
     let mut registry = SubscriptionRegistry::new();
@@ -1167,7 +1163,7 @@ fn reactive_e2e_single_condition_triggered() {
 
     // 1. Plan + subscribe
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
@@ -1201,7 +1197,7 @@ fn reactive_e2e_single_condition_not_triggered() {
 
     // 1. Plan + subscribe
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let _sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
@@ -1229,7 +1225,7 @@ fn reactive_e2e_two_conditions_partial_trigger() {
 
     // 1. Plan + subscribe
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
@@ -1270,7 +1266,7 @@ fn reactive_e2e_two_conditions_both_trigger() {
 
     // 1. Plan + subscribe
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &params).unwrap();
 
@@ -1541,7 +1537,7 @@ fn reactive_in_unsubscribe_cleans_all_keys() {
     let db = make_db();
     let sql = "SELECT REACTIVE(users.id IN (1, 2, 3)) AS inv FROM users";
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::new()).unwrap();
 
@@ -1560,9 +1556,9 @@ fn reactive_in_multiple_subscriptions_share_keys() {
     let sql2 = "SELECT REACTIVE(users.id IN (2, 3)) AS inv FROM users";
 
     let ast1 = parser::parse(sql1).expect("parse failed");
-    let plan1 = sql_engine::planner::reactive::plan_reactive(&ast1, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan1 = sql_engine::planner::reactive::plan_reactive(&ast1, &db.table_schemas).unwrap();
     let ast2 = parser::parse(sql2).expect("parse failed");
-    let plan2 = sql_engine::planner::reactive::plan_reactive(&ast2, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan2 = sql_engine::planner::reactive::plan_reactive(&ast2, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan1.conditions, &plan1.sources, &HashMap::new()).unwrap();
@@ -1842,7 +1838,7 @@ fn reactive_or_unsubscribe_cleans_all_keys() {
     let db = make_db();
     let sql = "SELECT REACTIVE(users.id = 1 OR users.id = 2 OR users.id = 3) AS inv FROM users";
     let ast = parser::parse(sql).expect("parse failed");
-    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan = sql_engine::planner::reactive::plan_reactive(&ast, &db.table_schemas).unwrap();
     let mut registry = SubscriptionRegistry::new();
     let sub_id = registry.subscribe(&plan.conditions, &plan.sources, &HashMap::new()).unwrap();
 
@@ -1862,9 +1858,9 @@ fn reactive_or_multiple_subscriptions_share_keys() {
     let sql2 = "SELECT REACTIVE(users.id = 2 OR users.id = 3) AS inv FROM users";
 
     let ast1 = parser::parse(sql1).expect("parse failed");
-    let plan1 = sql_engine::planner::reactive::plan_reactive(&ast1, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan1 = sql_engine::planner::reactive::plan_reactive(&ast1, &db.table_schemas).unwrap();
     let ast2 = parser::parse(sql2).expect("parse failed");
-    let plan2 = sql_engine::planner::reactive::plan_reactive(&ast2, &db.table_schemas, &db.callers.requirements).unwrap();
+    let plan2 = sql_engine::planner::reactive::plan_reactive(&ast2, &db.table_schemas).unwrap();
 
     let mut registry = SubscriptionRegistry::new();
     let sub1 = registry.subscribe(&plan1.conditions, &plan1.sources, &HashMap::new()).unwrap();

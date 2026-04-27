@@ -9,16 +9,14 @@ use std::collections::HashMap;
 use sql_parser::ast;
 use crate::schema::TableSchema;
 use crate::planner::PlanError;
-use crate::planner::requirement::RequirementRegistry;
 use crate::planner::shared::plan::PlanSelect;
 
 /// Translate an AstSelect into an ExecutionPlan with materialization steps for subqueries.
 pub fn plan(
     ast: &ast::AstSelect,
     table_schemas: &HashMap<String, TableSchema>,
-    requirements: &RequirementRegistry,
 ) -> Result<plan::ExecutionPlan, PlanError> {
-    let mut ctx = crate::planner::make_plan_context(table_schemas, requirements);
+    let mut ctx = crate::planner::make_plan_context(table_schemas);
     let main = crate::planner::plan_select_ctx(ast, &mut ctx)?;
     Ok(plan::ExecutionPlan {
         materializations: ctx.materializations,
@@ -33,8 +31,7 @@ pub fn plan_select(
     select: &ast::AstSelect,
     table_schemas: &HashMap<String, TableSchema>,
 ) -> Result<PlanSelect, PlanError> {
-    let empty: RequirementRegistry = RequirementRegistry::new();
-    let ep = plan(select, table_schemas, &empty)?;
+    let ep = plan(select, table_schemas)?;
     if !ep.materializations.is_empty() {
         return Err(PlanError::UnsupportedExpr(
             "unexpected subqueries; use plan() instead".into(),

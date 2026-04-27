@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use sql_parser::ast::{self, Value};
 
 use crate::planner::PlanError;
-use crate::planner::requirement::RequirementRegistry;
 use crate::planner::shared::plan::{self, PlanFilterPredicate, PlanSourceEntry};
 use crate::schema::TableSchema;
 
@@ -153,9 +152,8 @@ impl ReactivePlan {
 pub fn plan_reactive(
     ast: &ast::AstSelect,
     table_schemas: &HashMap<String, TableSchema>,
-    requirements: &RequirementRegistry,
 ) -> Result<ReactivePlan, PlanError> {
-    let mut ctx = crate::planner::make_plan_context(table_schemas, requirements);
+    let mut ctx = crate::planner::make_plan_context(table_schemas);
     let main = crate::planner::plan_select_ctx(ast, &mut ctx)?;
     let logical = extract::extract_reactive_conditions(ast, &main)?;
     let conditions = optimize::optimize(logical);

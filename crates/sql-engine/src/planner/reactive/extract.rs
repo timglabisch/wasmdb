@@ -124,14 +124,12 @@ fn decompose_condition(
     // materialization, but we've guaranteed above that no subquery cases fire,
     // so `materializations` stays empty.
     let dummy_schemas = std::collections::HashMap::new();
-    let dummy_requirements = crate::planner::requirement::RequirementRegistry::new();
     let query_schemas = sources
         .iter()
         .map(|s| (s.alias().to_string(), s.schema().clone()))
         .collect();
     let mut ctx = crate::planner::PlanContext {
         table_schemas: &dummy_schemas,
-        requirements: &dummy_requirements,
         query_schemas,
         materializations: Vec::new(),
         bound_values: std::collections::HashMap::new(),

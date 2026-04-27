@@ -1,9 +1,7 @@
 //! Execution context with span-based tracing.
 //!
 //! `ExecutionContext` is threaded through every execution function as the
-//! first parameter. It owns the DB reference, the span stack for timing, and
-//! — after Phase 0 — the `RequirementsResult` that Phase 3's scan_requirement
-//! consults for PK tuples.
+//! first parameter. It owns the DB reference and the span stack for timing.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -27,7 +25,7 @@ use sql_parser::ast::Value;
 
 use crate::storage::Table;
 
-use super::{Params, RequirementsResult};
+use super::Params;
 
 /// How a table scan was performed.
 #[derive(Debug, Clone)]
@@ -87,13 +85,9 @@ pub struct ExecutionContext<'execution> {
     /// Which reactive condition indices were triggered (for SELECT reactive() output).
     pub triggered_conditions: Option<HashSet<usize>>,
     /// Values for internal placeholders that the planner injected from
-    /// auto-platzhalterisierten Caller-Args. Populated from
+    /// auto-platzhalterisierten args. Populated from
     /// `ExecutionPlan.bound_values` in `execute_plan`.
     pub bound_values: HashMap<String, Value>,
-    /// Resolved requirements produced by Phase 0. Phase 3's
-    /// `scan_requirement` reads PK tuples from here. Empty when the plan
-    /// contains no `PlanSource::Requirement` entries.
-    pub requirements: RequirementsResult,
 }
 
 impl<'execution> ExecutionContext<'execution> {
@@ -101,7 +95,7 @@ impl<'execution> ExecutionContext<'execution> {
         Self {
             db, stack: Vec::new(), spans: Vec::new(),
             params: HashMap::new(), triggered_conditions: None,
-            bound_values: HashMap::new(), requirements: RequirementsResult::default(),
+            bound_values: HashMap::new(),
         }
     }
 
@@ -109,7 +103,7 @@ impl<'execution> ExecutionContext<'execution> {
         Self {
             db, stack: Vec::new(), spans: Vec::new(),
             params, triggered_conditions: None,
-            bound_values: HashMap::new(), requirements: RequirementsResult::default(),
+            bound_values: HashMap::new(),
         }
     }
 

@@ -92,30 +92,23 @@ pub struct AstSourceEntry {
     pub join: Option<AstJoinClause>,
 }
 
-/// What sits in the FROM-clause slot. Either a plain table name, or a
-/// qualified function-call `schema.function(args)`. The parser stays
-/// domain-agnostic: whether a `Call` resolves to a fetcher, a set-
-/// returning function, or something else is the planner's problem.
+/// What sits in the FROM-clause slot. Today only a plain table name —
+/// requirement-style function-call sources (`schema.function(args)`) were
+/// removed when first-class Requirements moved into the dedicated
+/// `requirements` crate. The variant is kept as a single-variant enum so
+/// future source kinds (subqueries, derived requirements) can slot in
+/// without churn.
 #[derive(Debug, Clone)]
 pub enum AstSource {
     Table(String),
-    Call {
-        schema: String,
-        function: String,
-        args: Vec<AstExpr>,
-    },
 }
 
 impl AstSource {
     /// Name shown in error messages and used for column-resolution lookups
-    /// against the plain-table registry. For a `Call` this returns the
-    /// function name — callers that care about the difference must
-    /// match on the variant directly.
+    /// against the plain-table registry.
     pub fn name(&self) -> &str {
-        match self {
-            AstSource::Table(t) => t,
-            AstSource::Call { function, .. } => function,
-        }
+        let AstSource::Table(t) = self;
+        t
     }
 }
 

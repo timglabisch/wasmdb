@@ -170,26 +170,23 @@ pub struct PlanSourceEntry {
 
 impl PlanSourceEntry {
     /// Name under which columns of this source are referenced in the query.
-    /// For `Table`, the table name. For `Requirement`, the caller's schema-part
-    /// (or explicit `AS` alias once supported).
     pub fn alias(&self) -> &str {
-        match &self.source {
-            PlanSource::Table { name, .. } => name,
-            PlanSource::Requirement { alias, .. } => alias,
-        }
+        let PlanSource::Table { name, .. } = &self.source;
+        name
     }
 
     /// Column-definition schema used for resolving `alias.col` references.
     pub fn schema(&self) -> &Schema {
-        match &self.source {
-            PlanSource::Table { schema, .. } => schema,
-            PlanSource::Requirement { row_schema, .. } => row_schema,
-        }
+        let PlanSource::Table { schema, .. } = &self.source;
+        schema
     }
 }
 
-/// What sits in a FROM slot. Either a plain table (scanned locally) or a
-/// caller invocation (rows delivered from outside, keyed into `row_table`).
+/// What sits in a FROM slot. Today only plain tables — call-source FROMs
+/// (`schema.fn(args)`) were removed when first-class Requirements moved
+/// into the dedicated `requirements` crate. The variant is kept as a
+/// single-variant enum so future source kinds (subqueries, derived
+/// requirements) can slot in without churn.
 #[derive(Debug, Clone)]
 pub enum PlanSource {
     Table {
@@ -197,28 +194,6 @@ pub enum PlanSource {
         schema: Schema,
         scan_method: PlanScanMethod,
     },
-    Requirement {
-        /// Column-resolution alias (currently == `row_table`; future AS support lands here).
-        alias: String,
-        /// Shared base-table identity. All callers with the same `row_table`
-        /// feed rows into the same logical store (PK-deduped).
-        row_table: String,
-        /// Cached query-side schema for the base table — same shape callers see.
-        row_schema: Schema,
-        /// Wire identifier of the caller, shape `"{schema}::{function}"`.
-        caller_id: CallerId,
-        /// Positional arguments. Literals from SQL are auto-placeholderized
-        /// at translate-time so the plan is value-free.
-        args: Vec<RequirementArg>,
-    },
-}
-
-pub type CallerId = String;
-
-#[derive(Debug, Clone)]
-pub enum RequirementArg {
-    /// Name of a placeholder bound in `PlanContext.bound_values`.
-    Placeholder(String),
 }
 
 #[derive(Debug, Clone)]
@@ -277,13 +252,6 @@ impl PlanSelect {
                         out.push_str(&format!(" scan={kind}({index_columns:?} prefix={prefix_len} lookup={lk})"));
                     }
                 },
-                PlanSource::Requirement { row_table, caller_id, args, .. } => {
-                    let arg_list = args.iter()
-                        .map(|a| match a { RequirementArg::Placeholder(n) => format!(":{n}") })
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    out.push_str(&format!(" caller={caller_id} row={row_table} args=[{arg_list}]"));
-                }
             }
             out.push('\n');
 
