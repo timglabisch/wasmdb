@@ -38,6 +38,10 @@ invoice-types:
 	  sed 's/: bigint/: number/g; s/Array<bigint>/Array<number>/g' "$$f" \
 	    > "examples/invoice-demo/frontend/src/generated/$$(basename $$f)"; \
 	done
+	# requirements.ts wird von der build.rs von invoice-demo-tables-client-generated emittiert.
+	# Nach dem Wipe oben fehlt sie — touch zwingt cargo, das Build-Script beim
+	# nächsten wasm-pack-Lauf erneut auszuführen und die Datei neu zu schreiben.
+	touch examples/invoice-demo/tables-client-generated/build.rs
 
 invoice: invoice-types kill-invoice
 	wasm-pack build examples/invoice-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server

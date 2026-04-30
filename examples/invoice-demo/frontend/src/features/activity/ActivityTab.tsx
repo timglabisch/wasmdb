@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { Search, Activity as ActivityIcon, Inbox } from 'lucide-react';
-import { useQuery } from '@/wasm';
+import { useQuery, useRequirements, requirements } from '@/wasm';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -53,6 +54,17 @@ export default function ActivityTab() {
   const [entityFilter, setEntityFilter] = React.useState<EntityTypeFilter>('all');
   const [search, setSearch] = React.useState('');
   const [limit, setLimit] = React.useState(PAGE_SIZE);
+  const { status, error } = useRequirements([
+    requirements.activityLog.all(),
+    requirements.invoices.all(),
+    requirements.customers.all(),
+    requirements.products.all(),
+    requirements.contacts.all(),
+    requirements.payments.all(),
+    requirements.positions.all(),
+    requirements.recurringInvoices.all(),
+    requirements.sepaMandates.all(),
+  ]);
 
   // Reset limit whenever the filter changes so results don't look stale.
   React.useEffect(() => {
@@ -120,6 +132,7 @@ export default function ActivityTab() {
         actions={actions}
       />
       <PageBody>
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Aktivität…">
         {rows.length === 0 ? (
           <EmptyState />
         ) : (
@@ -152,6 +165,7 @@ export default function ActivityTab() {
             )}
           </div>
         )}
+        </RequirementsGate>
       </PageBody>
     </>
   );

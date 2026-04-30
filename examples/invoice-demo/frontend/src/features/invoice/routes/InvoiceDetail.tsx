@@ -1,13 +1,9 @@
 import { memo } from 'react';
-import { Link, useParams } from '@tanstack/react-router';
-import { ArrowLeft } from 'lucide-react';
+import { useParams } from '@tanstack/react-router';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useQuery } from '@/wasm';
+import { useQuery, useRequirements, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { InvoiceStatusBadge, DocTypeBadge } from '@/shared/lib/status';
-import { useInvoiceExists } from '@/features/invoice/hooks/useInvoiceExists';
 import { HeaderActions } from '@/features/invoice/components/HeaderActions';
 import { CustomerCard } from '@/features/invoice/panels/CustomerCard';
 import { HeaderFieldsCard } from '@/features/invoice/panels/HeaderFieldsCard';
@@ -18,17 +14,19 @@ import { ActivityCard } from '@/features/invoice/panels/ActivityCard';
 
 export default function InvoiceDetail() {
   const { invoiceId } = useParams({ from: '/invoices/$invoiceId' });
-  const exists = useInvoiceExists(invoiceId);
-
-  if (exists === 'loading') {
-    return <Loading />;
-  }
-  if (exists === 'notfound') {
-    return <NotFound />;
-  }
+  const { status, error } = useRequirements([
+    requirements.invoices.all(),
+    requirements.positions.all(),
+    requirements.payments.all(),
+    requirements.customers.all(),
+    requirements.contacts.all(),
+    requirements.sepaMandates.all(),
+    requirements.activityLog.all(),
+    requirements.products.all(),
+  ]);
 
   return (
-    <>
+    <RequirementsGate status={status} error={error} loadingLabel="Lade Beleg…">
       <PageHeader
         title={<HeaderTitle invoiceId={invoiceId} />}
         actions={<HeaderActions invoiceId={invoiceId} />}
@@ -41,7 +39,7 @@ export default function InvoiceDetail() {
         <PaymentsCard invoiceId={invoiceId} />
         <ActivityCard invoiceId={invoiceId} />
       </PageBody>
-    </>
+    </RequirementsGate>
   );
 }
 
@@ -68,38 +66,3 @@ const HeaderTitle = memo(function HeaderTitle({ invoiceId }: { invoiceId: string
   );
 });
 
-function Loading() {
-  return (
-    <>
-      <PageHeader title={<Skeleton className="h-5 w-40" />} />
-      <PageBody className="space-y-3">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-48 w-full" />
-      </PageBody>
-    </>
-  );
-}
-
-function NotFound() {
-  return (
-    <>
-      <PageHeader title="Beleg nicht gefunden" />
-      <PageBody>
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center gap-3 py-12 text-center">
-            <div className="text-sm font-medium">Beleg nicht gefunden</div>
-            <div className="text-xs text-muted-foreground">
-              Dieser Beleg existiert nicht oder wurde gelöscht.
-            </div>
-            <Button asChild variant="outline" size="sm" className="mt-2">
-              <Link to="/invoices">
-                <ArrowLeft className="h-4 w-4" /> Zurück zur Liste
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </PageBody>
-    </>
-  );
-}

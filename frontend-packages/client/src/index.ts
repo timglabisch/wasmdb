@@ -371,6 +371,53 @@ function useRequirementsQuery<T>(
   return { data, status, error };
 }
 
+/**
+ * Declare a set of requirements without running a SQL query.
+ *
+ * Use this on a top-level page that has many sub-components, each running
+ * their own `useQuery(sql, mapRow)`. The page gates rendering on `status`,
+ * sub-components stay simple. Re-runs subscribe whenever the `requires`
+ * shape changes.
+ */
+export function useRequirements(
+  requires: RequirementSpec[],
+): { status: RequirementState; error?: string } {
+  const [status, setStatus] = useState<RequirementState>('loading');
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const requiresKey = JSON.stringify(requires);
+
+  useEffect(() => {
+    if (!wasmReady) return;
+    const w = wasm();
+    if (!w.requirements_subscribe || !w.requirements_unsubscribe || !w.requirements_status) {
+      throw new Error(
+        '@wasmdb/client: useRequirements requires the wasm module to expose `requirements_subscribe`, `requirements_unsubscribe`, and `requirements_status`',
+      );
+    }
+    let cancelled = false;
+
+    const refresh = (subId: number) => {
+      const s = w.requirements_status!(subId);
+      if (cancelled) return;
+      setStatus(s.state);
+      setError(s.error);
+    };
+
+    const subId = w.requirements_subscribe!('__requirements_only__', requiresKey, () => {
+      refresh(subId);
+    });
+    refresh(subId);
+
+    return () => {
+      cancelled = true;
+      w.requirements_unsubscribe!(subId);
+    };
+  }, [requiresKey]);
+
+  return { status, error };
+}
+
 export function useQueryConfirmed<T = any>(
   sql: string,
   mapRow?: (row: any[]) => T,

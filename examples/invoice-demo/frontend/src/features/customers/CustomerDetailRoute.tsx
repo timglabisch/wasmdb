@@ -21,8 +21,9 @@ import {
   BlurInput, BlurNumberInput, BlurSelect, BlurTextarea, Field,
 } from '@/components/form';
 import {
-  createStream, execute, executeOnStream, flushStream, useQuery,
+  createStream, execute, executeOnStream, flushStream, useQuery, useRequirements, requirements,
 } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { deleteContact } from '@/commands/contact/deleteContact';
 import { deleteSepaMandate } from '@/commands/sepaMandate/deleteSepaMandate';
@@ -42,6 +43,23 @@ import { cn } from '@/lib/cn';
 export default function CustomerDetailRoute() {
   const { customerId } = useParams({ from: '/customers/$customerId' });
 
+  const { status, error } = useRequirements([
+    requirements.customers.all(),
+    requirements.contacts.all(),
+    requirements.invoices.all(),
+    requirements.positions.all(),
+    requirements.payments.all(),
+    requirements.sepaMandates.all(),
+  ]);
+
+  return (
+    <RequirementsGate status={status} error={error} loadingLabel="Lade Kunde…">
+      <CustomerExistsGate customerId={customerId} />
+    </RequirementsGate>
+  );
+}
+
+function CustomerExistsGate({ customerId }: { customerId: string }) {
   const exists = useQuery(
     `SELECT customers.id FROM customers WHERE customers.id = UUID '${customerId}'`,
     ([id]) => id as string,

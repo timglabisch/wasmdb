@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import {
   ArrowLeft, MoreHorizontal, Package, Trash2, TrendingDown, TrendingUp,
 } from 'lucide-react';
-import { useQuery, createStream, executeOnStream, flushStream } from '@/wasm';
+import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,8 +44,31 @@ const UNIT_OPTIONS: BlurSelectOption[] = [
  */
 export default function ProductDetailRoute() {
   const { productId } = useParams({ from: '/products/$productId' });
+  const { status, error } = useRequirements([
+    requirements.products.all(),
+    requirements.invoices.all(),
+    requirements.positions.all(),
+  ]);
   const exists = useProductExists(productId);
 
+  if (status === 'loading' || status === 'idle') {
+    return (
+      <PageBody>
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Produkt…">
+          <></>
+        </RequirementsGate>
+      </PageBody>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <PageBody>
+        <RequirementsGate status={status} error={error}>
+          <></>
+        </RequirementsGate>
+      </PageBody>
+    );
+  }
   if (!exists) return <NotFound />;
 
   return (

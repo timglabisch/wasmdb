@@ -5,11 +5,21 @@ use crate::Database;
 use crate::error::DbError;
 
 impl Database {
-    /// Apply a ZSet to the database: inserts for weight > 0, deletes for weight < 0.
+    /// Apply a ZSet to the database: PK-aware upsert for weight > 0,
+    /// delete-by-row for weight < 0.
+    ///
+    /// Positive weights go through `upsert_by_pk` so re-applying a snapshot
+    /// (e.g. a fetcher re-running after the requirement slot was dropped
+    /// and recreated) is idempotent — the existing row with the same PK is
+    /// replaced rather than duplicated. Tables without a primary key fall
+    /// back to plain insert (no dedup possible).
     pub fn apply_zset(&mut self, zset: &ZSet) -> Result<(), DbError> {
         for entry in &zset.entries {
             if entry.weight > 0 {
-                self.insert(&entry.table, &entry.row)?;
+                let t = self.tables.get_mut(&entry.table)
+                    .ok_or_else(|| DbError::TableNotFound(entry.table.clone()))?;
+                t.upsert_by_pk(&entry.row)
+                    .map_err(|e| DbError::Execute(ExecuteError::TableNotFound(format!("{e}"))))?;
             } else if entry.weight < 0 {
                 self.delete_by_row(&entry.table, &entry.row)?;
             }

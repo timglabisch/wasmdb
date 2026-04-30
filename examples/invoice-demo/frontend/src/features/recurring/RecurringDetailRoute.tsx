@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import {
   ArrowLeft, MoreHorizontal, Play, Plus, Trash2, X,
 } from 'lucide-react';
-import { useQuery, execute, createStream, executeOnStream, flushStream, nextId } from '@/wasm';
+import { useQuery, useRequirements, execute, createStream, executeOnStream, flushStream, nextId, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +39,18 @@ import {
 
 export default function RecurringDetailRoute() {
   const { recurringId } = useParams({ from: '/recurring/$recurringId' });
-  return <RecurringDetail key={recurringId} recurringId={recurringId} />;
+  const { status, error } = useRequirements([
+    requirements.recurringInvoices.all(),
+    requirements.recurringPositions.all(),
+    requirements.customers.all(),
+    requirements.products.all(),
+    requirements.activityLog.all(),
+  ]);
+  return (
+    <RequirementsGate status={status} error={error} loadingLabel="Lade Serie…">
+      <RecurringDetail key={recurringId} recurringId={recurringId} />
+    </RequirementsGate>
+  );
 }
 
 function useRecurringExists(recurringId: string): boolean {

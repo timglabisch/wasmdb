@@ -3,7 +3,8 @@ import { useNavigate } from '@tanstack/react-router';
 import {
   MoreHorizontal, Package, Search, ExternalLink, Power, Trash2,
 } from 'lucide-react';
-import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
+import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +37,7 @@ import { logActivity } from '@/commands/activity/logActivity';
  */
 export default function ProductsTab() {
   const [filter, setFilter] = React.useState('');
+  const { status, error } = useRequirements([requirements.products.all()]);
 
   return (
     <>
@@ -58,7 +60,9 @@ export default function ProductsTab() {
         }
       />
       <PageBody>
-        <ProductsList filter={filter} />
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Produkte…">
+          <ProductsList filter={filter} />
+        </RequirementsGate>
       </PageBody>
     </>
   );
@@ -71,11 +75,8 @@ interface ProductListRow {
 }
 
 function ProductsList({ filter }: { filter: string }) {
-  // Parent subscription: ids + the two columns we need for client-side filtering.
-  // `.all()` triggers the /table-fetch hydrator on first mount so reloads
-  // land on a populated store; filtering stays in JS.
-  const rows = useAsyncQuery(
-    'SELECT products.id, products.sku, products.name FROM products.all() ' +
+  const rows = useQuery(
+    'SELECT products.id, products.sku, products.name FROM products ' +
       'ORDER BY products.name ASC',
     ([id, sku, name]): ProductListRow => ({
       id: id as string,

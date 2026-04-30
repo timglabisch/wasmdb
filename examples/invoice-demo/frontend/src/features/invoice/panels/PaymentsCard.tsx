@@ -109,13 +109,13 @@ function NewPaymentForm({
     setAmount(String(defaultAmount));
   }, [defaultAmount]);
 
-  const submit = () => {
+  const submit = async () => {
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) {
       toast.error('Betrag ungültig');
       return;
     }
-    execute(createPayment({
+    const exec = execute(createPayment({
       id: nextId(),
       invoice_id: invoiceId,
       amount: Math.round(n),
@@ -124,6 +124,11 @@ function NewPaymentForm({
       reference,
       note: '',
     }));
+    const result = await exec.confirmed;
+    if (result.status === 'rejected') {
+      toast.error(`Zahlung abgelehnt: ${result.reason ?? 'unbekannt'}`);
+      return;
+    }
     toast.success('Zahlung erfasst');
     setReference('');
   };

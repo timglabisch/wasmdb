@@ -12,7 +12,7 @@ import type { InvoiceCommand } from './generated/InvoiceCommand';
 
 export type { InvoiceCommand, Execution };
 
-export { useQuery, useQueryConfirmed, useAsyncQuery, createStream, flushStream, nextId } from '@wasmdb/client';
+export { useQuery, useQueryConfirmed, useAsyncQuery, useRequirements, createStream, flushStream, nextId } from '@wasmdb/client';
 export type {
   QueryParams,
   RequirementSpec,

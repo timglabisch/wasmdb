@@ -7,8 +7,9 @@ import {
   Wallet,
   Coins,
 } from 'lucide-react';
-import { useQuery } from '@/wasm';
+import { useQuery, useRequirements, requirements } from '@/wasm';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { formatEuro } from '@/shared/lib/format';
 import { useGlobalGrossCents } from '@/shared/lib/gross';
 import { KpiCard } from '@/features/dashboard/KpiCard';
@@ -23,6 +24,12 @@ import { TopCustomers } from '@/features/dashboard/TopCustomers';
  * same per-row pattern — see OverdueList / TopCustomers.
  */
 export default function DashboardTab() {
+  const { status, error } = useRequirements([
+    requirements.customers.all(),
+    requirements.invoices.all(),
+    requirements.payments.all(),
+    requirements.positions.all(),
+  ]);
   return (
     <>
       <PageHeader
@@ -30,6 +37,7 @@ export default function DashboardTab() {
         description="KPIs, überfällige Rechnungen, Umsatz je Kunde."
       />
       <PageBody>
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Dashboard…">
         <div className="flex flex-col gap-6">
           <section
             className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6"
@@ -52,6 +60,7 @@ export default function DashboardTab() {
             </div>
           </section>
         </div>
+        </RequirementsGate>
       </PageBody>
     </>
   );

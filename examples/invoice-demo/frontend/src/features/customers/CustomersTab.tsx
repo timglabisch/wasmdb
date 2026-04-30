@@ -18,7 +18,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { PageBody, PageHeader } from '@/shared/layout/AppShell';
-import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
+import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { logActivity } from '@/commands/activity/logActivity';
 import { formatEuro } from '@/shared/lib/format';
@@ -35,8 +36,14 @@ interface IdRow {
 
 export default function CustomersTab() {
   const [search, setSearch] = React.useState('');
-  const rows = useAsyncQuery(
-    'SELECT customers.id, customers.name, customers.email FROM customers.all() ORDER BY customers.name',
+  const { status, error } = useRequirements([
+    requirements.customers.all(),
+    requirements.invoices.all(),
+    requirements.payments.all(),
+    requirements.positions.all(),
+  ]);
+  const rows = useQuery(
+    'SELECT customers.id, customers.name, customers.email FROM customers ORDER BY customers.name',
     ([id, name, email]) => ({
       id: id as string,
       nameKey: ((name as string) ?? '').toLowerCase(),
@@ -71,6 +78,7 @@ export default function CustomersTab() {
       />
 
       <PageBody>
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Kunden…">
         {rows.length === 0 ? (
           <EmptyState />
         ) : (
@@ -100,6 +108,7 @@ export default function CustomersTab() {
             </Table>
           </Card>
         )}
+        </RequirementsGate>
       </PageBody>
     </>
   );

@@ -30,7 +30,7 @@ export default function InvoicesTab() {
 
   const { data: rows, status: queryStatus, error: queryError } = useQuery<InvoiceListItem>(
     {
-      sql: 'SELECT id, doc_type, status FROM invoices ORDER BY date_issued DESC, id DESC',
+      sql: 'SELECT invoices.id, invoices.doc_type, invoices.status FROM invoices ORDER BY invoices.date_issued DESC, invoices.id DESC',
       requires: [requirements.invoices.all()],
     },
     ([id, dt, st]) => ({

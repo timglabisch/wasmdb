@@ -3,7 +3,8 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import {
   MoreHorizontal, Play, Search, Trash2, ExternalLink, RefreshCw,
 } from 'lucide-react';
-import { useQuery, useAsyncQuery, createStream, executeOnStream, flushStream } from '@/wasm';
+import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,9 +34,13 @@ interface RowId {
 export default function RecurringTab() {
   const [query, setQuery] = React.useState('');
 
-  const ids = useAsyncQuery(
+  const { status, error } = useRequirements([
+    requirements.recurringInvoices.all(),
+    requirements.customers.all(),
+  ]);
+  const ids = useQuery(
     'SELECT recurring_invoices.id, recurring_invoices.next_run ' +
-    'FROM recurring_invoices.all() ORDER BY recurring_invoices.next_run ASC',
+    'FROM recurring_invoices ORDER BY recurring_invoices.next_run ASC',
     ([id, nextRun]) => ({ id: id as string, nextRun: nextRun as string }),
   );
 
@@ -60,6 +65,7 @@ export default function RecurringTab() {
         }
       />
       <PageBody>
+        <RequirementsGate status={status} error={error} loadingLabel="Lade Serien…">
         {ids.length === 0 ? (
           <EmptyState />
         ) : (
@@ -87,6 +93,7 @@ export default function RecurringTab() {
             </Table>
           </Card>
         )}
+        </RequirementsGate>
       </PageBody>
     </>
   );
