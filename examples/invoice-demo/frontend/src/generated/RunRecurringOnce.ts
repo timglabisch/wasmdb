@@ -5,4 +5,8 @@
  * `position_ids` must have as many entries as the template has positions.
  * Updates last_run + next_run on the recurring row.
  */
-export type RunRecurringOnce = { recurring_id: string, new_invoice_id: string, position_ids: string[], new_number: string, issue_date: string, due_date: string, new_next_run: string, };
+export type RunRecurringOnce = { recurring_id: string, new_invoice_id: string, position_ids: string[], new_number: string, issue_date: string, due_date: string, new_next_run: string, 
+/**
+ * Pre-computed id for the activity_log row.
+ */
+activity_id: string, timestamp: string, };

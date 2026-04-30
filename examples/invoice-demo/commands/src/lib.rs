@@ -27,6 +27,12 @@ use invoice::create::CreateInvoice;
 use invoice::update_header::UpdateInvoiceHeader;
 use invoice::delete::DeleteInvoice;
 use invoice::mark_paid::MarkPaid;
+use invoice::mark_sent::MarkSent;
+use invoice::storno::Storno;
+use invoice::convert_offer_to_invoice::ConvertOfferToInvoice;
+use invoice::assign_customer::AssignCustomer;
+use invoice::duplicate_invoice::DuplicateInvoice;
+use invoice::create_credit_note::CreateCreditNote;
 use position::add::AddPosition;
 use position::update::UpdatePosition;
 use position::delete::DeletePosition;
@@ -72,6 +78,12 @@ pub enum InvoiceCommand {
     UpdateInvoiceHeader(UpdateInvoiceHeader),
     DeleteInvoice(DeleteInvoice),
     MarkPaid(MarkPaid),
+    MarkSent(MarkSent),
+    Storno(Storno),
+    ConvertOfferToInvoice(ConvertOfferToInvoice),
+    AssignCustomer(AssignCustomer),
+    DuplicateInvoice(DuplicateInvoice),
+    CreateCreditNote(CreateCreditNote),
 
     AddPosition(AddPosition),
     UpdatePosition(UpdatePosition),
@@ -117,6 +129,12 @@ impl Command for InvoiceCommand {
             UpdateInvoiceHeader(c) => c.execute_optimistic(db),
             DeleteInvoice(c) => c.execute_optimistic(db),
             MarkPaid(c) => c.execute_optimistic(db),
+            MarkSent(c) => c.execute_optimistic(db),
+            Storno(c) => c.execute_optimistic(db),
+            ConvertOfferToInvoice(c) => c.execute_optimistic(db),
+            AssignCustomer(c) => c.execute_optimistic(db),
+            DuplicateInvoice(c) => c.execute_optimistic(db),
+            CreateCreditNote(c) => c.execute_optimistic(db),
             AddPosition(c) => c.execute_optimistic(db),
             UpdatePosition(c) => c.execute_optimistic(db),
             DeletePosition(c) => c.execute_optimistic(db),
@@ -175,6 +193,12 @@ mod server_impl {
                 UpdateInvoiceHeader(c) => c.execute_server(tx, client_zset).await,
                 DeleteInvoice(c) => c.execute_server(tx, client_zset).await,
                 MarkPaid(c) => c.execute_server(tx, client_zset).await,
+                MarkSent(c) => c.execute_server(tx, client_zset).await,
+                Storno(c) => c.execute_server(tx, client_zset).await,
+                ConvertOfferToInvoice(c) => c.execute_server(tx, client_zset).await,
+                AssignCustomer(c) => c.execute_server(tx, client_zset).await,
+                DuplicateInvoice(c) => c.execute_server(tx, client_zset).await,
+                CreateCreditNote(c) => c.execute_server(tx, client_zset).await,
                 AddPosition(c) => c.execute_server(tx, client_zset).await,
                 UpdatePosition(c) => c.execute_server(tx, client_zset).await,
                 DeletePosition(c) => c.execute_server(tx, client_zset).await,

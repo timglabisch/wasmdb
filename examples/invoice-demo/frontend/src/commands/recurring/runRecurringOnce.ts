@@ -6,6 +6,7 @@ const DEFAULTS: Omit<Variant, 'type'> = {
   recurring_id: '', new_invoice_id: '',
   position_ids: [], new_number: '',
   issue_date: '', due_date: '', new_next_run: '',
+  activity_id: '', timestamp: '',
 };
 
 /** Materializes a recurring template into a concrete invoice + positions, in one atomic step. */

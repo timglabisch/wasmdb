@@ -9,6 +9,10 @@ use sync::zset::ZSet;
 use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use crate::invoice::params::invoice_params;
 
+fn activity_detail_for(template_name: &str, new_number: &str) -> String {
+    format!("Serie \"{template_name}\" ausgeführt — Rechnung {new_number} erstellt")
+}
+
 /// Creates a new invoice with positions copied from the recurring template.
 /// `position_ids` must have as many entries as the template has positions.
 /// Updates last_run + next_run on the recurring row.
@@ -24,6 +28,10 @@ pub struct RunRecurringOnce {
     pub issue_date: String,
     pub due_date: String,
     pub new_next_run: String,
+    /// Pre-computed id for the activity_log row.
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
 }
 
 impl Command for RunRecurringOnce {
@@ -50,8 +58,12 @@ impl Command for RunRecurringOnce {
         let notes_templates = read_str_col(db,
             "SELECT notes_template FROM recurring_invoices WHERE id = :rid",
             Params::from([p_uuid("rid", &recurring_id)]))?;
+        let template_names = read_str_col(db,
+            "SELECT template_name FROM recurring_invoices WHERE id = :rid",
+            Params::from([p_uuid("rid", &recurring_id)]))?;
         let status = status_templates.into_iter().next().unwrap_or_else(|| "draft".into());
         let notes = notes_templates.into_iter().next().unwrap_or_default();
+        let template_name = template_names.into_iter().next().unwrap_or_default();
 
         let descs = read_str_col(db,
             "SELECT description FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
@@ -131,6 +143,17 @@ impl Command for RunRecurringOnce {
             "UPDATE recurring_invoices SET last_run = :last_run, next_run = :next_run WHERE recurring_invoices.id = :id",
             params)?);
 
+        let detail = activity_detail_for(&template_name, new_number);
+        acc.extend(execute_sql(db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'recurring', :eid, 'run', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("eid", &recurring_id),
+                p_str("detail", &detail),
+            ]))?);
+
         Ok(acc)
     }
 }
@@ -152,9 +175,9 @@ mod server_impl {
             let recurring_id = self.recurring_id;
             let new_invoice_id = self.new_invoice_id;
 
-            let (customer_id_bytes, status_template, notes_template): (Vec<u8>, String, String) =
+            let (customer_id_bytes, status_template, notes_template, template_name): (Vec<u8>, String, String, String) =
                 sqlx::query_as(
-                    "SELECT customer_id, status_template, notes_template \
+                    "SELECT customer_id, status_template, notes_template, template_name \
                      FROM recurring_invoices WHERE tenant_id = ? AND id = ?",
                 )
                 .bind(DEMO_TENANT_ID)
@@ -278,6 +301,23 @@ mod server_impl {
             .await
             .map_err(|e| CommandError::ExecutionFailed(format!(
                 "UPDATE recurring {recurring_id} last_run/next_run: {e}",
+            )))?;
+
+            let detail = activity_detail_for(&template_name, &self.new_number);
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'recurring', ?, 'run', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&recurring_id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {} for recurring {recurring_id}: {e}", self.activity_id,
             )))?;
 
             Ok(client_zset.clone())

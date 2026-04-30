@@ -1,6 +1,5 @@
 import { executeOnStream, createStream, flushStream, peekQuery } from '../../../wasm.ts';
-import { updateInvoiceHeader } from '../../../commands/invoice/updateInvoiceHeader.ts';
-import { logActivity } from '../../../commands/activity/logActivity.ts';
+import { assignCustomer as assignCustomerCmd } from '../../../commands/invoice/assignCustomer.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
 import { isoDate } from './isoDate.ts';
 
@@ -40,37 +39,34 @@ const addrIsEmpty = (inv: {
 
 /**
  * Assigns a customer to an invoice. When the invoice's address fields are still
- * empty, pulls the customer's billing/shipping defaults into the invoice — and
- * derives a sensible date_due from their payment-terms. Existing addresses are
+ * empty, pulls the customer's billing/shipping defaults into the command payload —
+ * and derives a sensible date_due from their payment-terms. Existing addresses are
  * kept as-is so we never clobber user edits.
+ *
+ * The `AssignCustomer` intent command writes customer_id, address fields, date_due,
+ * and the activity-log row atomically — callers no longer compose separate writes.
  */
 export async function assignCustomer(invoiceId: string, customerId: string | null): Promise<void> {
   const inv = peekInvoice(invoiceId);
   if (!inv) return;
   const cust = peekCustomer(customerId);
   const copyAddr = cust && addrIsEmpty(inv);
-  const next = {
-    ...inv,
-    id: invoiceId,
-    customer_id: customerId,
-    billing_street:   copyAddr ? cust.billing_street   : inv.billing_street,
-    billing_zip:      copyAddr ? cust.billing_zip      : inv.billing_zip,
-    billing_city:     copyAddr ? cust.billing_city     : inv.billing_city,
-    billing_country:  copyAddr ? cust.billing_country  : inv.billing_country,
-    shipping_street:  copyAddr ? cust.shipping_street  : inv.shipping_street,
-    shipping_zip:     copyAddr ? cust.shipping_zip     : inv.shipping_zip,
-    shipping_city:    copyAddr ? cust.shipping_city    : inv.shipping_city,
-    shipping_country: copyAddr ? cust.shipping_country : inv.shipping_country,
-    date_due: copyAddr && cust.payment_terms_days > 0
+  const stream = createStream(2);
+  executeOnStream(stream, assignCustomerCmd({
+    invoiceId,
+    customerId,
+    customerName: cust ? cust.name : '',
+    billingStreet:   copyAddr ? cust.billing_street   : inv.billing_street,
+    billingZip:      copyAddr ? cust.billing_zip      : inv.billing_zip,
+    billingCity:     copyAddr ? cust.billing_city     : inv.billing_city,
+    billingCountry:  copyAddr ? cust.billing_country  : inv.billing_country,
+    shippingStreet:  copyAddr ? cust.shipping_street  : inv.shipping_street,
+    shippingZip:     copyAddr ? cust.shipping_zip     : inv.shipping_zip,
+    shippingCity:    copyAddr ? cust.shipping_city    : inv.shipping_city,
+    shippingCountry: copyAddr ? cust.shipping_country : inv.shipping_country,
+    dateDue: copyAddr && cust.payment_terms_days > 0
       ? isoDate(cust.payment_terms_days)
       : inv.date_due,
-  };
-  const stream = createStream(4);
-  executeOnStream(stream, updateInvoiceHeader(next));
-  executeOnStream(stream, logActivity({
-    entityType: 'invoice', entityId: invoiceId,
-    action: 'customer_assigned',
-    detail: cust ? `Kunde "${cust.name}" zugewiesen` : 'Kunde entfernt',
   }));
   await flushStream(stream);
 }
