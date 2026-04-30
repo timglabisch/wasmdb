@@ -1,17 +1,21 @@
 import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
-import { updateInvoiceHeader } from '../../../commands/invoice/updateInvoiceHeader.ts';
-import { logActivity } from '../../../commands/activity/logActivity.ts';
-import { peekInvoice } from '../reads/peekInvoice.ts';
+import { toast } from '@/components/ui/sonner';
+import { markPaid as markPaidCmd } from '../../../commands/invoice/markPaid.ts';
 
-/** Set an invoice's status to `paid` + log the status change, atomic. */
-export async function markPaid(invoiceId: string): Promise<void> {
-  const inv = peekInvoice(invoiceId);
-  if (!inv) return;
-  const stream = createStream(8);
-  executeOnStream(stream, updateInvoiceHeader({ ...inv, id: invoiceId, status: 'paid' }));
-  executeOnStream(stream, logActivity({
-    entityType: 'invoice', entityId: invoiceId,
-    action: 'status_paid', detail: `"${inv.number}" als bezahlt markiert`,
-  }));
-  await flushStream(stream);
+/**
+ * Set an invoice's status to `paid`.
+ *
+ * The optimistic apply (status update + activity-log row) happens
+ * synchronously inside the `MarkPaid` intent command — the local store
+ * reflects both immediately. The server roundtrip (`flushStream`) is
+ * fire-and-forget so slow links (3G, etc.) don't stall the click handler.
+ * If the server rejects, the optimistic state rolls back and we surface
+ * the reason via toast.
+ */
+export function markPaid(invoiceId: string): void {
+  const stream = createStream(2);
+  executeOnStream(stream, markPaidCmd(invoiceId));
+  flushStream(stream).catch((err: unknown) => {
+    toast.error(`Statuswechsel abgelehnt: ${(err as Error).message}`);
+  });
 }

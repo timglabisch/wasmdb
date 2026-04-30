@@ -26,6 +26,7 @@ use contact::delete::DeleteContact;
 use invoice::create::CreateInvoice;
 use invoice::update_header::UpdateInvoiceHeader;
 use invoice::delete::DeleteInvoice;
+use invoice::mark_paid::MarkPaid;
 use position::add::AddPosition;
 use position::update::UpdatePosition;
 use position::delete::DeletePosition;
@@ -69,6 +70,7 @@ pub enum InvoiceCommand {
     CreateInvoice(CreateInvoice),
     UpdateInvoiceHeader(UpdateInvoiceHeader),
     DeleteInvoice(DeleteInvoice),
+    MarkPaid(MarkPaid),
 
     AddPosition(AddPosition),
     UpdatePosition(UpdatePosition),
@@ -112,6 +114,7 @@ impl Command for InvoiceCommand {
             CreateInvoice(c) => c.execute_optimistic(db),
             UpdateInvoiceHeader(c) => c.execute_optimistic(db),
             DeleteInvoice(c) => c.execute_optimistic(db),
+            MarkPaid(c) => c.execute_optimistic(db),
             AddPosition(c) => c.execute_optimistic(db),
             UpdatePosition(c) => c.execute_optimistic(db),
             DeletePosition(c) => c.execute_optimistic(db),
@@ -168,6 +171,7 @@ mod server_impl {
                 CreateInvoice(c) => c.execute_server(tx, client_zset).await,
                 UpdateInvoiceHeader(c) => c.execute_server(tx, client_zset).await,
                 DeleteInvoice(c) => c.execute_server(tx, client_zset).await,
+                MarkPaid(c) => c.execute_server(tx, client_zset).await,
                 AddPosition(c) => c.execute_server(tx, client_zset).await,
                 UpdatePosition(c) => c.execute_server(tx, client_zset).await,
                 DeletePosition(c) => c.execute_server(tx, client_zset).await,

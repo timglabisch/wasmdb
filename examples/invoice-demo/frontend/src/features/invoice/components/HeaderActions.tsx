@@ -45,8 +45,8 @@ export const HeaderActions = memo(function HeaderActions({ invoiceId }: { invoic
     toast.success('Als versendet markiert');
   }, [invoiceId]);
 
-  const onPaid = useCallback(async () => {
-    await markPaid(invoiceId);
+  const onPaid = useCallback(() => {
+    markPaid(invoiceId);
     toast.success('Als bezahlt markiert');
   }, [invoiceId]);
 
