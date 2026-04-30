@@ -1,35 +1,24 @@
 //! The `DbRequirement` trait — the typed counterpart of [`Requirement`].
 //!
-//! Renamed from the engine's old `DbCaller`. Emitted by `tables-codegen`
-//! per mode (server / client); the trait is mode-agnostic — only the
-//! `call` body differs between server and client builds.
+//! Pure marker/meta trait. Codegen-emitted query markers implement it
+//! to expose their wire id, row table, and parameter shape. The fetch
+//! closure itself lives in [`RequirementRegistry`], built by codegen
+//! with captured dependencies — not on this trait.
 //!
 //! [`Requirement`]: crate::registry::Requirement
-
-use std::sync::Arc;
+//! [`RequirementRegistry`]: crate::registry::RequirementRegistry
 
 use sql_engine::DbTable;
-use sql_parser::ast::Value;
 
 use crate::meta::RequirementMeta;
-use crate::runtime::RequirementFuture;
 
 /// Query-marker → registrable requirement definition.
-///
-/// `call` receives owned args (resolved by the caller into concrete
-/// `Value`s), converts them into the statically-typed params, runs the
-/// underlying work (local `async fn` on the server, HTTP fetch on the
-/// client), and returns the rows in `Row::schema()` column order.
 pub trait DbRequirement: 'static {
     /// Stable requirement id (wire form `"{schema}::{function}"`),
     /// matches [`Requirement::id`] and the registry key.
     ///
     /// [`Requirement::id`]: crate::registry::Requirement::id
     const ID: &'static str;
-
-    /// App-level context passed to `call`. `()` on the client; typically
-    /// a pool/handle wrapper on the server.
-    type Ctx: Send + Sync + 'static;
 
     /// Row type produced by this requirement — determines the `row_table`
     /// into which the runtime upserts results.
@@ -41,8 +30,4 @@ pub trait DbRequirement: 'static {
     ///
     /// [`RequirementRegistry`]: crate::registry::RequirementRegistry
     fn meta() -> RequirementMeta;
-
-    /// Execute the requirement. Args are positional, already resolved
-    /// to concrete [`Value`]s by the caller.
-    fn call(args: Vec<Value>, ctx: Arc<Self::Ctx>) -> RequirementFuture;
 }

@@ -9,7 +9,7 @@ import {
 import {
   Table, TableBody, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { useAsyncQuery } from '@/wasm';
+import { useQuery, requirements } from '@/wasm';
 import { DOC_TYPE_LABEL, STATUS_LABEL } from '@/shared/lib/status';
 import { InvoiceListRow } from '@/features/invoice/components/InvoiceListRow';
 import { NewInvoiceDialog } from '@/features/invoice/components/NewInvoiceDialog';
@@ -28,8 +28,11 @@ export default function InvoicesTab() {
   const [status, setStatus] = useState<string>('all');
   const [term, setTerm] = useState('');
 
-  const rows = useAsyncQuery<InvoiceListItem>(
-    'SELECT invoices.id, invoices.doc_type, invoices.status FROM invoices.all() ORDER BY invoices.date_issued DESC, invoices.id DESC',
+  const { data: rows, status: queryStatus, error: queryError } = useQuery<InvoiceListItem>(
+    {
+      sql: 'SELECT id, doc_type, status FROM invoices ORDER BY date_issued DESC, id DESC',
+      requires: [requirements.invoices.all()],
+    },
     ([id, dt, st]) => ({
       id: id as string,
       docType: (dt as string) ?? '',
@@ -86,7 +89,20 @@ export default function InvoicesTab() {
         }
       />
       <PageBody>
-        {ids.length === 0 ? (
+        {queryStatus === 'loading' ? (
+          <Card>
+            <CardContent className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+              Lade Rechnungen…
+            </CardContent>
+          </Card>
+        ) : queryStatus === 'error' ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+              <div className="text-sm font-medium text-destructive">Fehler beim Laden</div>
+              <div className="text-xs text-muted-foreground">{queryError ?? 'Unbekannter Fehler'}</div>
+            </CardContent>
+          </Card>
+        ) : ids.length === 0 ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center gap-3 py-16 text-center">
               <div className="text-sm font-medium">Keine Rechnungen</div>

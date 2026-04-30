@@ -66,6 +66,40 @@ export interface WasmSyncApi {
    * exhausted. Call in a loop until it returns `null` to finish the cycle.
    */
   next_dirty(): DirtyNotification | null;
+
+  // ── Requirements API (typed-deps useQuery overload) ─────────────
+  /**
+   * Subscribe to a `(sql, requires)` derived requirement. `requires_json`
+   * is `[{id, args}]`. The callback fires whenever the derived slot or any
+   * of its upstream Fetched slots change state.
+   */
+  requirements_subscribe?(
+    sql: string,
+    requires_json: string,
+    on_change: () => void,
+  ): number;
+  requirements_unsubscribe?(sub: number): void;
+  requirements_invalidate?(key: string): void;
+  requirements_status?(sub: number): { state: RequirementState; error?: string };
+}
+
+export type RequirementState = 'idle' | 'loading' | 'ready' | 'error';
+
+export interface RequirementSpec {
+  id: string;
+  args: (number | string | null)[];
+}
+
+export interface QueryWithRequires {
+  sql: string;
+  requires: RequirementSpec[];
+}
+
+/** Result of `useQuery({sql, requires})`. */
+export interface UseQueryResult<T> {
+  data: T[];
+  status: RequirementState;
+  error?: string;
 }
 
 // ── Module-level wasm ref + ready-state ───────────────────────────
@@ -262,8 +296,79 @@ export function useQuery<T = any>(
   sql: string,
   mapRow?: (row: any[]) => T,
   params?: QueryParams,
-): T[] {
-  return useReactiveQuery(sql, 'optimistic', mapRow, params);
+): T[];
+export function useQuery<T = any>(
+  spec: QueryWithRequires,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): UseQueryResult<T>;
+export function useQuery<T = any>(
+  arg: string | QueryWithRequires,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): T[] | UseQueryResult<T> {
+  if (typeof arg === 'string') {
+    return useReactiveQuery(arg, 'optimistic', mapRow, params);
+  }
+  return useRequirementsQuery(arg, mapRow, params);
+}
+
+function useRequirementsQuery<T>(
+  spec: QueryWithRequires,
+  mapRow?: (row: any[]) => T,
+  params?: QueryParams,
+): UseQueryResult<T> {
+  const [data, setData] = useState<T[]>([]);
+  const [status, setStatus] = useState<RequirementState>('loading');
+  const [error, setError] = useState<string | undefined>(undefined);
+  const mapRef = useRef(mapRow);
+  mapRef.current = mapRow;
+
+  const requiresKey = JSON.stringify(spec.requires);
+  const paramsKey = params ? JSON.stringify(params) : '';
+  const { sql } = spec;
+
+  useEffect(() => {
+    if (!wasmReady) return;
+    const w = wasm();
+    if (!w.requirements_subscribe || !w.requirements_unsubscribe || !w.requirements_status) {
+      throw new Error(
+        '@wasmdb/client: useQuery({sql, requires}) requires the wasm module to expose `requirements_subscribe`, `requirements_unsubscribe`, and `requirements_status`',
+      );
+    }
+    let cancelled = false;
+    const boundParams = paramsKey ? (JSON.parse(paramsKey) as QueryParams) : undefined;
+
+    const refresh = (subId: number) => {
+      const s = w.requirements_status!(subId);
+      if (cancelled) return;
+      setStatus(s.state);
+      setError(s.error);
+      if (s.state === 'ready') {
+        try {
+          const rows = w.query(sql, boundParams);
+          if (cancelled) return;
+          setData(mapRef.current ? rows.map(mapRef.current) : (rows as T[]));
+        } catch (e) {
+          if (cancelled) return;
+          setStatus('error');
+          setError(String(e));
+        }
+      }
+    };
+
+    const subId = w.requirements_subscribe!(sql, requiresKey, () => {
+      refresh(subId);
+    });
+    refresh(subId);
+
+    return () => {
+      cancelled = true;
+      w.requirements_unsubscribe!(subId);
+    };
+  }, [sql, requiresKey, paramsKey]);
+
+  return { data, status, error };
 }
 
 export function useQueryConfirmed<T = any>(

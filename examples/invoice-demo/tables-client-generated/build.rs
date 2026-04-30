@@ -8,6 +8,7 @@ fn main() {
         .client()
         .url("/table-fetch")
         .wasm_bindings(true)
+        .ts_requirements_out("../frontend/src/generated/requirements.ts")
         .compile()
         .expect("tables-codegen (client mode)");
 }

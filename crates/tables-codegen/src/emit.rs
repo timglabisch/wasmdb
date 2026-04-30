@@ -32,9 +32,11 @@ pub fn emit_client(
     } else {
         quote! {}
     };
+    let register_all = emit_register_all_requirements(model, url)?;
     Ok(quote! {
         #(#modules)*
         #wasm
+        #register_all
     })
 }
 
@@ -286,7 +288,6 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
     });
     let param_names: Vec<_> = q.params.iter().map(|(n, _)| format_ident!("{n}")).collect();
     let param_defs = emit_param_defs(&q.fn_name, &q.params)?;
-    let arg_bindings = emit_arg_bindings(&q.fn_name, &q.params)?;
 
     Ok(quote! {
         #[derive(
@@ -307,16 +308,8 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
             type Row = #row_ty;
         }
 
-        // `tables_client::fetch` wraps `wasm_bindgen_futures::JsFuture`,
-        // whose inner state (`Rc<RefCell<_>>`) is `!Send`. On native, the
-        // native `FetcherFuture` carries `+ Send`, so this impl only
-        // type-checks under wasm32. The corresponding `FetcherFuture` /
-        // `AsyncFetcherFn` aliases in sql-engine drop the `Send` bound
-        // there to match.
-        #[cfg(target_arch = "wasm32")]
         impl ::requirements::DbRequirement for #marker {
             const ID: &'static str = #id_lit;
-            type Ctx = ();
             type Row = #row_ty;
 
             fn meta() -> ::requirements::RequirementMeta {
@@ -324,22 +317,6 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
                     row_table: <<Self as ::requirements::DbRequirement>::Row as ::sql_engine::DbTable>::TABLE.into(),
                     params: ::std::vec![ #(#param_defs),* ],
                 }
-            }
-
-            fn call(
-                #[allow(unused_variables)]
-                args: ::std::vec::Vec<::sql_parser::ast::Value>,
-                _ctx: ::std::sync::Arc<Self::Ctx>,
-            ) -> ::requirements::RequirementFuture {
-                ::std::boxed::Box::pin(async move {
-                    #(#arg_bindings)*
-                    let params = #marker { #(#param_names),* };
-                    let rows = ::tables_client::fetch::<#marker>(#url, params).await
-                        .map_err(|e| ::std::string::ToString::to_string(&e))?;
-                    Ok(rows.into_iter()
-                        .map(<#row_ty as ::sql_engine::DbTable>::into_cells)
-                        .collect())
-                })
             }
         }
 
@@ -402,7 +379,6 @@ fn emit_server_query(
         .map(|(n, _)| format_ident!("{n}"))
         .collect();
     let param_defs = emit_param_defs(&q.fn_name, &q.params)?;
-    let arg_bindings = emit_arg_bindings(&q.fn_name, &q.params)?;
     let row_path = quote! { #user_mod::#row_ty };
 
     Ok(quote! {
@@ -426,7 +402,6 @@ fn emit_server_query(
 
         impl ::requirements::DbRequirement for #marker {
             const ID: &'static str = #id_lit;
-            type Ctx = #ctx_ty;
             type Row = #row_path;
 
             fn meta() -> ::requirements::RequirementMeta {
@@ -434,21 +409,6 @@ fn emit_server_query(
                     row_table: <<Self as ::requirements::DbRequirement>::Row as ::sql_engine::DbTable>::TABLE.into(),
                     params: ::std::vec![ #(#param_defs),* ],
                 }
-            }
-
-            fn call(
-                #[allow(unused_variables)]
-                args: ::std::vec::Vec<::sql_parser::ast::Value>,
-                ctx: ::std::sync::Arc<Self::Ctx>,
-            ) -> ::requirements::RequirementFuture {
-                ::std::boxed::Box::pin(async move {
-                    #(#arg_bindings)*
-                    let rows = #user_mod::#fn_name(#(#param_idents,)* &*ctx).await
-                        .map_err(|e| ::std::string::ToString::to_string(&e))?;
-                    Ok(rows.into_iter()
-                        .map(<#row_path as ::sql_engine::DbTable>::into_cells)
-                        .collect())
-                })
             }
         }
 
@@ -461,6 +421,62 @@ fn emit_server_query(
                         ))
                 })
             });
+        }
+    })
+}
+
+/// Emit a single top-level `register_all_requirements` fn that wires
+/// every codegen-emitted query marker into a `RequirementRegistry`. Each
+/// closure shares the embedder-supplied `apply` function, fetches via
+/// HTTP, builds a `ZSet` from the typed rows, and applies it — the
+/// embedder decides which database receives the write.
+fn emit_register_all_requirements(model: &Model, url: &str) -> Result<TokenStream, CodegenError> {
+    let mut blocks = Vec::new();
+    for module in &model.modules {
+        let mod_path = module_path_tokens(&module.path);
+        for q in &module.queries {
+            let marker = format_ident!("{}", q.marker_name);
+            let row_ty = &q.row_ty;
+            let param_names: Vec<_> =
+                q.params.iter().map(|(n, _)| format_ident!("{n}")).collect();
+            let arg_bindings = emit_arg_bindings(&q.fn_name, &q.params)?;
+            blocks.push(quote! {
+                {
+                    let apply_q = ::std::clone::Clone::clone(&apply);
+                    let fetcher: ::requirements::RequirementFn = ::std::sync::Arc::new(move |args| {
+                        let apply = ::std::clone::Clone::clone(&apply_q);
+                        ::std::boxed::Box::pin(async move {
+                            #(#arg_bindings)*
+                            let params = #mod_path::#marker { #(#param_names),* };
+                            let rows = ::tables_client::fetch::<#mod_path::#marker>(#url, params).await
+                                .map_err(|e| ::std::string::ToString::to_string(&e))?;
+                            let mut zset = ::sql_engine::storage::ZSet::new();
+                            for row in rows {
+                                zset.insert(
+                                    <#mod_path::#row_ty as ::sql_engine::DbTable>::TABLE.into(),
+                                    <#mod_path::#row_ty as ::sql_engine::DbTable>::into_cells(row),
+                                );
+                            }
+                            apply(&zset)?;
+                            ::core::result::Result::Ok(())
+                        })
+                    });
+                    registry.insert(::requirements::Requirement::new(
+                        <#mod_path::#marker as ::requirements::DbRequirement>::ID,
+                        <#mod_path::#marker as ::requirements::DbRequirement>::meta(),
+                        fetcher,
+                    ));
+                }
+            });
+        }
+    }
+    Ok(quote! {
+        #[cfg(target_arch = "wasm32")]
+        pub fn register_all_requirements(
+            apply: ::std::rc::Rc<dyn ::core::ops::Fn(&::sql_engine::storage::ZSet) -> ::core::result::Result<(), ::std::string::String>>,
+            registry: &mut ::requirements::RequirementRegistry,
+        ) {
+            #(#blocks)*
         }
     })
 }
@@ -583,6 +599,152 @@ fn wrap_in_mods(path: &[String], prelude: TokenStream, content: TokenStream) -> 
 fn module_path_tokens(path: &[String]) -> TokenStream {
     let idents: Vec<_> = path.iter().map(|s| format_ident!("{s}")).collect();
     quote! { #(#idents)::* }
+}
+
+/// Emit a TypeScript file describing the typed requirement builders. One
+/// builder fn per `#[query]`, grouped by module path. The resulting object
+/// is consumed by the React `useQuery({sql, requires})` overload to construct
+/// `requires` entries with field-level type safety. Hand-rolled output (no
+/// `prettyplease` for TS) — keep formatting conservative.
+pub fn emit_ts_requirements(model: &Model) -> String {
+    let mut tree = TsTree::new();
+    for module in &model.modules {
+        for q in &module.queries {
+            tree.insert(&module.path, q);
+        }
+    }
+    let mut out = String::new();
+    out.push_str(
+        "// AUTO-GENERATED by tables-codegen. Do not edit.\n\
+         // Builders for typed requirements consumed by `useQuery({sql, requires})`.\n\n\
+         export type RequirementArg = number | string | null;\n\n\
+         export interface RequirementSpec {\n  id: string;\n  args: RequirementArg[];\n}\n\n",
+    );
+    out.push_str("export const requirements = ");
+    tree.write(&mut out, 0);
+    out.push_str(" as const;\n");
+    out
+}
+
+struct TsTree {
+    children: std::collections::BTreeMap<String, TsTree>,
+    queries: Vec<TsQueryEntry>,
+}
+
+struct TsQueryEntry {
+    fn_name: String,
+    id: String,
+    params: Vec<(String, FieldKind)>,
+}
+
+impl TsTree {
+    fn new() -> Self {
+        Self {
+            children: std::collections::BTreeMap::new(),
+            queries: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, path: &[String], q: &Query) {
+        let params: Vec<(String, FieldKind)> = q
+            .params
+            .iter()
+            .filter_map(|(n, t)| classify(t).map(|k| (n.clone(), k)))
+            .collect();
+        let entry = TsQueryEntry {
+            fn_name: q.fn_name.clone(),
+            id: q.id.clone(),
+            params,
+        };
+        if path.is_empty() {
+            self.queries.push(entry);
+            return;
+        }
+        let head = &path[0];
+        let child = self
+            .children
+            .entry(head.clone())
+            .or_insert_with(TsTree::new);
+        child.insert(&path[1..], q);
+    }
+
+    fn write(&self, out: &mut String, depth: usize) {
+        let pad = "  ".repeat(depth);
+        let inner_pad = "  ".repeat(depth + 1);
+        out.push_str("{\n");
+        let mut first = true;
+        for (name, child) in &self.children {
+            if !first {
+                out.push_str(",\n");
+            }
+            first = false;
+            out.push_str(&inner_pad);
+            out.push_str(&snake_to_camel(name));
+            out.push_str(": ");
+            child.write(out, depth + 1);
+        }
+        for q in &self.queries {
+            if !first {
+                out.push_str(",\n");
+            }
+            first = false;
+            out.push_str(&inner_pad);
+            write_ts_query_builder(out, q);
+        }
+        if !first {
+            out.push('\n');
+        }
+        out.push_str(&pad);
+        out.push('}');
+    }
+}
+
+fn write_ts_query_builder(out: &mut String, q: &TsQueryEntry) {
+    let params_signature = q
+        .params
+        .iter()
+        .map(|(n, k)| format!("{}: {}", snake_to_camel(n), ts_arg_type(*k)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let args_array = q
+        .params
+        .iter()
+        .map(|(n, _)| snake_to_camel(n))
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.push_str(&snake_to_camel(&q.fn_name));
+    out.push_str(": (");
+    out.push_str(&params_signature);
+    out.push_str("): RequirementSpec => ({ id: '");
+    out.push_str(&q.id);
+    out.push_str("', args: [");
+    out.push_str(&args_array);
+    out.push_str("] })");
+}
+
+fn ts_arg_type(k: FieldKind) -> &'static str {
+    match k {
+        FieldKind::I64 => "number",
+        FieldKind::Str | FieldKind::Uuid => "string",
+        FieldKind::OptI64 => "number | null",
+        FieldKind::OptStr | FieldKind::OptUuid => "string | null",
+    }
+}
+
+fn snake_to_camel(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut upper_next = false;
+    for c in s.chars() {
+        if c == '_' {
+            upper_next = true;
+        } else if upper_next {
+            out.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Path to the user's module (where the query fn + row struct live),

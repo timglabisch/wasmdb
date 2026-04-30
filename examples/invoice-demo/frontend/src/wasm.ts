@@ -13,7 +13,14 @@ import type { InvoiceCommand } from './generated/InvoiceCommand';
 export type { InvoiceCommand, Execution };
 
 export { useQuery, useQueryConfirmed, useAsyncQuery, createStream, flushStream, nextId } from '@wasmdb/client';
-export type { QueryParams } from '@wasmdb/client';
+export type {
+  QueryParams,
+  RequirementSpec,
+  RequirementState,
+  QueryWithRequires,
+  UseQueryResult,
+} from '@wasmdb/client';
+export { requirements } from './generated/requirements';
 
 /** Boot the WASM module once and wire it to the reactive client. */
 export function useWasm(): boolean {

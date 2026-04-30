@@ -26,6 +26,7 @@ pub struct Builder {
     url: String,
     wasm_bindings: bool,
     ctx_ty: Option<String>,
+    ts_requirements_out: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
@@ -49,6 +50,7 @@ impl Builder {
             url: "/table-fetch".into(),
             wasm_bindings: false,
             ctx_ty: None,
+            ts_requirements_out: None,
         }
     }
 
@@ -92,6 +94,14 @@ impl Builder {
         self
     }
 
+    /// Client-mode only: also emit a TypeScript file describing the typed
+    /// `requirements.<module>.<query>(...)` builders. The path is relative
+    /// to the build.rs CWD (typically the consumer crate's root).
+    pub fn ts_requirements_out(mut self, path: impl AsRef<Path>) -> Self {
+        self.ts_requirements_out = Some(path.as_ref().to_path_buf());
+        self
+    }
+
     pub fn compile(self) -> Result<(), CodegenError> {
         let root = self
             .source_root
@@ -118,6 +128,16 @@ impl Builder {
             syn::parse2(tokens).map_err(|e| CodegenError::Emit(e.to_string()))?;
         let formatted = prettyplease::unparse(&file);
         std::fs::write(&out_path, formatted)?;
+
+        if let (Mode::Client, Some(ts_path)) = (self.mode, self.ts_requirements_out.as_ref()) {
+            let ts = emit::emit_ts_requirements(&model);
+            if let Some(parent) = ts_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            std::fs::write(ts_path, ts)?;
+        }
         Ok(())
     }
 }

@@ -18,6 +18,8 @@ use sync_client::client::SyncClient;
 use wasm_bindgen::prelude::*;
 
 use crate::debug::{bump_notification_count, log_event, now_ms, record_query, track_table_invalidations, DebugEvent};
+#[cfg(target_arch = "wasm32")]
+use crate::req_bindings::install_requirements;
 use crate::state::{install_client, make_db, with_client, DEFAULT_STREAM_ID};
 use crate::stream::{do_flush_stream, try_drain_queue, PendingFetch, StreamHandle, STREAM_HANDLES};
 
@@ -32,6 +34,8 @@ pub fn init() {
     let mut client = SyncClient::new(db);
     let stream_id_val = client.create_stream().0;
     install_client(client);
+    #[cfg(target_arch = "wasm32")]
+    install_requirements();
     STREAM_HANDLES.with(|sh| {
         sh.borrow_mut().insert(stream_id_val, StreamHandle::new(1, 0, 0));
     });

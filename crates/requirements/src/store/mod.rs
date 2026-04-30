@@ -257,29 +257,39 @@ impl RequirementStore {
     /// Deliver a successful fetch. Returns `false` if the apply was
     /// stale (later invalidate has bumped the generation past `gen`).
     /// On success, propagates the new state to downstream Deriveds.
-    pub fn apply_ready(&mut self, key: &RequirementKey, gen: u64) -> bool {
+    pub fn apply_ready(&mut self, key: &RequirementKey, gen: u64) -> Vec<RequirementKey> {
         let applied = self
             .slots
             .get_mut(key)
             .expect("apply_ready: slot not registered")
             .apply_ready(gen);
-        if applied {
-            self.propagate_status_to_downstream(key);
+        if !applied {
+            return Vec::new();
         }
-        applied
+        let mut changed = vec![key.clone()];
+        self.propagate_status_to_downstream(key, &mut changed);
+        changed
     }
 
-    /// Deliver a failed fetch. Returns `false` if stale.
-    pub fn apply_error(&mut self, key: &RequirementKey, gen: u64, err: FetchError) -> bool {
+    /// Deliver a failed fetch. Returns the list of keys whose state changed
+    /// (including `key` itself), or an empty Vec if the result was stale.
+    pub fn apply_error(
+        &mut self,
+        key: &RequirementKey,
+        gen: u64,
+        err: FetchError,
+    ) -> Vec<RequirementKey> {
         let applied = self
             .slots
             .get_mut(key)
             .expect("apply_error: slot not registered")
             .apply_error(gen, err);
-        if applied {
-            self.propagate_status_to_downstream(key);
+        if !applied {
+            return Vec::new();
         }
-        applied
+        let mut changed = vec![key.clone()];
+        self.propagate_status_to_downstream(key, &mut changed);
+        changed
     }
 
     // ── Internals: graph walks ───────────────────────────────────────
@@ -314,7 +324,11 @@ impl RequirementStore {
     /// upstreams. Only re-enqueues a downstream slot's own downstream if
     /// the recomputation actually changed state — avoids unnecessary
     /// fan-out when status was already consistent.
-    fn propagate_status_to_downstream(&mut self, key: &RequirementKey) {
+    fn propagate_status_to_downstream(
+        &mut self,
+        key: &RequirementKey,
+        changed: &mut Vec<RequirementKey>,
+    ) {
         let mut worklist: Vec<RequirementKey> = self.slots[key].downstream.clone();
         while let Some(d_key) = worklist.pop() {
             let upstream_keys: Vec<RequirementKey> = self.slots[&d_key].upstream.clone();
@@ -329,6 +343,7 @@ impl RequirementStore {
                 .recompute_status_from_upstream(&states);
             let new_state = self.slots[&d_key].state;
             if prev != new_state {
+                changed.push(d_key.clone());
                 for further in &self.slots[&d_key].downstream {
                     worklist.push(further.clone());
                 }
@@ -488,7 +503,7 @@ mod tests {
         let k = upsert_fetched_int(&mut store, "invoices.by_id", 1);
         store.subscribe(&k, &mut d);
 
-        assert!(store.apply_ready(&k, 0));
+        assert_eq!(store.apply_ready(&k, 0), vec![k.clone()]);
         assert_eq!(state_of(&store, &k), SlotState::Ready);
         check_invariants(&store);
     }
@@ -503,7 +518,7 @@ mod tests {
         store.invalidate(&k, &mut d); // gen 0 → 1
 
         // Old fetch returns late with gen=0:
-        assert!(!store.apply_ready(&k, 0));
+        assert!(store.apply_ready(&k, 0).is_empty());
         assert_eq!(state_of(&store, &k), SlotState::Loading);
     }
 
