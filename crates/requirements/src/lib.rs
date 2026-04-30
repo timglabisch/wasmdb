@@ -10,8 +10,13 @@ pub mod meta;
 pub mod registry;
 pub mod requirement;
 pub mod runtime;
+pub mod store;
 
 pub use meta::{RequirementMeta, RequirementParamDef};
 pub use registry::{Requirement, RequirementRegistry};
 pub use requirement::DbRequirement;
 pub use runtime::{RequirementFn, RequirementFuture};
+pub use store::{
+    make_derived_key, make_fetched_key, FetchDispatcher, FetchError, RequirementKey,
+    RequirementStore, Slot, SlotKind, SlotState, SubscriberId,
+};

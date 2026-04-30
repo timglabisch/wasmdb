@@ -1,9 +1,10 @@
 //! Static metadata describing a single requirement (formerly "caller").
 //!
 //! This is what the planner used to consult to type-check `schema.fn(args)`
-//! call sources, and what the runtime store will consult for policy fields
-//! like `writes` / `stale_time_ms` / `gc` / `retry`. Today we keep just
-//! `row_table` + `params` — policy fields land in a follow-up step.
+//! call sources. Today we keep `row_table` and `params` — further policy
+//! fields (e.g. `stale_time_ms`, `retry`, slot-lifecycle hints) are
+//! deliberately omitted per the design's Cut 1 scope and re-added when a
+//! concrete frontend pain motivates them.
 
 use sql_engine::schema::DataType;
 
