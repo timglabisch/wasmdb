@@ -2,5 +2,10 @@
 
 /**
  * Cascades positions + payments + invoice — all in one atomic ZSet.
+ * Also writes an activity_log row (action='delete', entity_type='invoice').
+ * `activity_id` + `timestamp` are supplied by the client so optimistic and
+ * server-authoritative inserts share the same primary key (idempotent re-apply).
+ * `number` is passed in because the invoice row is gone by the time a server
+ * would try to read it back.
  */
-export type DeleteInvoice = { id: string, };
+export type DeleteInvoice = { id: string, activity_id: string, timestamp: string, number: string, };

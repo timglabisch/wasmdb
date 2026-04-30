@@ -25,7 +25,6 @@ import { cn } from '@/lib/cn';
 import { NewProductDialog } from './components/NewProductDialog';
 import { setProductActive } from '@/commands/product/setProductActive';
 import { deleteProduct } from '@/commands/product/deleteProduct';
-import { logActivity } from '@/commands/activity/logActivity';
 
 /**
  * Products list page.
@@ -217,13 +216,9 @@ const ProductListRow = React.memo(function ProductListRow({ productId }: { produ
 
   const remove = async (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!confirm(`Produkt „${p.name}“ wirklich löschen?`)) return;
+    if (!confirm(`Produkt „${p.name}” wirklich löschen?`)) return;
     const stream = createStream(2);
-    executeOnStream(stream, deleteProduct({ id: productId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'product', entityId: productId,
-      action: 'delete', detail: `Produkt "${p.name}" gelöscht`,
-    }));
+    executeOnStream(stream, deleteProduct({ id: productId, name: p.name }));
     try {
       await flushStream(stream);
       toast.success('Produkt gelöscht');

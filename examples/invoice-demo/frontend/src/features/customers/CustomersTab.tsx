@@ -21,7 +21,6 @@ import { PageBody, PageHeader } from '@/shared/layout/AppShell';
 import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
-import { logActivity } from '@/commands/activity/logActivity';
 import { formatEuro } from '@/shared/lib/format';
 import { useCreateDraftInvoice } from '@/features/invoice/actions/createDraftInvoice';
 import { NewCustomerDialog } from './components/NewCustomerDialog';
@@ -193,11 +192,7 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
 
   const doDelete = async () => {
     const stream = createStream(2);
-    executeOnStream(stream, deleteCustomerCascade({ id: customerId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'customer', entityId: customerId,
-      action: 'delete', detail: `Kunde "${customer.name}" gelöscht (Kaskade)`,
-    }));
+    executeOnStream(stream, deleteCustomerCascade({ id: customerId, name: customer.name }));
     try {
       await flushStream(stream);
       toast.success('Kunde gelöscht');

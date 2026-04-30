@@ -6,12 +6,20 @@ use database::Database;
 use sql_engine::execute::{Params, ParamValue};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::helpers::{execute_sql, p_uuid, read_uuid_col, DEMO_TENANT_ID};
+use crate::helpers::{execute_sql, p_str, p_uuid, read_uuid_col, DEMO_TENANT_ID};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 pub struct DeleteCustomerCascade {
     #[ts(type = "string")]
     pub id: Uuid,
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
+    pub name: String,
+}
+
+fn detail_for(name: &str) -> String {
+    format!("Kunde \"{name}\" gelöscht (Kaskade)")
 }
 
 impl Command for DeleteCustomerCascade {
@@ -20,6 +28,7 @@ impl Command for DeleteCustomerCascade {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let id = self.id;
+        let detail = detail_for(&self.name);
 
         let recurring_ids = read_uuid_col(db,
             "SELECT id FROM recurring_invoices WHERE customer_id = :cid",
@@ -72,6 +81,18 @@ impl Command for DeleteCustomerCascade {
         let p = Params::from([p_uuid("id", &id)]);
         acc.extend(execute_sql(db,
             "DELETE FROM customers WHERE id = :id", p)?);
+
+        acc.extend(execute_sql(
+            db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'customer', :id, 'delete', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("id", &self.id),
+                p_str("detail", &detail),
+            ]),
+        )?);
 
         Ok(acc)
     }
@@ -194,6 +215,23 @@ mod server_impl {
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE customer {id}: {e}",
                 )))?;
+
+            let detail = detail_for(&self.name);
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'customer', ?, 'delete', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}", self.activity_id,
+            )))?;
 
             Ok(client_zset.clone())
         }

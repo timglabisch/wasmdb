@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
 import { createCustomer } from '@/commands/customer/createCustomer';
-import { logActivity } from '@/commands/activity/logActivity';
 import { todayISO } from '../lib/util';
 
 /**
@@ -47,10 +46,6 @@ export function NewCustomerDialog({
       created_at: todayISO(),
       company_type: 'company', payment_terms_days: 14,
       billing_country: 'DE', shipping_country: 'DE',
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'customer', entityId: id,
-      action: 'create', detail: `Kunde "${trimmed}" angelegt`,
     }));
     try {
       await flushStream(stream);

@@ -27,7 +27,6 @@ import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
 import { deleteContact } from '@/commands/contact/deleteContact';
 import { deleteSepaMandate } from '@/commands/sepaMandate/deleteSepaMandate';
-import { logActivity } from '@/commands/activity/logActivity';
 import { formatDateISO, formatEuro } from '@/shared/lib/format';
 import { InvoiceStatusBadge } from '@/shared/lib/status';
 import { useInvoiceGrossCents } from '@/shared/lib/gross';
@@ -122,11 +121,7 @@ function CustomerDetail({ customerId }: { customerId: string }) {
 
   const doDelete = async () => {
     const stream = createStream(2);
-    executeOnStream(stream, deleteCustomerCascade({ id: customerId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'customer', entityId: customerId,
-      action: 'delete', detail: `Kunde "${head?.name ?? ''}" gelöscht (Kaskade)`,
-    }));
+    executeOnStream(stream, deleteCustomerCascade({ id: customerId, name: head?.name ?? '' }));
     try {
       await flushStream(stream);
       toast.success('Kunde gelöscht');

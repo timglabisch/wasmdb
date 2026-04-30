@@ -29,7 +29,6 @@ import { addRecurringPosition } from '@/commands/recurringPosition/addRecurringP
 import { updateRecurringPosition } from '@/commands/recurringPosition/updateRecurringPosition';
 import { deleteRecurringPosition } from '@/commands/recurringPosition/deleteRecurringPosition';
 import { deleteRecurring } from '@/commands/recurring/deleteRecurring';
-import { logActivity } from '@/commands/activity/logActivity';
 import { usePatchRecurring } from './hooks/usePatchRecurring';
 import { runRecurringAction } from './actions/runRecurring';
 import {
@@ -65,6 +64,11 @@ function useRecurringExists(recurringId: string): boolean {
 function RecurringDetail({ recurringId }: { recurringId: string }) {
   const exists = useRecurringExists(recurringId);
   const navigate = useNavigate();
+  const templateName = useQuery(
+    `SELECT recurring_invoices.template_name FROM recurring_invoices ` +
+    `WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    ([name]) => name as string,
+  )[0] ?? recurringId;
 
   if (!exists) {
     return (
@@ -108,11 +112,7 @@ function RecurringDetail({ recurringId }: { recurringId: string }) {
   const handleDelete = async () => {
     if (!confirm('Diese Serie inkl. aller Positionen löschen?')) return;
     const stream = createStream(2);
-    executeOnStream(stream, deleteRecurring({ id: recurringId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'recurring', entityId: recurringId,
-      action: 'delete', detail: `Serie #${recurringId} gelöscht`,
-    }));
+    executeOnStream(stream, deleteRecurring({ id: recurringId, label_for_detail: templateName }));
     await flushStream(stream);
     toast.success('Serie gelöscht');
     navigate({ to: '/recurring' });

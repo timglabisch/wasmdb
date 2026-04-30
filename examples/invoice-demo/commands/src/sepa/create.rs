@@ -19,6 +19,13 @@ pub struct CreateSepaMandate {
     pub bic: String,
     pub holder_name: String,
     pub signed_at: String,
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
+}
+
+fn detail_for(mandate_ref: &str) -> String {
+    format!("SEPA-Mandat \"{mandate_ref}\" angelegt")
 }
 
 impl Command for CreateSepaMandate {
@@ -36,10 +43,25 @@ impl Command for CreateSepaMandate {
             p_str("signed_at", &self.signed_at),
             p_str("status", "active"),
         ]);
-        execute_sql(db,
+        let mut acc = execute_sql(db,
             "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
              VALUES (:id, :customer_id, :mandate_ref, :iban, :bic, :holder_name, :signed_at, :status)",
-            params)
+            params)?;
+
+        let detail = detail_for(&self.mandate_ref);
+        acc.extend(execute_sql(
+            db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'sepa', :id, 'create', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("id", &self.id),
+                p_str("detail", &detail),
+            ]),
+        )?);
+
+        Ok(acc)
     }
 }
 
@@ -76,6 +98,24 @@ mod server_impl {
                     "INSERT sepa_mandate id={}: {e}",
                     self.id,
                 )))?;
+
+            let detail = detail_for(&self.mandate_ref);
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'sepa', ?, 'create', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&self.id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}", self.activity_id,
+            )))?;
+
             Ok(client_zset.clone())
         }
     }

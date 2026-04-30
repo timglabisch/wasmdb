@@ -15,7 +15,6 @@ import { Field } from '@/components/form';
 import { cn } from '@/lib/cn';
 import { useQuery, createStream, executeOnStream, flushStream, nextId } from '@/wasm';
 import { createRecurring } from '@/commands/recurring/createRecurring';
-import { logActivity } from '@/commands/activity/logActivity';
 import { INTERVAL_UNIT_OPTIONS } from '../lib/interval';
 
 interface CustomerOption { id: string; name: string }
@@ -98,11 +97,6 @@ export function NewRecurringDialog({
       next_run: nextRun,
       status_template: 'draft',
       notes_template: '',
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'recurring', entityId: id,
-      action: 'create',
-      detail: `Serie "${trimmedName}" angelegt`,
     }));
     try {
       await flushStream(stream);

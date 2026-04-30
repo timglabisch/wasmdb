@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
 import { createContact } from '@/commands/contact/createContact';
-import { logActivity } from '@/commands/activity/logActivity';
 
 /**
  * Inline dialog for adding an Ansprechpartner to a customer.
@@ -40,10 +39,6 @@ export function NewContactDialog({ customerId }: { customerId: string }) {
       name: trimmed, role: role.trim(),
       email: email.trim(), phone: phone.trim(),
       is_primary: isPrimary ? 1 : 0,
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'customer', entityId: customerId,
-      action: 'contact_create', detail: `Ansprechpartner "${trimmed}" hinzugefügt`,
     }));
     try {
       await flushStream(stream);

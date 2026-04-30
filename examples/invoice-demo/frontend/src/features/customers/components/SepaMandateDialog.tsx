@@ -9,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
 import { createSepaMandate } from '@/commands/sepaMandate/createSepaMandate';
-import { logActivity } from '@/commands/activity/logActivity';
 import { todayISO } from '../lib/util';
 
 /** Inline dialog for adding a SEPA-Mandat to a customer. */
@@ -41,10 +40,6 @@ export function NewSepaMandateDialog({ customerId }: { customerId: string }) {
       bic: bic.trim().toUpperCase(),
       holder_name: holder.trim(),
       signed_at: signedAt,
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'sepa', entityId: id,
-      action: 'create', detail: `SEPA-Mandat "${ref}" angelegt`,
     }));
     try {
       await flushStream(stream);

@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
 import { createProduct } from '@/commands/product/createProduct';
-import { logActivity } from '@/commands/activity/logActivity';
 
 /**
  * Modal for the `+ Neues Produkt` action. Creates a minimal product row, logs
@@ -58,10 +57,6 @@ export function NewProductDialog({
       tax_rate: taxRate,
       cost_price: 0,
       active: 1,
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'product', entityId: id,
-      action: 'create', detail: `Produkt "${trimmedName}" angelegt`,
     }));
     try {
       await flushStream(stream);

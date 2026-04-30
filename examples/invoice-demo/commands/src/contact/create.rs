@@ -20,6 +20,13 @@ pub struct CreateContact {
     pub role: String,
     #[ts(type = "number")]
     pub is_primary: i64,
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
+}
+
+fn detail_for(name: &str) -> String {
+    format!("Ansprechpartner \"{name}\" hinzugefügt")
 }
 
 impl Command for CreateContact {
@@ -36,10 +43,26 @@ impl Command for CreateContact {
             p_str("role", &self.role),
             p_int("is_primary", self.is_primary),
         ]);
-        execute_sql(db,
+        let mut acc = execute_sql(db,
             "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
              VALUES (:id, :customer_id, :name, :email, :phone, :role, :is_primary)",
-            params)
+            params)?;
+
+        let detail = detail_for(&self.name);
+        // entity_type='customer', entity_id=customer_id — preserves original semantics
+        acc.extend(execute_sql(
+            db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'customer', :customer_id, 'contact_create', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("customer_id", &self.customer_id),
+                p_str("detail", &detail),
+            ]),
+        )?);
+
+        Ok(acc)
     }
 }
 
@@ -76,6 +99,25 @@ mod server_impl {
                 "INSERT contact {}: {e}",
                 self.id,
             )))?;
+
+            let detail = detail_for(&self.name);
+            // entity_type='customer', entity_id=customer_id — preserves original semantics
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'customer', ?, 'contact_create', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&self.customer_id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}", self.activity_id,
+            )))?;
+
             Ok(client_zset.clone())
         }
     }

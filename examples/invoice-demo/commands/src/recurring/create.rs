@@ -21,6 +21,13 @@ pub struct CreateRecurring {
     pub next_run: String,
     pub status_template: String,
     pub notes_template: String,
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
+}
+
+fn detail_for(template_name: &str) -> String {
+    format!("Serie \"{template_name}\" angelegt")
 }
 
 impl Command for CreateRecurring {
@@ -40,10 +47,25 @@ impl Command for CreateRecurring {
             p_str("status_template", &self.status_template),
             p_str("notes_template", &self.notes_template),
         ]);
-        execute_sql(db,
+        let mut acc = execute_sql(db,
             "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
              VALUES (:id, :customer_id, :template_name, :interval_unit, :interval_value, :next_run, :last_run, :enabled, :status_template, :notes_template)",
-            params)
+            params)?;
+
+        let detail = detail_for(&self.template_name);
+        acc.extend(execute_sql(
+            db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'recurring', :id, 'create', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("id", &self.id),
+                p_str("detail", &detail),
+            ]),
+        )?);
+
+        Ok(acc)
     }
 }
 
@@ -83,6 +105,24 @@ mod server_impl {
                     "INSERT recurring_invoice {}: {e}",
                     self.id,
                 )))?;
+
+            let detail = detail_for(&self.template_name);
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'recurring', ?, 'create', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&self.id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}", self.activity_id,
+            )))?;
+
             Ok(client_zset.clone())
         }
     }

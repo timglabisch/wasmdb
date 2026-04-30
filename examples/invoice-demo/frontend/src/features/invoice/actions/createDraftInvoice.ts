@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { executeOnStream, createStream, flushStream, nextId, peekQuery } from '../../../wasm.ts';
 import { createInvoice } from '../../../commands/invoice/createInvoice.ts';
-import { logActivity } from '../../../commands/activity/logActivity.ts';
 import { isoDate } from './isoDate.ts';
 
 const DOC_PREFIX = 'INV';
@@ -59,10 +58,6 @@ export function useCreateDraftInvoice() {
       shipping_zip: defaults?.shipping_zip ?? '',
       shipping_city: defaults?.shipping_city ?? '',
       shipping_country: defaults?.shipping_country ?? 'DE',
-    }));
-    executeOnStream(stream, logActivity({
-      entityType: 'invoice', entityId: id,
-      action: 'create', detail: `Rechnung "${number}" angelegt (Entwurf)`,
     }));
     await flushStream(stream);
     navigate({ to: '/invoices/$invoiceId', params: { invoiceId: id } });

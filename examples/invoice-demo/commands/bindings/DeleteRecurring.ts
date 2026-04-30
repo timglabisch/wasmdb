@@ -2,5 +2,6 @@
 
 /**
  * Cascades recurring_positions + recurring_invoice atomically.
+ * Also writes an activity_log row (action='delete', entity_type='recurring').
  */
-export type DeleteRecurring = { id: string, };
+export type DeleteRecurring = { id: string, activity_id: string, timestamp: string, label_for_detail: string, };

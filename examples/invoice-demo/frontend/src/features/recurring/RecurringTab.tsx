@@ -21,7 +21,6 @@ import { toast } from '@/components/ui/sonner';
 import { formatDateISO, relativeDaysFromToday } from '@/shared/lib/format';
 import { cn } from '@/lib/cn';
 import { deleteRecurring } from '@/commands/recurring/deleteRecurring';
-import { logActivity } from '@/commands/activity/logActivity';
 import { NewRecurringDialog } from './components/NewRecurringDialog';
 import { runRecurringAction } from './actions/runRecurring';
 import { formatInterval, formatRelativeDays } from './lib/interval';
@@ -169,12 +168,7 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
   const handleDelete = async () => {
     if (!confirm(`Serie "${t.name}" inkl. aller Positionen löschen?`)) return;
     const stream = createStream(2);
-    executeOnStream(stream, deleteRecurring({ id: recurringId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'recurring', entityId: recurringId,
-      action: 'delete',
-      detail: `Serie "${t.name}" gelöscht`,
-    }));
+    executeOnStream(stream, deleteRecurring({ id: recurringId, label_for_detail: t.name }));
     await flushStream(stream);
     toast.success('Serie gelöscht');
   };

@@ -24,7 +24,6 @@ import { useProductExists } from './hooks/useProductExists';
 import { usePatchProduct } from './hooks/usePatchProduct';
 import { peekProduct } from './reads/peekProduct';
 import { deleteProduct } from '@/commands/product/deleteProduct';
-import { logActivity } from '@/commands/activity/logActivity';
 
 const UNIT_OPTIONS: BlurSelectOption[] = [
   { value: 'Stk',      label: 'Stk' },
@@ -143,13 +142,9 @@ const DetailHeader = React.memo(function DetailHeader({ productId }: { productId
 
   const remove = async () => {
     if (!p) return;
-    if (!confirm(`Produkt „${p.name}“ wirklich löschen?`)) return;
+    if (!confirm(`Produkt „${p.name}” wirklich löschen?`)) return;
     const stream = createStream(2);
-    executeOnStream(stream, deleteProduct({ id: productId }));
-    executeOnStream(stream, logActivity({
-      entityType: 'product', entityId: productId,
-      action: 'delete', detail: `Produkt "${p.name}" gelöscht`,
-    }));
+    executeOnStream(stream, deleteProduct({ id: productId, name: p.name }));
     try {
       await flushStream(stream);
       toast.success('Produkt gelöscht');

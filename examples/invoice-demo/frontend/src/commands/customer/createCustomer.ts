@@ -1,4 +1,5 @@
 import type { InvoiceCommand } from '../../generated/InvoiceCommand.ts';
+import { nextId } from '../../wasm.ts';
 
 type Variant = Extract<InvoiceCommand, { type: 'CreateCustomer' }>;
 
@@ -9,8 +10,15 @@ const DEFAULTS: Omit<Variant, 'type'> = {
   billing_street: '', billing_zip: '', billing_city: '', billing_country: 'DE',
   shipping_street: '', shipping_zip: '', shipping_city: '', shipping_country: 'DE',
   default_iban: '', default_bic: '', notes: '',
+  activity_id: '', timestamp: '',
 };
 
 export function createCustomer(args: Partial<Omit<Variant, 'type'>> = {}): InvoiceCommand {
-  return { type: 'CreateCustomer', ...DEFAULTS, ...args };
+  return {
+    type: 'CreateCustomer',
+    ...DEFAULTS,
+    activity_id: nextId(),
+    timestamp: new Date().toISOString(),
+    ...args,
+  };
 }

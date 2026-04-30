@@ -24,6 +24,13 @@ pub struct CreateProduct {
     pub cost_price: i64,
     #[ts(type = "number")]
     pub active: i64,
+    #[ts(type = "string")]
+    pub activity_id: Uuid,
+    pub timestamp: String,
+}
+
+fn detail_for(name: &str) -> String {
+    format!("Produkt \"{name}\" angelegt")
 }
 
 impl Command for CreateProduct {
@@ -42,10 +49,25 @@ impl Command for CreateProduct {
             p_int("cost_price", self.cost_price),
             p_int("active", self.active),
         ]);
-        execute_sql(db,
+        let mut acc = execute_sql(db,
             "INSERT INTO products (id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
              VALUES (:id, :sku, :name, :description, :unit, :unit_price, :tax_rate, :cost_price, :active)",
-            params)
+            params)?;
+
+        let detail = detail_for(&self.name);
+        acc.extend(execute_sql(
+            db,
+            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+             VALUES (:aid, :ts, 'product', :id, 'create', 'demo', :detail)",
+            Params::from([
+                p_uuid("aid", &self.activity_id),
+                p_str("ts", &self.timestamp),
+                p_uuid("id", &self.id),
+                p_str("detail", &detail),
+            ]),
+        )?);
+
+        Ok(acc)
     }
 }
 
@@ -83,6 +105,24 @@ mod server_impl {
                     "INSERT product id={}: {e}",
                     self.id,
                 )))?;
+
+            let detail = detail_for(&self.name);
+            sqlx::query(
+                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES (?, ?, ?, 'product', ?, 'create', 'demo', ?) \
+                 ON DUPLICATE KEY UPDATE id = id",
+            )
+            .bind(DEMO_TENANT_ID)
+            .bind(&self.activity_id.0[..])
+            .bind(&self.timestamp)
+            .bind(&self.id.0[..])
+            .bind(&detail)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| CommandError::ExecutionFailed(format!(
+                "INSERT activity {}: {e}", self.activity_id,
+            )))?;
+
             Ok(client_zset.clone())
         }
     }
