@@ -37,6 +37,7 @@ use payment::delete::DeletePayment;
 use product::create::CreateProduct;
 use product::update::UpdateProduct;
 use product::delete::DeleteProduct;
+use product::set_active::SetProductActive;
 use sepa::create::CreateSepaMandate;
 use sepa::update::UpdateSepaMandate;
 use sepa::delete::DeleteSepaMandate;
@@ -84,6 +85,7 @@ pub enum InvoiceCommand {
     CreateProduct(CreateProduct),
     UpdateProduct(UpdateProduct),
     DeleteProduct(DeleteProduct),
+    SetProductActive(SetProductActive),
 
     CreateSepaMandate(CreateSepaMandate),
     UpdateSepaMandate(UpdateSepaMandate),
@@ -125,6 +127,7 @@ impl Command for InvoiceCommand {
             CreateProduct(c) => c.execute_optimistic(db),
             UpdateProduct(c) => c.execute_optimistic(db),
             DeleteProduct(c) => c.execute_optimistic(db),
+            SetProductActive(c) => c.execute_optimistic(db),
             CreateSepaMandate(c) => c.execute_optimistic(db),
             UpdateSepaMandate(c) => c.execute_optimistic(db),
             DeleteSepaMandate(c) => c.execute_optimistic(db),
@@ -182,6 +185,7 @@ mod server_impl {
                 CreateProduct(c) => c.execute_server(tx, client_zset).await,
                 UpdateProduct(c) => c.execute_server(tx, client_zset).await,
                 DeleteProduct(c) => c.execute_server(tx, client_zset).await,
+                SetProductActive(c) => c.execute_server(tx, client_zset).await,
                 CreateSepaMandate(c) => c.execute_server(tx, client_zset).await,
                 UpdateSepaMandate(c) => c.execute_server(tx, client_zset).await,
                 DeleteSepaMandate(c) => c.execute_server(tx, client_zset).await,

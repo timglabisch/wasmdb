@@ -23,8 +23,7 @@ import { formatEuro } from '@/shared/lib/format';
 import { formatBp } from '@/shared/lib/calc';
 import { cn } from '@/lib/cn';
 import { NewProductDialog } from './components/NewProductDialog';
-import { peekProduct } from './reads/peekProduct';
-import { updateProduct } from '@/commands/product/updateProduct';
+import { setProductActive } from '@/commands/product/setProductActive';
 import { deleteProduct } from '@/commands/product/deleteProduct';
 import { logActivity } from '@/commands/activity/logActivity';
 
@@ -205,24 +204,15 @@ const ProductListRow = React.memo(function ProductListRow({ productId }: { produ
 
   const open = () => navigate({ to: '/products/$productId', params: { productId } });
 
-  const toggleActive = async (e?: React.MouseEvent) => {
+  const toggleActive = (e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const full = peekProduct(productId);
-    if (!full) return;
-    const nextActive = full.active === 1 ? 0 : 1;
-    const stream = createStream(2);
-    executeOnStream(stream, updateProduct({ ...full, id: productId, active: nextActive }));
-    executeOnStream(stream, logActivity({
-      entityType: 'product', entityId: productId,
-      action: nextActive === 1 ? 'activate' : 'deactivate',
-      detail: `Produkt "${full.name}" ${nextActive === 1 ? 'aktiviert' : 'deaktiviert'}`,
-    }));
-    try {
-      await flushStream(stream);
-      toast.success(nextActive === 1 ? 'Produkt aktiviert' : 'Produkt deaktiviert');
-    } catch (err) {
+    const nextActive = p.active === 1 ? 0 : 1;
+    const stream = createStream(1);
+    executeOnStream(stream, setProductActive({ id: productId, active: nextActive }));
+    flushStream(stream).catch((err: unknown) => {
       toast.error(`Statuswechsel fehlgeschlagen: ${(err as Error).message}`);
-    }
+    });
+    toast.success(nextActive === 1 ? 'Produkt aktiviert' : 'Produkt deaktiviert');
   };
 
   const remove = async (e?: React.MouseEvent) => {
