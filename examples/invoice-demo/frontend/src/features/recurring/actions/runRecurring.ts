@@ -2,7 +2,6 @@ import {
   executeOnStream, createStream, flushStream, nextId, peekQuery,
 } from '@/wasm';
 import { runRecurringOnce } from '@/commands/recurring/runRecurringOnce';
-import { logActivity } from '@/commands/activity/logActivity';
 import { advanceDate } from '../lib/interval';
 
 const DOC_PREFIX = 'INV';
@@ -55,7 +54,8 @@ function peekPaymentTermsDays(customerId: string): number {
 
 /**
  * Materialize a recurring template into a concrete invoice + positions in one
- * atomic stream, plus an audit entry. Returns the created invoice id/number.
+ * atomic stream, with an audit entry produced by the command itself.
+ * Returns the created invoice id/number.
  */
 export async function runRecurringAction(recurringId: string): Promise<RunRecurringResult | null> {
   const header = peekTemplateHeader(recurringId);
@@ -73,7 +73,7 @@ export async function runRecurringAction(recurringId: string): Promise<RunRecurr
   const positionIds: string[] = [];
   for (let i = 0; i < positionCount; i++) positionIds.push(nextId());
 
-  const stream = createStream(2);
+  const stream = createStream(1);
   executeOnStream(stream, runRecurringOnce({
     recurring_id: recurringId,
     new_invoice_id: newInvoiceId,
@@ -82,12 +82,9 @@ export async function runRecurringAction(recurringId: string): Promise<RunRecurr
     issue_date: issueDate,
     due_date: dueDate,
     new_next_run: newNextRun,
+    activity_id: nextId(),
+    timestamp: new Date().toISOString(),
   }));
-  executeOnStream(stream, logActivity({
-    entityType: 'recurring', entityId: recurringId,
-    action: 'run',
-    detail: `Serie "${header.template_name}" ausgeführt — Rechnung ${newNumber} erstellt`,
-  }));
-  await flushStream(stream);
+  await flushStream(stream).catch(() => {});
   return { invoiceId: newInvoiceId, invoiceNumber: newNumber };
 }

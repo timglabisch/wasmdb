@@ -11,7 +11,7 @@ type Variant = Extract<InvoiceCommand, { type: 'CreateCreditNote' }>;
  * server-confirmed inserts share the same primary keys (idempotent re-apply).
  * Returns null when the source invoice is not found in the local DB.
  */
-export function createCreditNote(sourceInvoiceId: string): { cmd: InvoiceCommand; newInvoiceId: string } | null {
+export function createCreditNote(sourceInvoiceId: string): { cmd: InvoiceCommand; newInvoiceId: string; srcNumber: string } | null {
   // Peek source invoice number for the new credit-note number string.
   const headerRows = peekQuery(
     `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${sourceInvoiceId}'`,
@@ -39,5 +39,5 @@ export function createCreditNote(sourceInvoiceId: string): { cmd: InvoiceCommand
     activity_id: nextId(),
     timestamp: new Date().toISOString(),
   };
-  return { cmd, newInvoiceId };
+  return { cmd, newInvoiceId, srcNumber };
 }
