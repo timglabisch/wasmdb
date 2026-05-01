@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { execute } from '@/wasm';
 import { updateProduct } from '@/generated/InvoiceCommandFactories';
 import { peekProduct } from '../reads/peekProduct';
-import type { ProductRow } from '../types';
+import type { ProductWithoutPk } from '@/generated/tables/Product';
 
 /**
  * Build a `patch(partial)` callback that is stable across renders and composes
@@ -11,7 +11,7 @@ import type { ProductRow } from '../types';
  * changes.
  */
 export function usePatchProduct(productId: string) {
-  return useCallback((partial: Partial<ProductRow>) => {
+  return useCallback((partial: Partial<ProductWithoutPk>) => {
     const p = peekProduct(productId);
     if (!p) return;
     execute(updateProduct({ ...p, id: productId, ...partial }));

@@ -27,6 +27,7 @@ pub struct Builder {
     wasm_bindings: bool,
     ctx_ty: Option<String>,
     ts_requirements_out: Option<PathBuf>,
+    ts_rows_out: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy)]
@@ -51,6 +52,7 @@ impl Builder {
             wasm_bindings: false,
             ctx_ty: None,
             ts_requirements_out: None,
+            ts_rows_out: None,
         }
     }
 
@@ -102,6 +104,15 @@ impl Builder {
         self
     }
 
+    /// Client-mode only: emit one TypeScript file per `#[row]` that declares
+    /// `#[export(...)]` attributes into the given directory. Each row owns
+    /// its export list — there is no global default. Rows without exports
+    /// are skipped.
+    pub fn ts_rows_out(mut self, dir: impl AsRef<Path>) -> Self {
+        self.ts_rows_out = Some(dir.as_ref().to_path_buf());
+        self
+    }
+
     pub fn compile(self) -> Result<(), CodegenError> {
         let root = self
             .source_root
@@ -137,6 +148,13 @@ impl Builder {
                 }
             }
             std::fs::write(ts_path, ts)?;
+        }
+
+        if let (Mode::Client, Some(dir)) = (self.mode, self.ts_rows_out.as_ref()) {
+            std::fs::create_dir_all(dir)?;
+            for (file, body) in emit::emit_ts_rows(&model)? {
+                std::fs::write(dir.join(file), body)?;
+            }
         }
         Ok(())
     }

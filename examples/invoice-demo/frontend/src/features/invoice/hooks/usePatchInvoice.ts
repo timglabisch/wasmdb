@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { execute } from '../../../wasm.ts';
 import { updateInvoiceHeader } from '../../../generated/InvoiceCommandFactories.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
-import type { InvoiceRow } from '../types.ts';
+import type { InvoiceWithoutPk } from '@/generated/tables/Invoice';
 
 /**
  * Build a `patch(partial)` callback that is stable across renders and composes
@@ -11,7 +11,7 @@ import type { InvoiceRow } from '../types.ts';
  * changes.
  */
 export function usePatchInvoice(invoiceId: string) {
-  return useCallback((partial: Partial<InvoiceRow>) => {
+  return useCallback((partial: Partial<Omit<InvoiceWithoutPk, 'customer_id'>>) => {
     const inv = peekInvoice(invoiceId);
     if (!inv) return;
     const merged = { ...inv, ...partial };

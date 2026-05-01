@@ -5,6 +5,8 @@ use tables_storage::{query, row};
 use crate::{try_uuid, try_uuid_opt, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "positions")]
+#[export(name = "", groups = ["all"])]
+#[export(name = "WithoutPk", groups = ["non_pk"])]
 pub struct Position {
     #[pk]
     pub id: Uuid,

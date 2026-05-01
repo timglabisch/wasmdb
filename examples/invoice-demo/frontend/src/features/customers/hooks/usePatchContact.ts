@@ -2,13 +2,14 @@ import { useCallback } from 'react';
 import { execute } from '@/wasm';
 import { updateContact } from '@/generated/InvoiceCommandFactories';
 import { peekContact } from '../reads/peekCustomer';
-import type { ContactRow } from '../types';
+import type { ContactWithoutPk } from '@/generated/tables/Contact';
 
 /** Stable patch for a contact row. */
 export function usePatchContact(contactId: string) {
-  return useCallback((partial: Partial<ContactRow>) => {
+  return useCallback((partial: Partial<Omit<ContactWithoutPk, 'customer_id'>>) => {
     const row = peekContact(contactId);
     if (!row) return;
-    execute(updateContact({ ...row, id: contactId, ...partial }));
+    const { customer_id, ...patchable } = row;
+    execute(updateContact({ ...patchable, id: contactId, ...partial }));
   }, [contactId]);
 }

@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { execute } from '@/wasm';
 import { updateCustomer } from '@/generated/InvoiceCommandFactories';
 import { peekCustomer } from '../reads/peekCustomer';
-import type { CustomerRow } from '../types';
+import type { CustomerWithoutPk } from '@/generated/tables/Customer';
 
 /**
  * Stable `patch(partial)` callback that composes the full UpdateCustomer
@@ -10,9 +10,10 @@ import type { CustomerRow } from '../types';
  * customer columns — re-renders only happen when customerId changes.
  */
 export function usePatchCustomer(customerId: string) {
-  return useCallback((partial: Partial<CustomerRow>) => {
+  return useCallback((partial: Partial<Omit<CustomerWithoutPk, 'created_at'>>) => {
     const row = peekCustomer(customerId);
     if (!row) return;
-    execute(updateCustomer({ ...row, id: customerId, ...partial }));
+    const { created_at, ...patchable } = row;
+    execute(updateCustomer({ ...patchable, id: customerId, ...partial }));
   }, [customerId]);
 }

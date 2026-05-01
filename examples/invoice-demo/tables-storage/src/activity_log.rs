@@ -5,6 +5,8 @@ use tables_storage::{query, row};
 use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "activity_log")]
+#[export(name = "", groups = ["all"])]
+#[export(name = "WithoutPk", groups = ["non_pk"])]
 pub struct ActivityLogEntry {
     #[pk]
     pub id: Uuid,

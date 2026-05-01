@@ -5,6 +5,8 @@ use tables_storage::{query, row};
 use crate::{try_uuid, AppCtx, DEMO_TENANT_ID};
 
 #[row(table = "recurring_positions")]
+#[export(name = "", groups = ["all"])]
+#[export(name = "WithoutPk", groups = ["non_pk"])]
 pub struct RecurringPosition {
     #[pk]
     pub id: Uuid,

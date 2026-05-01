@@ -62,6 +62,10 @@ impl Parse for RowArgs {
 fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2> {
     let name = input.ident.clone();
 
+    // Strip our struct-level marker attributes that codegen reads from the
+    // source file but the compiler should not see (no registered handler).
+    input.attrs.retain(|attr| !attr.path().is_ident("export"));
+
     let Data::Struct(ds) = &mut input.data else {
         return Err(Error::new_spanned(&input, "#[row] only works on structs"));
     };
@@ -87,6 +91,9 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
         field.attrs.retain(|attr| {
             if attr.path().is_ident("pk") {
                 is_pk = true;
+                false
+            } else if attr.path().is_ident("group") {
+                // Field-level group tag; codegen scans the source file for it.
                 false
             } else {
                 true

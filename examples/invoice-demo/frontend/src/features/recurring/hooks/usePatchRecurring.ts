@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { execute } from '@/wasm';
 import { updateRecurring } from '@/generated/InvoiceCommandFactories';
 import { peekRecurring } from '../reads/peekRecurring';
-import type { RecurringRow } from '../types';
+import type { RecurringInvoiceWithoutPk } from '@/generated/tables/RecurringInvoice';
 
 /**
  * Stable `patch(partial)` callback that composes the full UpdateRecurring
@@ -13,7 +13,7 @@ import type { RecurringRow } from '../types';
  * therefore ignored at the write-time level; callers should not pass one.
  */
 export function usePatchRecurring(recurringId: string) {
-  return useCallback((partial: Partial<RecurringRow>) => {
+  return useCallback((partial: Partial<Omit<RecurringInvoiceWithoutPk, 'customer_id' | 'last_run'>>) => {
     const row = peekRecurring(recurringId);
     if (!row) return;
     const merged = { ...row, ...partial };

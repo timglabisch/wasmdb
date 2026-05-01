@@ -1,7 +1,7 @@
 import { peekQuery } from '../../../wasm.ts';
-import type { InvoiceRow } from '../types.ts';
+import type { InvoiceWithoutPk } from '@/generated/tables/Invoice';
 
-const rowToInvoice = (r: any[]): InvoiceRow => ({
+const rowToInvoice = (r: any[]): InvoiceWithoutPk => ({
   number: r[0] as string, status: r[1] as string,
   date_issued: r[2] as string, date_due: r[3] as string, notes: r[4] as string,
   doc_type: r[5] as string, parent_id: (r[6] as string | null) ?? null, service_date: r[7] as string,
@@ -15,7 +15,7 @@ const rowToInvoice = (r: any[]): InvoiceRow => ({
 });
 
 /** One-shot non-reactive full-row read. Used at write time to compose UpdateInvoiceHeader payloads. */
-export function peekInvoice(invoiceId: string): InvoiceRow | null {
+export function peekInvoice(invoiceId: string): InvoiceWithoutPk | null {
   const rows = peekQuery(
     `SELECT invoices.number, invoices.status, invoices.date_issued, invoices.date_due, invoices.notes, ` +
     `invoices.doc_type, invoices.parent_id, invoices.service_date, ` +
@@ -24,7 +24,8 @@ export function peekInvoice(invoiceId: string): InvoiceRow | null {
     `invoices.project_ref, invoices.external_id, ` +
     `invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country, ` +
     `invoices.shipping_street, invoices.shipping_zip, invoices.shipping_city, invoices.shipping_country, ` +
-    `invoices.customer_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `invoices.customer_id FROM invoices WHERE invoices.id = :id`,
+    { id: invoiceId },
   );
   if (rows.length === 0) return null;
   return rowToInvoice(rows[0]);

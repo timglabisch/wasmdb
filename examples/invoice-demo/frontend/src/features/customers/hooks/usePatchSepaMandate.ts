@@ -2,13 +2,14 @@ import { useCallback } from 'react';
 import { execute } from '@/wasm';
 import { updateSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { peekSepaMandate } from '../reads/peekCustomer';
-import type { SepaMandateRow } from '../types';
+import type { SepaMandateWithoutPk } from '@/generated/tables/SepaMandate';
 
 /** Stable patch for a sepa_mandates row. */
 export function usePatchSepaMandate(mandateId: string) {
-  return useCallback((partial: Partial<SepaMandateRow>) => {
+  return useCallback((partial: Partial<Omit<SepaMandateWithoutPk, 'customer_id'>>) => {
     const row = peekSepaMandate(mandateId);
     if (!row) return;
-    execute(updateSepaMandate({ ...row, id: mandateId, ...partial }));
+    const { customer_id, ...patchable } = row;
+    execute(updateSepaMandate({ ...patchable, id: mandateId, ...partial }));
   }, [mandateId]);
 }

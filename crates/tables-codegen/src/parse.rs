@@ -33,6 +33,23 @@ pub struct Row {
     /// Explicit `#[row(table = "…")]` override. `None` means the emitter
     /// falls back to `pascal_to_snake(name)`.
     pub table_name: Option<String>,
+    /// Per-field user-declared group tags (parallel to `fields`). Implicit
+    /// groups (`all`, `pk`/`non_pk`, `field.<name>`) are not stored here —
+    /// emitters compute them from the row.
+    pub field_groups: Vec<Vec<String>>,
+    /// `#[export(name = "X", groups = [...])]` declarations on the struct,
+    /// in source order. Empty means no TS rows are emitted for this struct.
+    pub exports: Vec<RowExport>,
+}
+
+/// A single TS-row export declared on a `#[row]` struct.
+pub struct RowExport {
+    /// Suffix appended to the row name to form the TS type identifier.
+    /// Empty string keeps the bare row name.
+    pub suffix: String,
+    /// Group expressions selecting which fields appear in this export.
+    /// Each entry is either positive (`"non_pk"`) or negated (`"!field.foo"`).
+    pub groups: Vec<String>,
 }
 
 pub struct Query {
@@ -166,6 +183,7 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
     let table_name = parse_row_table(&name, row_attr)?;
 
     let mut fields = vec![];
+    let mut field_groups: Vec<Vec<String>> = vec![];
     let mut pk: Option<(String, Type)> = None;
     for f in &named.named {
         let Some(ident) = &f.ident else {
@@ -181,11 +199,15 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
             }
             pk = Some((fname.clone(), f.ty.clone()));
         }
+        let groups = parse_field_groups(&name, &fname, &f.attrs)?;
         fields.push((fname, f.ty.clone()));
+        field_groups.push(groups);
     }
     let (pk_name, pk_ty) = pk.ok_or_else(|| {
         CodegenError::Parse(format!("#[row] on `{name}`: missing #[pk] field"))
     })?;
+
+    let exports = parse_row_exports(&name, &s.attrs)?;
 
     Ok(Row {
         name,
@@ -193,7 +215,110 @@ fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {
         pk_name,
         pk_ty,
         table_name,
+        field_groups,
+        exports,
     })
+}
+
+fn parse_field_groups(
+    row_name: &str,
+    field_name: &str,
+    attrs: &[Attribute],
+) -> Result<Vec<String>, CodegenError> {
+    let mut out = Vec::new();
+    for a in attrs.iter().filter(|a| a.path().is_ident("group")) {
+        let names = a
+            .parse_args_with(parse_group_args)
+            .map_err(|e| {
+                CodegenError::Parse(format!(
+                    "#[group] on `{row_name}.{field_name}`: {e}"
+                ))
+            })?;
+        for n in names {
+            if n == "all" || n == "pk" || n == "non_pk" || n.starts_with("field.") {
+                return Err(CodegenError::Parse(format!(
+                    "#[group] on `{row_name}.{field_name}`: `{n}` is reserved (implicit group)"
+                )));
+            }
+            out.push(n);
+        }
+    }
+    Ok(out)
+}
+
+fn parse_group_args(input: ParseStream) -> syn::Result<Vec<String>> {
+    let mut names = Vec::new();
+    while !input.is_empty() {
+        let lit: LitStr = input.parse()?;
+        names.push(lit.value());
+        if input.is_empty() {
+            break;
+        }
+        let _: Token![,] = input.parse()?;
+    }
+    if names.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "expected at least one group name as a string literal",
+        ));
+    }
+    Ok(names)
+}
+
+fn parse_row_exports(
+    row_name: &str,
+    attrs: &[Attribute],
+) -> Result<Vec<RowExport>, CodegenError> {
+    let mut out = Vec::new();
+    for a in attrs.iter().filter(|a| a.path().is_ident("export")) {
+        let exp = a
+            .parse_args_with(parse_export_args)
+            .map_err(|e| CodegenError::Parse(format!("#[export] on `{row_name}`: {e}")))?;
+        out.push(exp);
+    }
+    Ok(out)
+}
+
+/// Parses `name = "Suffix", groups = ["a", "b", "!c"]`.
+fn parse_export_args(input: ParseStream) -> syn::Result<RowExport> {
+    let mut suffix: Option<String> = None;
+    let mut groups: Option<Vec<String>> = None;
+    while !input.is_empty() {
+        let key: Ident = input.parse()?;
+        let _: Token![=] = input.parse()?;
+        if key == "name" {
+            let lit: LitStr = input.parse()?;
+            suffix = Some(lit.value());
+        } else if key == "groups" {
+            let content;
+            syn::bracketed!(content in input);
+            let mut list = Vec::new();
+            while !content.is_empty() {
+                let lit: LitStr = content.parse()?;
+                list.push(lit.value());
+                if content.is_empty() {
+                    break;
+                }
+                let _: Token![,] = content.parse()?;
+            }
+            groups = Some(list);
+        } else {
+            return Err(syn::Error::new(key.span(), "expected `name` or `groups`"));
+        }
+        if input.is_empty() {
+            break;
+        }
+        let _: Token![,] = input.parse()?;
+    }
+    let suffix = suffix.ok_or_else(|| syn::Error::new(input.span(), "missing `name`"))?;
+    let groups = groups.ok_or_else(|| syn::Error::new(input.span(), "missing `groups`"))?;
+    if !groups.iter().any(|g| !g.starts_with('!')) {
+        return Err(syn::Error::new(
+            input.span(),
+            "`groups` must contain at least one positive group (no `!`)",
+        ));
+    }
+    Ok(RowExport { suffix, groups })
 }
 
 fn parse_row_table(row_name: &str, attr: &Attribute) -> Result<Option<String>, CodegenError> {
