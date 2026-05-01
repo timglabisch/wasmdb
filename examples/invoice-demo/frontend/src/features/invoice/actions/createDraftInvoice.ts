@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { executeOnStream, createStream, flushStream, nextId, peekQuery } from '../../../wasm.ts';
-import { createInvoice } from '../../../commands/invoice/createInvoice.ts';
+import { createInvoice } from '../../../generated/InvoiceCommandFactories.ts';
 import { isoDate } from './isoDate.ts';
 
 const DOC_PREFIX = 'INV';
@@ -49,7 +49,19 @@ export function useCreateDraftInvoice() {
       id, customer_id: customerId, number,
       status: 'draft',
       date_issued: isoDate(0), date_due: isoDate(dueDays),
+      notes: '',
       doc_type: 'invoice',
+      parent_id: null,
+      service_date: '',
+      cash_allowance_pct: 0,
+      cash_allowance_days: 0,
+      discount_pct: 0,
+      payment_method: 'transfer',
+      sepa_mandate_id: null,
+      currency: 'EUR',
+      language: 'de',
+      project_ref: '',
+      external_id: '',
       billing_street: defaults?.billing_street ?? '',
       billing_zip: defaults?.billing_zip ?? '',
       billing_city: defaults?.billing_city ?? '',

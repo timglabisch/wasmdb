@@ -23,7 +23,7 @@ import { cn } from '@/lib/cn';
 import { useProductExists } from './hooks/useProductExists';
 import { usePatchProduct } from './hooks/usePatchProduct';
 import { peekProduct } from './reads/peekProduct';
-import { deleteProduct } from '@/commands/product/deleteProduct';
+import { deleteProduct } from '@/generated/InvoiceCommandFactories';
 
 const UNIT_OPTIONS: BlurSelectOption[] = [
   { value: 'Stk',      label: 'Stk' },

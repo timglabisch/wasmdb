@@ -9,7 +9,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
-import { createCustomer } from '@/commands/customer/createCustomer';
+import { createCustomer } from '@/generated/InvoiceCommandFactories';
 import { todayISO } from '../lib/util';
 
 /**
@@ -44,8 +44,12 @@ export function NewCustomerDialog({
     executeOnStream(stream, createCustomer({
       id, name: trimmed, email: email.trim(),
       created_at: todayISO(),
-      company_type: 'company', payment_terms_days: 14,
-      billing_country: 'DE', shipping_country: 'DE',
+      company_type: 'company',
+      tax_id: '', vat_id: '',
+      payment_terms_days: 14, default_discount_pct: 0,
+      billing_street: '', billing_zip: '', billing_city: '', billing_country: 'DE',
+      shipping_street: '', shipping_zip: '', shipping_city: '', shipping_country: 'DE',
+      default_iban: '', default_bic: '', notes: '',
     }));
     try {
       await flushStream(stream);

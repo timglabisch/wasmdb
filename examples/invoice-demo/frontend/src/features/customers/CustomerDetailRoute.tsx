@@ -24,9 +24,7 @@ import {
   createStream, execute, executeOnStream, flushStream, useQuery, useRequirements, requirements,
 } from '@/wasm';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
-import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
-import { deleteContact } from '@/commands/contact/deleteContact';
-import { deleteSepaMandate } from '@/commands/sepaMandate/deleteSepaMandate';
+import { deleteCustomerCascade, deleteContact, deleteSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { formatDateISO, formatEuro } from '@/shared/lib/format';
 import { InvoiceStatusBadge } from '@/shared/lib/status';
 import { useInvoiceGrossCents } from '@/shared/lib/gross';

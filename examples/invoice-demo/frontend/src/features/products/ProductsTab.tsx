@@ -23,8 +23,7 @@ import { formatEuro } from '@/shared/lib/format';
 import { formatBp } from '@/shared/lib/calc';
 import { cn } from '@/lib/cn';
 import { NewProductDialog } from './components/NewProductDialog';
-import { setProductActive } from '@/commands/product/setProductActive';
-import { deleteProduct } from '@/commands/product/deleteProduct';
+import { setProductActive, deleteProduct } from '@/generated/InvoiceCommandFactories';
 
 /**
  * Products list page.

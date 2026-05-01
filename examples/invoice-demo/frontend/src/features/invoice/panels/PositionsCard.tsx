@@ -7,9 +7,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { BlurInput, BlurNumberInput } from '@/components/form';
 import { execute, useQuery, nextId } from '@/wasm';
-import { addPosition } from '@/commands/position/addPosition';
-import { updatePosition } from '@/commands/position/updatePosition';
-import { deletePosition } from '@/commands/position/deletePosition';
+import { addPosition, updatePosition, deletePosition } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';
 import {
   useInvoicePositions, computeGrossCents, computeNetCents,
@@ -56,6 +54,16 @@ export function PositionsCard({ invoiceId }: { invoiceId: string }) {
     const id = nextId();
     execute(addPosition({
       id, invoice_id: invoiceId, position_nr: nextNrRef.current,
+      description: '',
+      quantity: 1000,
+      unit_price: 0,
+      tax_rate: 1900,
+      product_id: null,
+      item_number: '',
+      unit: 'Stk',
+      discount_pct: 0,
+      cost_price: 0,
+      position_type: 'service',
     }));
     setAutoFocusId(id);
   }, [invoiceId]);

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { execute, useQuery, nextId } from '@/wasm';
-import { addPosition } from '@/commands/position/addPosition';
+import { addPosition } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';
 
 interface ProductRow {
@@ -43,6 +43,16 @@ export const AddPositionControls = memo(function AddPositionControls({
     const id = nextId();
     execute(addPosition({
       id, invoice_id: invoiceId, position_nr: nextPositionNr,
+      description: '',
+      quantity: 1000,
+      unit_price: 0,
+      tax_rate: 1900,
+      product_id: null,
+      item_number: '',
+      unit: 'Stk',
+      discount_pct: 0,
+      cost_price: 0,
+      position_type: 'service',
     }));
     onAdded(id);
   }, [invoiceId, nextPositionNr, onAdded]);
@@ -106,6 +116,7 @@ const ProductPicker = memo(function ProductPicker({
       product_id: p.id,
       item_number: p.sku,
       unit: p.unit,
+      discount_pct: 0,
       cost_price: p.cost_price,
       position_type: 'product',
     }));

@@ -1,6 +1,6 @@
 import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
 import { toast } from '@/components/ui/sonner';
-import { convertOfferToInvoice as convertCmd } from '../../../commands/invoice/convertOfferToInvoice.ts';
+import { convertOfferToInvoice as convertCmd } from '../../../generated/InvoiceCommandFactories.ts';
 
 /**
  * Convert an offer into a fresh draft invoice.
@@ -11,7 +11,7 @@ import { convertOfferToInvoice as convertCmd } from '../../../commands/invoice/c
  */
 export function convertOfferToInvoice(invoiceId: string): void {
   const stream = createStream(2);
-  executeOnStream(stream, convertCmd(invoiceId));
+  executeOnStream(stream, convertCmd({ id: invoiceId }));
   flushStream(stream).catch((err: unknown) => {
     toast.error(`Umwandlung fehlgeschlagen: ${(err as Error).message}`);
   });

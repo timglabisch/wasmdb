@@ -1,11 +1,9 @@
-use borsh::{BorshSerialize, BorshDeserialize};
-use serde::{Serialize, Deserialize};
 use sql_engine::storage::Uuid;
-use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
+use rpc_command::rpc_command;
 use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use crate::invoice::params::invoice_params;
 
@@ -16,7 +14,7 @@ fn activity_detail_for(template_name: &str, new_number: &str) -> String {
 /// Creates a new invoice with positions copied from the recurring template.
 /// `position_ids` must have as many entries as the template has positions.
 /// Updates last_run + next_run on the recurring row.
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct RunRecurringOnce {
     #[ts(type = "string")]
     pub recurring_id: Uuid,
@@ -30,7 +28,9 @@ pub struct RunRecurringOnce {
     pub new_next_run: String,
     /// Pre-computed id for the activity_log row.
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

@@ -8,7 +8,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
-import { createSepaMandate } from '@/commands/sepaMandate/createSepaMandate';
+import { createSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { todayISO } from '../lib/util';
 
 /** Inline dialog for adding a SEPA-Mandat to a customer. */

@@ -1,14 +1,12 @@
-use borsh::{BorshSerialize, BorshDeserialize};
-use serde::{Serialize, Deserialize};
 use sql_engine::storage::Uuid;
-use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
+use rpc_command::rpc_command;
 use crate::helpers::{execute_sql, p_uuid, DEMO_TENANT_ID};
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct DeleteSepaMandate {
     #[ts(type = "string")]
     pub id: Uuid,

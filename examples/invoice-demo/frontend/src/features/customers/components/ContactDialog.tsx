@@ -9,7 +9,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
-import { createContact } from '@/commands/contact/createContact';
+import { createContact } from '@/generated/InvoiceCommandFactories';
 
 /**
  * Inline dialog for adding an Ansprechpartner to a customer.

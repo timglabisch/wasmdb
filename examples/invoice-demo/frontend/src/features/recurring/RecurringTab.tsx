@@ -20,7 +20,7 @@ import {
 import { toast } from '@/components/ui/sonner';
 import { formatDateISO, relativeDaysFromToday } from '@/shared/lib/format';
 import { cn } from '@/lib/cn';
-import { deleteRecurring } from '@/commands/recurring/deleteRecurring';
+import { deleteRecurring } from '@/generated/InvoiceCommandFactories';
 import { NewRecurringDialog } from './components/NewRecurringDialog';
 import { runRecurringAction } from './actions/runRecurring';
 import { formatInterval, formatRelativeDays } from './lib/interval';

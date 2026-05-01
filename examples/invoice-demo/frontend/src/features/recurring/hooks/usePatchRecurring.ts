@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { execute } from '@/wasm';
-import { updateRecurring } from '@/commands/recurring/updateRecurring';
+import { updateRecurring } from '@/generated/InvoiceCommandFactories';
 import { peekRecurring } from '../reads/peekRecurring';
 import type { RecurringRow } from '../types';
 

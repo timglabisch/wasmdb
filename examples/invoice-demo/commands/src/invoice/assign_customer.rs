@@ -1,11 +1,9 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
-use serde::{Deserialize, Serialize};
+use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use ts_rs::TS;
 
 use crate::helpers::{execute_sql, p_str, p_uuid, p_uuid_opt, DEMO_TENANT_ID};
 
@@ -19,7 +17,7 @@ use crate::helpers::{execute_sql, p_str, p_uuid, p_uuid_opt, DEMO_TENANT_ID};
 ///
 /// `customer_name` is empty when the customer is being removed; the detail
 /// string switches from "Kunde \"…\" zugewiesen" to "Kunde entfernt".
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct AssignCustomer {
     #[ts(type = "string")]
     pub id: Uuid,
@@ -47,7 +45,9 @@ pub struct AssignCustomer {
 
     /// Activity log fields.
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

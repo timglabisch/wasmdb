@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { execute } from '@/wasm';
-import { updateContact } from '@/commands/contact/updateContact';
+import { updateContact } from '@/generated/InvoiceCommandFactories';
 import { peekContact } from '../reads/peekCustomer';
 import type { ContactRow } from '../types';
 

@@ -1,5 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
+use rpc_command::rpc_command;
 use serde::{Deserialize, Serialize};
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
@@ -44,7 +45,7 @@ pub struct StornoPosition {
 /// + N×`addPosition` + `logActivity`. The client wrapper pre-computes the credit
 /// note UUID and positions so both the optimistic client apply and the
 /// server-authoritative apply are deterministic and idempotent.
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct Storno {
     /// Original invoice to cancel.
     #[ts(type = "string")]
@@ -89,7 +90,9 @@ pub struct Storno {
 
     /// Activity log fields (shared PK keeps client + server inserts idempotent).
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

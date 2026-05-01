@@ -1,11 +1,9 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
-use serde::{Deserialize, Serialize};
+use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use ts_rs::TS;
 
 use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use super::params::invoice_params;
@@ -16,7 +14,7 @@ use super::params::invoice_params;
 /// row in the same atomic step.
 ///
 /// All UUIDs are pre-computed by the client wrapper for idempotent re-apply.
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct CreateCreditNote {
     /// The source invoice to create a credit note for.
     #[ts(type = "string")]
@@ -36,7 +34,9 @@ pub struct CreateCreditNote {
     pub date_due: String,
     /// Pre-computed id for the activity_log row.
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

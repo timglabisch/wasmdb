@@ -1,11 +1,9 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
-use serde::{Deserialize, Serialize};
+use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use ts_rs::TS;
 
 use crate::helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col, DEMO_TENANT_ID};
 use super::params::invoice_params;
@@ -16,7 +14,7 @@ use super::params::invoice_params;
 /// The client pre-computes all UUIDs (`new_invoice_id`, one `new_position_id`
 /// per source position, `activity_id`) so optimistic and server-confirmed
 /// inserts share the same primary keys (idempotent re-apply).
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct DuplicateInvoice {
     /// The source invoice to copy from.
     #[ts(type = "string")]
@@ -37,7 +35,9 @@ pub struct DuplicateInvoice {
     pub date_due: String,
     /// Pre-computed id for the activity_log row.
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

@@ -1,5 +1,5 @@
 import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
-import { deleteInvoice } from '../../../commands/invoice/deleteInvoice.ts';
+import { deleteInvoice } from '../../../generated/InvoiceCommandFactories.ts';
 
 /**
  * Delete the invoice (cascades through positions/payments on the Rust side)

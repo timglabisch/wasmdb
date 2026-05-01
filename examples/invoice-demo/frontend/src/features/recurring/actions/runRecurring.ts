@@ -1,7 +1,7 @@
 import {
   executeOnStream, createStream, flushStream, nextId, peekQuery,
 } from '@/wasm';
-import { runRecurringOnce } from '@/commands/recurring/runRecurringOnce';
+import { runRecurringOnce } from '@/generated/InvoiceCommandFactories';
 import { advanceDate } from '../lib/interval';
 
 const DOC_PREFIX = 'INV';
@@ -82,8 +82,6 @@ export async function runRecurringAction(recurringId: string): Promise<RunRecurr
     issue_date: issueDate,
     due_date: dueDate,
     new_next_run: newNextRun,
-    activity_id: nextId(),
-    timestamp: new Date().toISOString(),
   }));
   await flushStream(stream).catch(() => {});
   return { invoiceId: newInvoiceId, invoiceNumber: newNumber };

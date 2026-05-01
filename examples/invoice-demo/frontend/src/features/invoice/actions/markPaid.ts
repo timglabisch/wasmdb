@@ -1,6 +1,6 @@
 import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
 import { toast } from '@/components/ui/sonner';
-import { markPaid as markPaidCmd } from '../../../commands/invoice/markPaid.ts';
+import { markPaid as markPaidCmd } from '../../../generated/InvoiceCommandFactories.ts';
 
 /**
  * Set an invoice's status to `paid`.
@@ -14,7 +14,7 @@ import { markPaid as markPaidCmd } from '../../../commands/invoice/markPaid.ts';
  */
 export function markPaid(invoiceId: string): void {
   const stream = createStream(2);
-  executeOnStream(stream, markPaidCmd(invoiceId));
+  executeOnStream(stream, markPaidCmd({ id: invoiceId }));
   flushStream(stream).catch((err: unknown) => {
     toast.error(`Statuswechsel abgelehnt: ${(err as Error).message}`);
   });

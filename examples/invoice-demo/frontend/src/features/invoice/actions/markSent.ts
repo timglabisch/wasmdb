@@ -1,6 +1,6 @@
 import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
 import { toast } from '@/components/ui/sonner';
-import { markSent as markSentCmd } from '../../../commands/invoice/markSent.ts';
+import { markSent as markSentCmd } from '../../../generated/InvoiceCommandFactories.ts';
 
 /**
  * Set an invoice's status to `sent`.
@@ -14,7 +14,7 @@ import { markSent as markSentCmd } from '../../../commands/invoice/markSent.ts';
  */
 export function markSent(invoiceId: string): void {
   const stream = createStream(2);
-  executeOnStream(stream, markSentCmd(invoiceId));
+  executeOnStream(stream, markSentCmd({ id: invoiceId }));
   flushStream(stream).catch((err: unknown) => {
     toast.error(`Statuswechsel abgelehnt: ${(err as Error).message}`);
   });

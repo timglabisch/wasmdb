@@ -9,7 +9,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
 import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
-import { createProduct } from '@/commands/product/createProduct';
+import { createProduct } from '@/generated/InvoiceCommandFactories';
 
 /**
  * Modal for the `+ Neues Produkt` action. Creates a minimal product row, logs
@@ -52,6 +52,7 @@ export function NewProductDialog({
       id,
       sku: trimmedSku,
       name: trimmedName,
+      description: '',
       unit: trimmedUnit,
       unit_price: unitPrice,
       tax_rate: taxRate,

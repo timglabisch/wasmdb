@@ -1,21 +1,21 @@
-use borsh::{BorshSerialize, BorshDeserialize};
-use serde::{Serialize, Deserialize};
 use sql_engine::storage::Uuid;
-use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
+use rpc_command::rpc_command;
 use crate::helpers::{execute_sql, p_str, p_uuid, DEMO_TENANT_ID};
 
 /// Cascades recurring_positions + recurring_invoice atomically.
 /// Also writes an activity_log row (action='delete', entity_type='recurring').
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct DeleteRecurring {
     #[ts(type = "string")]
     pub id: Uuid,
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
     pub label_for_detail: String,
 }

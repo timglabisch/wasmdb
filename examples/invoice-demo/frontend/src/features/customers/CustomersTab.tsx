@@ -20,7 +20,7 @@ import {
 import { PageBody, PageHeader } from '@/shared/layout/AppShell';
 import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
-import { deleteCustomerCascade } from '@/commands/customer/deleteCustomerCascade';
+import { deleteCustomerCascade } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';
 import { useCreateDraftInvoice } from '@/features/invoice/actions/createDraftInvoice';
 import { NewCustomerDialog } from './components/NewCustomerDialog';

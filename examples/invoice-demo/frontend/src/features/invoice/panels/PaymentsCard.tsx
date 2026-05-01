@@ -14,8 +14,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/sonner';
 import { execute, useQuery, nextId } from '@/wasm';
-import { createPayment } from '@/commands/payment/createPayment';
-import { deletePayment } from '@/commands/payment/deletePayment';
+import { createPayment, deletePayment } from '@/generated/InvoiceCommandFactories';
 import { formatEuro, formatDateISO } from '@/shared/lib/format';
 import { useInvoiceGrossCents } from '@/shared/lib/gross';
 import { isoDate } from '@/features/invoice/actions/isoDate';

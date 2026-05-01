@@ -1,11 +1,9 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
-use serde::{Deserialize, Serialize};
+use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use ts_rs::TS;
 
 use crate::helpers::{execute_sql, p_str, p_uuid, read_str_col, DEMO_TENANT_ID};
 
@@ -17,12 +15,14 @@ use crate::helpers::{execute_sql, p_str, p_uuid, read_str_col, DEMO_TENANT_ID};
 /// the audit-log entry themselves. `activity_id` + `timestamp` are passed
 /// in by the client wrapper so client-optimistic and server-authoritative
 /// inserts share the same primary key (idempotent re-apply).
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct MarkSent {
     #[ts(type = "string")]
     pub id: Uuid,
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

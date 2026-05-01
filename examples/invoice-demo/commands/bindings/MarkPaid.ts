@@ -6,8 +6,8 @@
  * Replaces the old `updateInvoiceHeader({...,status:'paid'}) + logActivity(...)`
  * pair. The activity row is produced inside `execute_optimistic` /
  * `execute_server` from the invoice number — callers no longer compose
- * the audit-log entry themselves. `activity_id` + `timestamp` are passed
- * in by the client wrapper so client-optimistic and server-authoritative
- * inserts share the same primary key (idempotent re-apply).
+ * the audit-log entry themselves. `activity_id` + `timestamp` are auto-filled
+ * client-side via `#[client_default]` so client-optimistic and server-
+ * authoritative inserts share the same primary key (idempotent re-apply).
  */
 export type MarkPaid = { id: string, activity_id: string, timestamp: string, };

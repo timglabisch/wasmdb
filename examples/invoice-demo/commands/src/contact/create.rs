@@ -1,14 +1,12 @@
-use borsh::{BorshSerialize, BorshDeserialize};
-use serde::{Serialize, Deserialize};
 use sql_engine::storage::Uuid;
-use ts_rs::TS;
 use database::Database;
 use sql_engine::execute::Params;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
+use rpc_command::rpc_command;
 use crate::helpers::{execute_sql, p_int, p_str, p_uuid, DEMO_TENANT_ID};
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+#[rpc_command]
 pub struct CreateContact {
     #[ts(type = "string")]
     pub id: Uuid,
@@ -21,7 +19,9 @@ pub struct CreateContact {
     #[ts(type = "number")]
     pub is_primary: i64,
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

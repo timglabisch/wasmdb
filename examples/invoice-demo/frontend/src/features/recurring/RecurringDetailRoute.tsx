@@ -25,10 +25,12 @@ import {
 } from '@/components/form';
 import { formatEuro, formatDateISO, relativeDaysFromToday } from '@/shared/lib/format';
 import { cn } from '@/lib/cn';
-import { addRecurringPosition } from '@/commands/recurringPosition/addRecurringPosition';
-import { updateRecurringPosition } from '@/commands/recurringPosition/updateRecurringPosition';
-import { deleteRecurringPosition } from '@/commands/recurringPosition/deleteRecurringPosition';
-import { deleteRecurring } from '@/commands/recurring/deleteRecurring';
+import {
+  addRecurringPosition,
+  updateRecurringPosition,
+  deleteRecurringPosition,
+  deleteRecurring,
+} from '@/generated/InvoiceCommandFactories';
 import { usePatchRecurring } from './hooks/usePatchRecurring';
 import { runRecurringAction } from './actions/runRecurring';
 import {
@@ -687,6 +689,8 @@ function AddPositionForm({
       unit_price: price,
       tax_rate: 1900,
       unit: 'Stk',
+      item_number: '',
+      discount_pct: 0,
     }));
     reset();
   };
