@@ -9,7 +9,7 @@ use crate::shared::DEMO_TENANT_ID;
 use crate::AppCtx;
 use super::product_client::Product;
 
-mod entity {
+pub mod entity {
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]

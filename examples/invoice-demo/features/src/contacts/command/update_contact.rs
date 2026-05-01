@@ -5,7 +5,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
 use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct UpdateContact {
@@ -42,33 +41,32 @@ impl Command for UpdateContact {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::contacts::contact_server::entity as contact_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for UpdateContact {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE contacts SET name = ?, email = ?, phone = ?, role = ?, is_primary = ? \
-                 WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(&self.name)
-            .bind(&self.email)
-            .bind(&self.phone)
-            .bind(&self.role)
-            .bind(self.is_primary)
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE contact {}: {e}",
-                self.id,
-            )))?;
+            contact_entity::Entity::update_many()
+                .col_expr(contact_entity::Column::Name, self.name.clone().into())
+                .col_expr(contact_entity::Column::Email, self.email.clone().into())
+                .col_expr(contact_entity::Column::Phone, self.phone.clone().into())
+                .col_expr(contact_entity::Column::Role, self.role.clone().into())
+                .col_expr(contact_entity::Column::IsPrimary, self.is_primary.into())
+                .filter(contact_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(contact_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE contact {}: {e}", self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

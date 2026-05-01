@@ -212,14 +212,14 @@ impl Command for InvoiceCommand {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::DatabaseTransaction;
     use sync_server_mysql::ServerCommand;
 
     #[async_trait]
     impl ServerCommand for InvoiceCommand {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             use InvoiceCommand::*;

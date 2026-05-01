@@ -28,24 +28,25 @@ impl Command for DeleteCustomer {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::customers::customer_server::entity as customer_entity;
 
     #[async_trait]
     impl ServerCommand for DeleteCustomer {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM customers WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            customer_entity::Entity::delete_many()
+                .filter(customer_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(customer_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE customer {}: {e}",
-                    self.id,
+                    "DELETE customer {}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

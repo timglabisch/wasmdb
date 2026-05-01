@@ -64,36 +64,37 @@ impl Command for AddPosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::positions::position_server::entity as position_entity;
 
     #[async_trait]
     impl ServerCommand for AddPosition {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id"
-            )
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .bind(&self.invoice_id.0[..])
-                .bind(self.position_nr)
-                .bind(&self.description)
-                .bind(self.quantity)
-                .bind(self.unit_price)
-                .bind(self.tax_rate)
-                .bind(self.product_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.item_number)
-                .bind(&self.unit)
-                .bind(self.discount_pct)
-                .bind(self.cost_price)
-                .bind(&self.position_type)
-                .execute(&mut **tx)
+            let am = position_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                invoice_id: Set(self.invoice_id.0.to_vec()),
+                position_nr: Set(self.position_nr),
+                description: Set(self.description.clone()),
+                quantity: Set(self.quantity),
+                unit_price: Set(self.unit_price),
+                tax_rate: Set(self.tax_rate),
+                product_id: Set(self.product_id.as_ref().map(|u| u.0.to_vec())),
+                item_number: Set(self.item_number.clone()),
+                unit: Set(self.unit.clone()),
+                discount_pct: Set(self.discount_pct),
+                cost_price: Set(self.cost_price),
+                position_type: Set(self.position_type.clone()),
+            };
+            position_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "INSERT position id={} position_nr={}: {e}",

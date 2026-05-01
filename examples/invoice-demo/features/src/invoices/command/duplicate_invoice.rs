@@ -185,131 +185,87 @@ impl Command for DuplicateInvoice {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
+    use crate::positions::position_server::entity as position_entity;
 
     #[async_trait]
     impl ServerCommand for DuplicateInvoice {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             let src = self.source_invoice_id;
             let new_id = self.new_invoice_id;
 
             // --- read source invoice header ---
-            #[derive(sqlx::FromRow)]
-            struct SrcHeader {
-                number: String,
-                customer_id: Option<Vec<u8>>,
-                notes: String,
-                doc_type: String,
-                service_date: String,
-                cash_allowance_pct: i64,
-                cash_allowance_days: i64,
-                discount_pct: i64,
-                payment_method: String,
-                sepa_mandate_id: Option<Vec<u8>>,
-                currency: String,
-                language: String,
-                project_ref: String,
-                external_id: String,
-                billing_street: String,
-                billing_zip: String,
-                billing_city: String,
-                billing_country: String,
-                shipping_street: String,
-                shipping_zip: String,
-                shipping_city: String,
-                shipping_country: String,
-            }
-
-            let hdr: SrcHeader = sqlx::query_as(
-                "SELECT number, customer_id, notes, doc_type, service_date, \
-                 cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, \
-                 sepa_mandate_id, currency, language, project_ref, external_id, \
-                 billing_street, billing_zip, billing_city, billing_country, \
-                 shipping_street, shipping_zip, shipping_city, shipping_country \
-                 FROM invoices WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&src.0[..])
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup source invoice {src}: {e}",
-            )))?;
+            let hdr = invoice_entity::Entity::find()
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(src.0.to_vec()))
+                .one(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup source invoice {src}: {e}",
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "source invoice {src} not found",
+                )))?;
 
             let detail = detail_for(&hdr.number, &self.new_number);
 
             // --- insert new invoice ---
-            sqlx::query(
-                "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&new_id.0[..])
-            .bind(hdr.customer_id.as_deref())
-            .bind(&self.new_number)
-            .bind("draft")
-            .bind(&self.date_issued)
-            .bind(&self.date_due)
-            .bind(&hdr.notes)
-            .bind(&hdr.doc_type)
-            .bind(Option::<Vec<u8>>::None)
-            .bind(&hdr.service_date)
-            .bind(hdr.cash_allowance_pct)
-            .bind(hdr.cash_allowance_days)
-            .bind(hdr.discount_pct)
-            .bind(&hdr.payment_method)
-            .bind(hdr.sepa_mandate_id.as_deref())
-            .bind(&hdr.currency)
-            .bind(&hdr.language)
-            .bind(&hdr.project_ref)
-            .bind(&hdr.external_id)
-            .bind(&hdr.billing_street)
-            .bind(&hdr.billing_zip)
-            .bind(&hdr.billing_city)
-            .bind(&hdr.billing_country)
-            .bind(&hdr.shipping_street)
-            .bind(&hdr.shipping_zip)
-            .bind(&hdr.shipping_city)
-            .bind(&hdr.shipping_country)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT duplicate invoice {new_id}: {e}",
-            )))?;
+            let am = invoice_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(new_id.0.to_vec()),
+                customer_id: Set(hdr.customer_id.clone()),
+                number: Set(self.new_number.clone()),
+                status: Set("draft".to_string()),
+                date_issued: Set(self.date_issued.clone()),
+                date_due: Set(self.date_due.clone()),
+                notes: Set(hdr.notes.clone()),
+                doc_type: Set(hdr.doc_type.clone()),
+                parent_id: Set(None),
+                service_date: Set(hdr.service_date.clone()),
+                cash_allowance_pct: Set(hdr.cash_allowance_pct),
+                cash_allowance_days: Set(hdr.cash_allowance_days),
+                discount_pct: Set(hdr.discount_pct),
+                payment_method: Set(hdr.payment_method.clone()),
+                sepa_mandate_id: Set(hdr.sepa_mandate_id.clone()),
+                currency: Set(hdr.currency.clone()),
+                language: Set(hdr.language.clone()),
+                project_ref: Set(hdr.project_ref.clone()),
+                external_id: Set(hdr.external_id.clone()),
+                billing_street: Set(hdr.billing_street.clone()),
+                billing_zip: Set(hdr.billing_zip.clone()),
+                billing_city: Set(hdr.billing_city.clone()),
+                billing_country: Set(hdr.billing_country.clone()),
+                shipping_street: Set(hdr.shipping_street.clone()),
+                shipping_zip: Set(hdr.shipping_zip.clone()),
+                shipping_city: Set(hdr.shipping_city.clone()),
+                shipping_country: Set(hdr.shipping_country.clone()),
+            };
+            invoice_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT duplicate invoice {new_id}: {e}",
+                )))?;
 
             // --- read source positions ---
-            #[derive(sqlx::FromRow)]
-            struct PosRow {
-                position_nr: i64,
-                description: String,
-                quantity: i64,
-                unit_price: i64,
-                tax_rate: i64,
-                item_number: String,
-                unit: String,
-                discount_pct: i64,
-                cost_price: i64,
-                position_type: String,
-            }
-
-            let positions: Vec<PosRow> = sqlx::query_as(
-                "SELECT position_nr, description, quantity, unit_price, tax_rate, \
-                 item_number, unit, discount_pct, cost_price, position_type \
-                 FROM positions WHERE tenant_id = ? AND invoice_id = ? ORDER BY position_nr",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&src.0[..])
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup positions for source invoice {src}: {e}",
-            )))?;
+            let positions = position_entity::Entity::find()
+                .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(position_entity::Column::InvoiceId.eq(src.0.to_vec()))
+                .order_by_asc(position_entity::Column::PositionNr)
+                .all(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup positions for source invoice {src}: {e}",
+                )))?;
 
             if positions.len() != self.new_position_ids.len() {
                 return Err(CommandError::ExecutionFailed(format!(
@@ -320,48 +276,42 @@ mod server_impl {
 
             for (i, pid) in self.new_position_ids.iter().enumerate() {
                 let pos = &positions[i];
-                sqlx::query(
-                    "INSERT INTO positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON DUPLICATE KEY UPDATE id = id",
-                )
-                .bind(DEMO_TENANT_ID)
-                .bind(&pid.0[..])
-                .bind(&new_id.0[..])
-                .bind(pos.position_nr)
-                .bind(&pos.description)
-                .bind(pos.quantity)
-                .bind(pos.unit_price)
-                .bind(pos.tax_rate)
-                .bind(Option::<Vec<u8>>::None)
-                .bind(&pos.item_number)
-                .bind(&pos.unit)
-                .bind(pos.discount_pct)
-                .bind(pos.cost_price)
-                .bind(&pos.position_type)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT position {pid} for duplicate invoice {new_id}: {e}",
-                )))?;
+                let pam = position_entity::ActiveModel {
+                    tenant_id: Set(DEMO_TENANT_ID),
+                    id: Set(pid.0.to_vec()),
+                    invoice_id: Set(new_id.0.to_vec()),
+                    position_nr: Set(pos.position_nr),
+                    description: Set(pos.description.clone()),
+                    quantity: Set(pos.quantity),
+                    unit_price: Set(pos.unit_price),
+                    tax_rate: Set(pos.tax_rate),
+                    product_id: Set(None),
+                    item_number: Set(pos.item_number.clone()),
+                    unit: Set(pos.unit.clone()),
+                    discount_pct: Set(pos.discount_pct),
+                    cost_price: Set(pos.cost_price),
+                    position_type: Set(pos.position_type.clone()),
+                };
+                position_entity::Entity::insert(pam)
+                    .on_conflict_do_nothing()
+                    .exec_without_returning(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "INSERT position {pid} for duplicate invoice {new_id}: {e}",
+                    )))?;
             }
 
             // --- activity row ---
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'invoice', ?, 'duplicate_from', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "invoice",
+                &new_id,
+                "duplicate_from",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&new_id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {} for duplicate invoice {new_id}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

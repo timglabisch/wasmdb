@@ -77,60 +77,50 @@ impl Command for UpdateInvoiceHeader {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::invoices::invoice_server::entity as invoice_entity;
 
     #[async_trait]
     impl ServerCommand for UpdateInvoiceHeader {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE invoices SET number = ?, status = ?, \
-                 date_issued = ?, date_due = ?, notes = ?, \
-                 doc_type = ?, parent_id = ?, service_date = ?, \
-                 cash_allowance_pct = ?, cash_allowance_days = ?, discount_pct = ?, \
-                 payment_method = ?, sepa_mandate_id = ?, \
-                 currency = ?, language = ?, \
-                 project_ref = ?, external_id = ?, \
-                 billing_street = ?, billing_zip = ?, billing_city = ?, billing_country = ?, \
-                 shipping_street = ?, shipping_zip = ?, shipping_city = ?, shipping_country = ? \
-                 WHERE invoices.tenant_id = ? AND invoices.id = ?",
-            )
-                .bind(&self.number)
-                .bind(&self.status)
-                .bind(&self.date_issued)
-                .bind(&self.date_due)
-                .bind(&self.notes)
-                .bind(&self.doc_type)
-                .bind(self.parent_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.service_date)
-                .bind(self.cash_allowance_pct)
-                .bind(self.cash_allowance_days)
-                .bind(self.discount_pct)
-                .bind(&self.payment_method)
-                .bind(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.currency)
-                .bind(&self.language)
-                .bind(&self.project_ref)
-                .bind(&self.external_id)
-                .bind(&self.billing_street)
-                .bind(&self.billing_zip)
-                .bind(&self.billing_city)
-                .bind(&self.billing_country)
-                .bind(&self.shipping_street)
-                .bind(&self.shipping_zip)
-                .bind(&self.shipping_city)
-                .bind(&self.shipping_country)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            invoice_entity::Entity::update_many()
+                .col_expr(invoice_entity::Column::Number, self.number.clone().into())
+                .col_expr(invoice_entity::Column::Status, self.status.clone().into())
+                .col_expr(invoice_entity::Column::DateIssued, self.date_issued.clone().into())
+                .col_expr(invoice_entity::Column::DateDue, self.date_due.clone().into())
+                .col_expr(invoice_entity::Column::Notes, self.notes.clone().into())
+                .col_expr(invoice_entity::Column::DocType, self.doc_type.clone().into())
+                .col_expr(invoice_entity::Column::ParentId, self.parent_id.as_ref().map(|u| u.0.to_vec()).into())
+                .col_expr(invoice_entity::Column::ServiceDate, self.service_date.clone().into())
+                .col_expr(invoice_entity::Column::CashAllowancePct, self.cash_allowance_pct.into())
+                .col_expr(invoice_entity::Column::CashAllowanceDays, self.cash_allowance_days.into())
+                .col_expr(invoice_entity::Column::DiscountPct, self.discount_pct.into())
+                .col_expr(invoice_entity::Column::PaymentMethod, self.payment_method.clone().into())
+                .col_expr(invoice_entity::Column::SepaMandateId, self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()).into())
+                .col_expr(invoice_entity::Column::Currency, self.currency.clone().into())
+                .col_expr(invoice_entity::Column::Language, self.language.clone().into())
+                .col_expr(invoice_entity::Column::ProjectRef, self.project_ref.clone().into())
+                .col_expr(invoice_entity::Column::ExternalId, self.external_id.clone().into())
+                .col_expr(invoice_entity::Column::BillingStreet, self.billing_street.clone().into())
+                .col_expr(invoice_entity::Column::BillingZip, self.billing_zip.clone().into())
+                .col_expr(invoice_entity::Column::BillingCity, self.billing_city.clone().into())
+                .col_expr(invoice_entity::Column::BillingCountry, self.billing_country.clone().into())
+                .col_expr(invoice_entity::Column::ShippingStreet, self.shipping_street.clone().into())
+                .col_expr(invoice_entity::Column::ShippingZip, self.shipping_zip.clone().into())
+                .col_expr(invoice_entity::Column::ShippingCity, self.shipping_city.clone().into())
+                .col_expr(invoice_entity::Column::ShippingCountry, self.shipping_country.clone().into())
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE invoice {}: {e}",
-                    self.id,
+                    "UPDATE invoice {}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

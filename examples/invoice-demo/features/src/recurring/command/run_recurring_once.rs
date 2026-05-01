@@ -163,59 +163,58 @@ impl Command for RunRecurringOnce {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{
+        ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseTransaction, EntityTrait,
+        QueryFilter, QueryOrder, QuerySelect, Statement, Value,
+    };
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
+    use crate::recurring::recurring_position_server::entity as recurring_position_entity;
 
     #[async_trait]
     impl ServerCommand for RunRecurringOnce {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             let recurring_id = self.recurring_id;
             let new_invoice_id = self.new_invoice_id;
 
             let (customer_id_bytes, status_template, notes_template, template_name): (Vec<u8>, String, String, String) =
-                sqlx::query_as(
-                    "SELECT customer_id, status_template, notes_template, template_name \
-                     FROM recurring_invoices WHERE tenant_id = ? AND id = ?",
-                )
-                .bind(DEMO_TENANT_ID)
-                .bind(&recurring_id.0[..])
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "lookup recurring_invoice {recurring_id}: {e}",
-                )))?
-                .ok_or_else(|| CommandError::ExecutionFailed(format!(
-                    "recurring #{recurring_id} not found",
-                )))?;
+                recurring_invoice_entity::Entity::find()
+                    .select_only()
+                    .column(recurring_invoice_entity::Column::CustomerId)
+                    .column(recurring_invoice_entity::Column::StatusTemplate)
+                    .column(recurring_invoice_entity::Column::NotesTemplate)
+                    .column(recurring_invoice_entity::Column::TemplateName)
+                    .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(recurring_invoice_entity::Column::Id.eq(recurring_id.0.to_vec()))
+                    .into_tuple()
+                    .one(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "lookup recurring_invoice {recurring_id}: {e}",
+                    )))?
+                    .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                        "recurring #{recurring_id} not found",
+                    )))?;
 
             let status = if status_template.is_empty() { "draft".to_string() } else { status_template };
             let notes = notes_template;
 
-            #[derive(sqlx::FromRow)]
-            struct PosRow {
-                description: String,
-                quantity: i64,
-                unit_price: i64,
-                tax_rate: i64,
-                unit: String,
-                item_number: String,
-                discount_pct: i64,
-            }
-            let positions: Vec<PosRow> = sqlx::query_as(
-                "SELECT description, quantity, unit_price, tax_rate, unit, item_number, discount_pct \
-                 FROM recurring_positions WHERE tenant_id = ? AND recurring_id = ? ORDER BY position_nr",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&recurring_id.0[..])
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup recurring_positions for {recurring_id}: {e}",
-            )))?;
+            let positions: Vec<recurring_position_entity::Model> =
+                recurring_position_entity::Entity::find()
+                    .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(recurring_position_entity::Column::RecurringId.eq(recurring_id.0.to_vec()))
+                    .order_by_asc(recurring_position_entity::Column::PositionNr)
+                    .all(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "lookup recurring_positions for {recurring_id}: {e}",
+                    )))?;
 
             if positions.len() != self.position_ids.len() {
                 return Err(CommandError::ExecutionFailed(format!(
@@ -224,102 +223,104 @@ mod server_impl {
                 )));
             }
 
-            sqlx::query(
-                "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+            // Invoice + position inserts use raw SQL while invoices/positions
+            // are still on sqlx-only schemas. Switch to ActiveModel-based
+            // inserts once those features are migrated.
+            let invoice_stmt = Statement::from_sql_and_values(
+                DatabaseBackend::MySql,
+                "INSERT INTO invoice_demo.invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                  ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&new_invoice_id.0[..])
-            .bind(customer_id_bytes.as_slice())
-            .bind(&self.new_number)
-            .bind(&status)
-            .bind(&self.issue_date)
-            .bind(&self.due_date)
-            .bind(&notes)
-            .bind("invoice")
-            .bind(Option::<Vec<u8>>::None)
-            .bind("")
-            .bind(0_i64)
-            .bind(0_i64)
-            .bind(0_i64)
-            .bind("transfer")
-            .bind(Option::<Vec<u8>>::None)
-            .bind("EUR")
-            .bind("de")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .bind("")
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT invoice {new_invoice_id}: {e}",
-            )))?;
+                [
+                    Value::from(DEMO_TENANT_ID),
+                    Value::from(new_invoice_id.0.to_vec()),
+                    Value::from(customer_id_bytes),
+                    Value::from(self.new_number.clone()),
+                    Value::from(status),
+                    Value::from(self.issue_date.clone()),
+                    Value::from(self.due_date.clone()),
+                    Value::from(notes),
+                    Value::from("invoice".to_string()),
+                    Value::Bytes(None),
+                    Value::from("".to_string()),
+                    Value::from(0_i64),
+                    Value::from(0_i64),
+                    Value::from(0_i64),
+                    Value::from("transfer".to_string()),
+                    Value::Bytes(None),
+                    Value::from("EUR".to_string()),
+                    Value::from("de".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                    Value::from("".to_string()),
+                ],
+            );
+            tx.execute_raw(invoice_stmt).await.map_err(|e| {
+                CommandError::ExecutionFailed(format!(
+                    "INSERT invoice {new_invoice_id}: {e}",
+                ))
+            })?;
 
             for (i, pid) in self.position_ids.iter().enumerate() {
                 let pos = &positions[i];
-                sqlx::query(
-                    "INSERT INTO positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                let pos_stmt = Statement::from_sql_and_values(
+                    DatabaseBackend::MySql,
+                    "INSERT INTO invoice_demo.positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                      ON DUPLICATE KEY UPDATE id = id",
-                )
-                .bind(DEMO_TENANT_ID)
-                .bind(&pid.0[..])
-                .bind(&new_invoice_id.0[..])
-                .bind((i as i64 + 1) * 1000)
-                .bind(&pos.description)
-                .bind(pos.quantity)
-                .bind(pos.unit_price)
-                .bind(pos.tax_rate)
-                .bind(Option::<Vec<u8>>::None)
-                .bind(&pos.item_number)
-                .bind(&pos.unit)
-                .bind(pos.discount_pct)
-                .bind(0_i64)
-                .bind("service")
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT position {pid} for invoice {new_invoice_id}: {e}",
-                )))?;
+                    [
+                        Value::from(DEMO_TENANT_ID),
+                        Value::from(pid.0.to_vec()),
+                        Value::from(new_invoice_id.0.to_vec()),
+                        Value::from((i as i64 + 1) * 1000),
+                        Value::from(pos.description.clone()),
+                        Value::from(pos.quantity),
+                        Value::from(pos.unit_price),
+                        Value::from(pos.tax_rate),
+                        Value::Bytes(None),
+                        Value::from(pos.item_number.clone()),
+                        Value::from(pos.unit.clone()),
+                        Value::from(pos.discount_pct),
+                        Value::from(0_i64),
+                        Value::from("service".to_string()),
+                    ],
+                );
+                tx.execute_raw(pos_stmt).await.map_err(|e| {
+                    CommandError::ExecutionFailed(format!(
+                        "INSERT position {pid} for invoice {new_invoice_id}: {e}",
+                    ))
+                })?;
             }
 
-            sqlx::query(
-                "UPDATE recurring_invoices SET last_run = ?, next_run = ? WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(&self.issue_date)
-            .bind(&self.new_next_run)
-            .bind(DEMO_TENANT_ID)
-            .bind(&recurring_id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE recurring {recurring_id} last_run/next_run: {e}",
-            )))?;
+            recurring_invoice_entity::Entity::update_many()
+                .col_expr(recurring_invoice_entity::Column::LastRun, self.issue_date.clone().into())
+                .col_expr(recurring_invoice_entity::Column::NextRun, self.new_next_run.clone().into())
+                .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_invoice_entity::Column::Id.eq(recurring_id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE recurring {recurring_id} last_run/next_run: {e}",
+                )))?;
 
             let detail = activity_detail_for(&template_name, &self.new_number);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'recurring', ?, 'run', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "recurring",
+                &recurring_id,
+                "run",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&recurring_id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {} for recurring {recurring_id}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

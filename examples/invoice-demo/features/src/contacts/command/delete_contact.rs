@@ -5,7 +5,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
 use crate::command_helpers::{execute_sql, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct DeleteContact {
@@ -27,24 +26,26 @@ impl Command for DeleteContact {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::contacts::contact_server::entity as contact_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for DeleteContact {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM contacts WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            contact_entity::Entity::delete_many()
+                .filter(contact_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(contact_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE contact {}: {e}",
-                    self.id,
+                    "DELETE contact {}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

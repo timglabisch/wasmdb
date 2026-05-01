@@ -5,7 +5,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
 use crate::command_helpers::{execute_sql, p_str, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct UpdateSepaMandate {
@@ -43,31 +42,32 @@ impl Command for UpdateSepaMandate {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::sepa_mandates::sepa_mandate_server::entity as sepa_mandate_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for UpdateSepaMandate {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE sepa_mandates SET mandate_ref = ?, iban = ?, bic = ?, holder_name = ?, signed_at = ?, status = ? WHERE tenant_id = ? AND id = ?")
-                .bind(&self.mandate_ref)
-                .bind(&self.iban)
-                .bind(&self.bic)
-                .bind(&self.holder_name)
-                .bind(&self.signed_at)
-                .bind(&self.status)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            sepa_mandate_entity::Entity::update_many()
+                .col_expr(sepa_mandate_entity::Column::MandateRef, self.mandate_ref.clone().into())
+                .col_expr(sepa_mandate_entity::Column::Iban, self.iban.clone().into())
+                .col_expr(sepa_mandate_entity::Column::Bic, self.bic.clone().into())
+                .col_expr(sepa_mandate_entity::Column::HolderName, self.holder_name.clone().into())
+                .col_expr(sepa_mandate_entity::Column::SignedAt, self.signed_at.clone().into())
+                .col_expr(sepa_mandate_entity::Column::Status, self.status.clone().into())
+                .filter(sepa_mandate_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(sepa_mandate_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE sepa_mandate id={}: {e}",
-                    self.id,
+                    "UPDATE sepa_mandate id={}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

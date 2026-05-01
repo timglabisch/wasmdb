@@ -67,55 +67,55 @@ impl Command for MarkSent {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
 
     #[async_trait]
     impl ServerCommand for MarkSent {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE invoices SET status = 'sent' \
-                 WHERE invoices.tenant_id = ? AND invoices.id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE invoice {} -> sent: {e}", self.id,
-            )))?;
+            invoice_entity::Entity::update_many()
+                .col_expr(invoice_entity::Column::Status, "sent".to_string().into())
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE invoice {} -> sent: {e}", self.id,
+                )))?;
 
-            let number: String = sqlx::query_scalar(
-                "SELECT number FROM invoices WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup number for invoice {}: {e}", self.id,
-            )))?;
+            let number: String = invoice_entity::Entity::find()
+                .select_only()
+                .column(invoice_entity::Column::Number)
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .into_tuple()
+                .one(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup number for invoice {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "invoice {} not found", self.id,
+                )))?;
             let detail = detail_for(&number);
 
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'invoice', ?, 'status_sent', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "invoice",
+                &self.id,
+                "status_sent",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

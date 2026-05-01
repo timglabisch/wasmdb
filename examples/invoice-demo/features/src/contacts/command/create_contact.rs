@@ -71,53 +71,49 @@ impl Command for CreateContact {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::contacts::contact_server::entity as contact_entity;
 
     #[async_trait]
     impl ServerCommand for CreateContact {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO contacts (tenant_id, id, customer_id, name, email, phone, role, is_primary) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .bind(&self.customer_id.0[..])
-            .bind(&self.name)
-            .bind(&self.email)
-            .bind(&self.phone)
-            .bind(&self.role)
-            .bind(self.is_primary)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT contact {}: {e}",
-                self.id,
-            )))?;
+            let am = contact_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                customer_id: Set(self.customer_id.0.to_vec()),
+                name: Set(self.name.clone()),
+                email: Set(self.email.clone()),
+                phone: Set(self.phone.clone()),
+                role: Set(self.role.clone()),
+                is_primary: Set(self.is_primary),
+            };
+            contact_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT contact {}: {e}", self.id,
+                )))?;
 
             let detail = detail_for(&self.name);
             // entity_type='customer', entity_id=customer_id — preserves original semantics
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'customer', ?, 'contact_create', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "customer",
+                &self.customer_id,
+                "contact_create",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.customer_id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

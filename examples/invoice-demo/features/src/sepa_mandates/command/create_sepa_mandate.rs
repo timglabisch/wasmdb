@@ -70,52 +70,49 @@ impl Command for CreateSepaMandate {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::sepa_mandates::sepa_mandate_server::entity as sepa_mandate_entity;
 
     #[async_trait]
     impl ServerCommand for CreateSepaMandate {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO sepa_mandates (tenant_id, id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .bind(&self.customer_id.0[..])
-                .bind(&self.mandate_ref)
-                .bind(&self.iban)
-                .bind(&self.bic)
-                .bind(&self.holder_name)
-                .bind(&self.signed_at)
-                .bind("active")
-                .execute(&mut **tx)
+            let am = sepa_mandate_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                customer_id: Set(self.customer_id.0.to_vec()),
+                mandate_ref: Set(self.mandate_ref.clone()),
+                iban: Set(self.iban.clone()),
+                bic: Set(self.bic.clone()),
+                holder_name: Set(self.holder_name.clone()),
+                signed_at: Set(self.signed_at.clone()),
+                status: Set("active".to_string()),
+            };
+            sepa_mandate_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT sepa_mandate id={}: {e}",
-                    self.id,
+                    "INSERT sepa_mandate id={}: {e}", self.id,
                 )))?;
 
             let detail = detail_for(&self.mandate_ref);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'sepa', ?, 'create', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "sepa",
+                &self.id,
+                "create",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

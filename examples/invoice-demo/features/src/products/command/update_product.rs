@@ -6,7 +6,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
 use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct UpdateProduct {
@@ -52,33 +51,34 @@ impl Command for UpdateProduct {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::products::product_server::entity as product_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for UpdateProduct {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE products SET sku = ?, name = ?, description = ?, unit = ?, unit_price = ?, tax_rate = ?, cost_price = ?, active = ? WHERE tenant_id = ? AND id = ?")
-                .bind(&self.sku)
-                .bind(&self.name)
-                .bind(&self.description)
-                .bind(&self.unit)
-                .bind(self.unit_price)
-                .bind(self.tax_rate)
-                .bind(self.cost_price)
-                .bind(self.active)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            product_entity::Entity::update_many()
+                .col_expr(product_entity::Column::Sku, self.sku.clone().into())
+                .col_expr(product_entity::Column::Name, self.name.clone().into())
+                .col_expr(product_entity::Column::Description, self.description.clone().into())
+                .col_expr(product_entity::Column::Unit, self.unit.clone().into())
+                .col_expr(product_entity::Column::UnitPrice, self.unit_price.into())
+                .col_expr(product_entity::Column::TaxRate, self.tax_rate.into())
+                .col_expr(product_entity::Column::CostPrice, self.cost_price.into())
+                .col_expr(product_entity::Column::Active, self.active.into())
+                .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE product id={}: {e}",
-                    self.id,
+                    "UPDATE product id={}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

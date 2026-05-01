@@ -58,29 +58,33 @@ impl Command for DeleteRecurring {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
+    use crate::recurring::recurring_position_server::entity as recurring_position_entity;
 
     #[async_trait]
     impl ServerCommand for DeleteRecurring {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM recurring_positions WHERE tenant_id = ? AND recurring_id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            recurring_position_entity::Entity::delete_many()
+                .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_position_entity::Column::RecurringId.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE recurring_positions for recurring_id {}: {e}",
                     self.id,
                 )))?;
-            sqlx::query("DELETE FROM recurring_invoices WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            recurring_invoice_entity::Entity::delete_many()
+                .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE recurring_invoice {}: {e}",
@@ -88,21 +92,16 @@ mod server_impl {
                 )))?;
 
             let detail = detail_for(&self.label_for_detail);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'recurring', ?, 'delete', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "recurring",
+                &self.id,
+                "delete",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

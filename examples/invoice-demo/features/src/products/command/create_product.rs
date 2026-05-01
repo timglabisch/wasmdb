@@ -77,53 +77,50 @@ impl Command for CreateProduct {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::products::product_server::entity as product_entity;
 
     #[async_trait]
     impl ServerCommand for CreateProduct {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO products (tenant_id, id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .bind(&self.sku)
-                .bind(&self.name)
-                .bind(&self.description)
-                .bind(&self.unit)
-                .bind(self.unit_price)
-                .bind(self.tax_rate)
-                .bind(self.cost_price)
-                .bind(self.active)
-                .execute(&mut **tx)
+            let am = product_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                sku: Set(self.sku.clone()),
+                name: Set(self.name.clone()),
+                description: Set(self.description.clone()),
+                unit: Set(self.unit.clone()),
+                unit_price: Set(self.unit_price),
+                tax_rate: Set(self.tax_rate),
+                cost_price: Set(self.cost_price),
+                active: Set(self.active),
+            };
+            product_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT product id={}: {e}",
-                    self.id,
+                    "INSERT product id={}: {e}", self.id,
                 )))?;
 
             let detail = detail_for(&self.name);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'product', ?, 'create', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "product",
+                &self.id,
+                "create",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

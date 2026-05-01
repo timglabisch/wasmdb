@@ -6,7 +6,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
 use crate::command_helpers::{execute_sql, p_str, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct DeleteProduct {
@@ -51,42 +50,40 @@ impl Command for DeleteProduct {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::products::product_server::entity as product_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for DeleteProduct {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM products WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            product_entity::Entity::delete_many()
+                .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE product id={}: {e}",
-                    self.id,
+                    "DELETE product id={}: {e}", self.id,
                 )))?;
 
             let detail = detail_for(&self.name);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'product', ?, 'delete', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "product",
+                &self.id,
+                "delete",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

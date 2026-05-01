@@ -76,50 +76,43 @@ impl Command for UpdateCustomer {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::customers::customer_server::entity as customer_entity;
 
     #[async_trait]
     impl ServerCommand for UpdateCustomer {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE customers SET name = ?, email = ?, \
-                 company_type = ?, tax_id = ?, vat_id = ?, \
-                 payment_terms_days = ?, default_discount_pct = ?, \
-                 billing_street = ?, billing_zip = ?, billing_city = ?, billing_country = ?, \
-                 shipping_street = ?, shipping_zip = ?, shipping_city = ?, shipping_country = ?, \
-                 default_iban = ?, default_bic = ?, notes = ? \
-                 WHERE customers.tenant_id = ? AND customers.id = ?",
-            )
-                .bind(&self.name)
-                .bind(&self.email)
-                .bind(&self.company_type)
-                .bind(&self.tax_id)
-                .bind(&self.vat_id)
-                .bind(self.payment_terms_days)
-                .bind(self.default_discount_pct)
-                .bind(&self.billing_street)
-                .bind(&self.billing_zip)
-                .bind(&self.billing_city)
-                .bind(&self.billing_country)
-                .bind(&self.shipping_street)
-                .bind(&self.shipping_zip)
-                .bind(&self.shipping_city)
-                .bind(&self.shipping_country)
-                .bind(&self.default_iban)
-                .bind(&self.default_bic)
-                .bind(&self.notes)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            customer_entity::Entity::update_many()
+                .col_expr(customer_entity::Column::Name, self.name.clone().into())
+                .col_expr(customer_entity::Column::Email, self.email.clone().into())
+                .col_expr(customer_entity::Column::CompanyType, self.company_type.clone().into())
+                .col_expr(customer_entity::Column::TaxId, self.tax_id.clone().into())
+                .col_expr(customer_entity::Column::VatId, self.vat_id.clone().into())
+                .col_expr(customer_entity::Column::PaymentTermsDays, self.payment_terms_days.into())
+                .col_expr(customer_entity::Column::DefaultDiscountPct, self.default_discount_pct.into())
+                .col_expr(customer_entity::Column::BillingStreet, self.billing_street.clone().into())
+                .col_expr(customer_entity::Column::BillingZip, self.billing_zip.clone().into())
+                .col_expr(customer_entity::Column::BillingCity, self.billing_city.clone().into())
+                .col_expr(customer_entity::Column::BillingCountry, self.billing_country.clone().into())
+                .col_expr(customer_entity::Column::ShippingStreet, self.shipping_street.clone().into())
+                .col_expr(customer_entity::Column::ShippingZip, self.shipping_zip.clone().into())
+                .col_expr(customer_entity::Column::ShippingCity, self.shipping_city.clone().into())
+                .col_expr(customer_entity::Column::ShippingCountry, self.shipping_country.clone().into())
+                .col_expr(customer_entity::Column::DefaultIban, self.default_iban.clone().into())
+                .col_expr(customer_entity::Column::DefaultBic, self.default_bic.clone().into())
+                .col_expr(customer_entity::Column::Notes, self.notes.clone().into())
+                .filter(customer_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(customer_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE customer {}: {e}",
-                    self.id,
+                    "UPDATE customer {}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }

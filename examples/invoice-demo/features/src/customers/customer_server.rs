@@ -1,58 +1,89 @@
-//! Server-side: sqlx-based fetcher for the `customers` table. Owns the
-//! SQL-side schema. Unlike `products`, this entity has not been migrated
-//! to SeaORM yet — it pulls columns by name because sqlx's `FromRow`
-//! tuple impls stop at 16 columns and this row has 20.
+//! Server-side: SeaORM Entity for the `customers` table + `From<Model>`
+//! adapter to the client DTO + `#[query]`-fns. Owns the SQL-side schema.
 
 #![cfg(feature = "server")]
 
-use sqlx::Row;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sql_engine::storage::Uuid;
 use tables_storage::query;
 
-use crate::server_helpers::try_uuid;
 use crate::shared::DEMO_TENANT_ID;
 use crate::AppCtx;
 use super::customer_client::Customer;
 
-#[query]
-async fn all(ctx: &AppCtx) -> Result<Vec<Customer>, sqlx::Error> {
-    // sqlx's `FromRow` tuple impls stop at 16 columns; this row has 20.
-    // Pull columns by name instead.
-    let rows = sqlx::query(
-        "SELECT id, name, email, created_at, company_type, tax_id, vat_id, \
-         payment_terms_days, default_discount_pct, \
-         billing_street, billing_zip, billing_city, billing_country, \
-         shipping_street, shipping_zip, shipping_city, shipping_country, \
-         default_iban, default_bic, notes \
-         FROM invoice_demo.customers WHERE tenant_id = ?",
-    )
-    .bind(DEMO_TENANT_ID)
-    .fetch_all(&ctx.pool)
-    .await?;
+pub mod entity {
+    use sea_orm::entity::prelude::*;
 
-    rows.into_iter()
-        .map(|r| {
-            Ok(Customer {
-                id: try_uuid(&r, "id")?,
-                name: r.try_get("name")?,
-                email: r.try_get("email")?,
-                created_at: r.try_get("created_at")?,
-                company_type: r.try_get("company_type")?,
-                tax_id: r.try_get("tax_id")?,
-                vat_id: r.try_get("vat_id")?,
-                payment_terms_days: r.try_get("payment_terms_days")?,
-                default_discount_pct: r.try_get("default_discount_pct")?,
-                billing_street: r.try_get("billing_street")?,
-                billing_zip: r.try_get("billing_zip")?,
-                billing_city: r.try_get("billing_city")?,
-                billing_country: r.try_get("billing_country")?,
-                shipping_street: r.try_get("shipping_street")?,
-                shipping_zip: r.try_get("shipping_zip")?,
-                shipping_city: r.try_get("shipping_city")?,
-                shipping_country: r.try_get("shipping_country")?,
-                default_iban: r.try_get("default_iban")?,
-                default_bic: r.try_get("default_bic")?,
-                notes: r.try_get("notes")?,
-            })
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(schema_name = "invoice_demo", table_name = "customers")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false, column_type = "Binary(16)")]
+        pub id: Vec<u8>,
+        pub tenant_id: i64,
+        pub name: String,
+        pub email: String,
+        pub created_at: String,
+        pub company_type: String,
+        pub tax_id: String,
+        pub vat_id: String,
+        pub payment_terms_days: i64,
+        pub default_discount_pct: i64,
+        pub billing_street: String,
+        pub billing_zip: String,
+        pub billing_city: String,
+        pub billing_country: String,
+        pub shipping_street: String,
+        pub shipping_zip: String,
+        pub shipping_city: String,
+        pub shipping_country: String,
+        pub default_iban: String,
+        pub default_bic: String,
+        #[sea_orm(column_type = "Text")]
+        pub notes: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+impl TryFrom<entity::Model> for Customer {
+    type Error = anyhow::Error;
+    fn try_from(m: entity::Model) -> Result<Self, Self::Error> {
+        let id_bytes: [u8; 16] = m.id.as_slice().try_into().map_err(|_| {
+            anyhow::anyhow!("customers.id: expected 16 bytes, got {}", m.id.len())
+        })?;
+        Ok(Customer {
+            id: Uuid(id_bytes),
+            name: m.name,
+            email: m.email,
+            created_at: m.created_at,
+            company_type: m.company_type,
+            tax_id: m.tax_id,
+            vat_id: m.vat_id,
+            payment_terms_days: m.payment_terms_days,
+            default_discount_pct: m.default_discount_pct,
+            billing_street: m.billing_street,
+            billing_zip: m.billing_zip,
+            billing_city: m.billing_city,
+            billing_country: m.billing_country,
+            shipping_street: m.shipping_street,
+            shipping_zip: m.shipping_zip,
+            shipping_city: m.shipping_city,
+            shipping_country: m.shipping_country,
+            default_iban: m.default_iban,
+            default_bic: m.default_bic,
+            notes: m.notes,
         })
-        .collect()
+    }
+}
+
+#[query]
+async fn all(ctx: &AppCtx) -> anyhow::Result<Vec<Customer>> {
+    let models = entity::Entity::find()
+        .filter(entity::Column::TenantId.eq(DEMO_TENANT_ID))
+        .all(&ctx.db)
+        .await?;
+    models.into_iter().map(Customer::try_from).collect()
 }

@@ -6,7 +6,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
 use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid, read_str_col};
-use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: activate or deactivate a product. Replaces the old
 /// `updateProduct({...,active}) + logActivity(...)` pair. Activity is
@@ -79,58 +78,57 @@ impl Command for SetProductActive {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::products::product_server::entity as product_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for SetProductActive {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE products SET active = ? \
-                 WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(self.active)
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE product {} -> active={}: {e}", self.id, self.active,
-            )))?;
+            product_entity::Entity::update_many()
+                .col_expr(product_entity::Column::Active, self.active.into())
+                .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE product {} -> active={}: {e}", self.id, self.active,
+                )))?;
 
-            let name: String = sqlx::query_scalar(
-                "SELECT name FROM products WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup name for product {}: {e}", self.id,
-            )))?;
+            let name: String = product_entity::Entity::find()
+                .select_only()
+                .column(product_entity::Column::Name)
+                .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
+                .into_tuple()
+                .one(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup name for product {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "product {} not found", self.id,
+                )))?;
+
             let detail = detail_for(&name, self.active);
             let action = action_for(self.active);
-
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'product', ?, ?, 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "product",
+                &self.id,
+                action,
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(action)
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

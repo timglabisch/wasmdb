@@ -27,20 +27,22 @@ impl Command for DeleteRecurringPosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::recurring::recurring_position_server::entity as recurring_position_entity;
 
     #[async_trait]
     impl ServerCommand for DeleteRecurringPosition {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM recurring_positions WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            recurring_position_entity::Entity::delete_many()
+                .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_position_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE recurring_position {}: {e}",

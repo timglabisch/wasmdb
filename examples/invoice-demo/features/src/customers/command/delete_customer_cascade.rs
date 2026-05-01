@@ -104,136 +104,140 @@ impl Command for DeleteCustomerCascade {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect};
     use sync_server_mysql::ServerCommand;
 
-    /// Builds a comma-separated `?,?,?` placeholder list for IN-clauses.
-    fn qmarks(n: usize) -> String {
-        std::iter::repeat("?").take(n).collect::<Vec<_>>().join(",")
-    }
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::contacts::contact_server::entity as contact_entity;
+    use crate::customers::customer_server::entity as customer_entity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
+    use crate::payments::payment_server::entity as payment_entity;
+    use crate::positions::position_server::entity as position_entity;
+    use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
+    use crate::recurring::recurring_position_server::entity as recurring_position_entity;
+    use crate::sepa_mandates::sepa_mandate_server::entity as sepa_mandate_entity;
 
     #[async_trait]
     impl ServerCommand for DeleteCustomerCascade {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             let id = self.id;
+            let id_bytes = id.0.to_vec();
 
-            let recurring_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
-                "SELECT id FROM recurring_invoices WHERE tenant_id = ? AND customer_id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&id.0[..])
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup recurring_invoices for customer {id}: {e}",
-            )))?;
+            let recurring_ids: Vec<Vec<u8>> = recurring_invoice_entity::Entity::find()
+                .select_only()
+                .column(recurring_invoice_entity::Column::Id)
+                .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_invoice_entity::Column::CustomerId.eq(id_bytes.clone()))
+                .into_tuple()
+                .all(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup recurring_invoices for customer {id}: {e}",
+                )))?;
 
-            let invoice_id_rows: Vec<Vec<u8>> = sqlx::query_scalar(
-                "SELECT id FROM invoices WHERE tenant_id = ? AND customer_id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&id.0[..])
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup invoices for customer {id}: {e}",
-            )))?;
+            let invoice_ids: Vec<Vec<u8>> = invoice_entity::Entity::find()
+                .select_only()
+                .column(invoice_entity::Column::Id)
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::CustomerId.eq(id_bytes.clone()))
+                .into_tuple()
+                .all(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup invoices for customer {id}: {e}",
+                )))?;
 
-            if !recurring_id_rows.is_empty() {
-                let sql = format!(
-                    "DELETE FROM recurring_positions WHERE tenant_id = ? AND recurring_id IN ({})",
-                    qmarks(recurring_id_rows.len()),
-                );
-                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
-                for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
-                q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
-                    format!("DELETE recurring_positions for customer {id}: {e}"),
-                ))?;
+            if !recurring_ids.is_empty() {
+                recurring_position_entity::Entity::delete_many()
+                    .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(recurring_position_entity::Column::RecurringId.is_in(recurring_ids.clone()))
+                    .exec(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE recurring_positions for customer {id}: {e}",
+                    )))?;
 
-                let sql = format!(
-                    "DELETE FROM recurring_invoices WHERE tenant_id = ? AND id IN ({})",
-                    qmarks(recurring_id_rows.len()),
-                );
-                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
-                for rid in &recurring_id_rows { q = q.bind(rid.as_slice()); }
-                q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
-                    format!("DELETE recurring_invoices for customer {id}: {e}"),
-                ))?;
+                recurring_invoice_entity::Entity::delete_many()
+                    .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(recurring_invoice_entity::Column::Id.is_in(recurring_ids))
+                    .exec(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE recurring_invoices for customer {id}: {e}",
+                    )))?;
             }
 
-            if !invoice_id_rows.is_empty() {
-                let sql = format!(
-                    "DELETE FROM payments WHERE tenant_id = ? AND invoice_id IN ({})",
-                    qmarks(invoice_id_rows.len()),
-                );
-                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
-                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
-                q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
-                    format!("DELETE payments for customer {id}: {e}"),
-                ))?;
+            if !invoice_ids.is_empty() {
+                payment_entity::Entity::delete_many()
+                    .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(payment_entity::Column::InvoiceId.is_in(invoice_ids.clone()))
+                    .exec(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE payments for customer {id}: {e}",
+                    )))?;
 
-                let sql = format!(
-                    "DELETE FROM positions WHERE tenant_id = ? AND invoice_id IN ({})",
-                    qmarks(invoice_id_rows.len()),
-                );
-                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
-                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
-                q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
-                    format!("DELETE positions for customer {id}: {e}"),
-                ))?;
+                position_entity::Entity::delete_many()
+                    .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(position_entity::Column::InvoiceId.is_in(invoice_ids.clone()))
+                    .exec(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE positions for customer {id}: {e}",
+                    )))?;
 
-                let sql = format!(
-                    "DELETE FROM invoices WHERE tenant_id = ? AND id IN ({})",
-                    qmarks(invoice_id_rows.len()),
-                );
-                let mut q = sqlx::query(&sql).bind(DEMO_TENANT_ID);
-                for iid in &invoice_id_rows { q = q.bind(iid.as_slice()); }
-                q.execute(&mut **tx).await.map_err(|e| CommandError::ExecutionFailed(
-                    format!("DELETE invoices for customer {id}: {e}"),
-                ))?;
+                invoice_entity::Entity::delete_many()
+                    .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                    .filter(invoice_entity::Column::Id.is_in(invoice_ids))
+                    .exec(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE invoices for customer {id}: {e}",
+                    )))?;
             }
 
-            sqlx::query("DELETE FROM sepa_mandates WHERE tenant_id = ? AND customer_id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&id.0[..]).execute(&mut **tx).await
+            sepa_mandate_entity::Entity::delete_many()
+                .filter(sepa_mandate_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(sepa_mandate_entity::Column::CustomerId.eq(id_bytes.clone()))
+                .exec(tx)
+                .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE sepa_mandates for customer {id}: {e}",
                 )))?;
 
-            sqlx::query("DELETE FROM contacts WHERE tenant_id = ? AND customer_id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&id.0[..]).execute(&mut **tx).await
+            contact_entity::Entity::delete_many()
+                .filter(contact_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(contact_entity::Column::CustomerId.eq(id_bytes.clone()))
+                .exec(tx)
+                .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE contacts for customer {id}: {e}",
                 )))?;
 
-            sqlx::query("DELETE FROM customers WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&id.0[..]).execute(&mut **tx).await
+            customer_entity::Entity::delete_many()
+                .filter(customer_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(customer_entity::Column::Id.eq(id_bytes))
+                .exec(tx)
+                .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "DELETE customer {id}: {e}",
                 )))?;
 
             let detail = detail_for(&self.name);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'customer', ?, 'delete', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "customer",
+                &self.id,
+                "delete",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

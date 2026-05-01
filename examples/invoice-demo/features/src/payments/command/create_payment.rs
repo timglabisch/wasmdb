@@ -47,14 +47,18 @@ impl Command for CreatePayment {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{
+        ConnectionTrait, DatabaseBackend, DatabaseTransaction, EntityTrait, Set, Statement, Value,
+    };
     use sync_server_mysql::ServerCommand;
+
+    use crate::payments::payment_server::entity as payment_entity;
 
     #[async_trait]
     impl ServerCommand for CreatePayment {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             if self.amount <= 0 {
@@ -65,22 +69,37 @@ mod server_impl {
             }
 
             // `CAST(... AS SIGNED)` pins MySQL's DECIMAL SUM back to i64.
-            let remaining: i64 = sqlx::query_scalar(
+            let stmt = Statement::from_sql_and_values(
+                DatabaseBackend::MySql,
                 "SELECT CAST( \
-                   COALESCE((SELECT SUM(quantity*unit_price) FROM positions WHERE tenant_id=? AND invoice_id=?), 0) \
-                 - COALESCE((SELECT SUM(amount)              FROM payments  WHERE tenant_id=? AND invoice_id=?), 0) \
+                   COALESCE((SELECT SUM(quantity*unit_price) FROM invoice_demo.positions WHERE tenant_id=? AND invoice_id=?), 0) \
+                 - COALESCE((SELECT SUM(amount)              FROM invoice_demo.payments  WHERE tenant_id=? AND invoice_id=?), 0) \
                  AS SIGNED)",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.invoice_id.0[..])
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.invoice_id.0[..])
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "balance lookup for invoice {}: {e}",
-                self.invoice_id,
-            )))?;
+                [
+                    Value::from(DEMO_TENANT_ID),
+                    Value::from(self.invoice_id.0.to_vec()),
+                    Value::from(DEMO_TENANT_ID),
+                    Value::from(self.invoice_id.0.to_vec()),
+                ],
+            );
+            let row = tx.query_one_raw(stmt).await.map_err(|e| {
+                CommandError::ExecutionFailed(format!(
+                    "balance lookup for invoice {}: {e}",
+                    self.invoice_id,
+                ))
+            })?;
+            let row = row.ok_or_else(|| {
+                CommandError::ExecutionFailed(format!(
+                    "balance lookup for invoice {}: no row returned",
+                    self.invoice_id,
+                ))
+            })?;
+            let remaining: i64 = row.try_get_by_index(0).map_err(|e| {
+                CommandError::ExecutionFailed(format!(
+                    "balance lookup for invoice {}: {e}",
+                    self.invoice_id,
+                ))
+            })?;
 
             if self.amount > remaining {
                 return Err(CommandError::ExecutionFailed(format!(
@@ -89,24 +108,23 @@ mod server_impl {
                 )));
             }
 
-            sqlx::query(
-                "INSERT INTO payments (tenant_id, id, invoice_id, amount, paid_at, method, reference, note) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .bind(&self.invoice_id.0[..])
-            .bind(self.amount)
-            .bind(&self.paid_at)
-            .bind(&self.method)
-            .bind(&self.reference)
-            .bind(&self.note)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT payment {}: {e}", self.id,
-            )))?;
+            let am = payment_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                invoice_id: Set(self.invoice_id.0.to_vec()),
+                amount: Set(self.amount),
+                paid_at: Set(self.paid_at.clone()),
+                method: Set(self.method.clone()),
+                reference: Set(self.reference.clone()),
+                note: Set(self.note.clone()),
+            };
+            payment_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT payment {}: {e}", self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

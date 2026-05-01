@@ -34,23 +34,23 @@ impl Command for MovePosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::positions::position_server::entity as position_entity;
 
     #[async_trait]
     impl ServerCommand for MovePosition {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE positions SET position_nr = ? WHERE tenant_id = ? AND id = ?"
-            )
-                .bind(self.new_position_nr)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            position_entity::Entity::update_many()
+                .col_expr(position_entity::Column::PositionNr, self.new_position_nr.into())
+                .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(position_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "UPDATE position id={} position_nr={}: {e}",

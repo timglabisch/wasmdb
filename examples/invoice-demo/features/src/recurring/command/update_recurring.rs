@@ -47,29 +47,29 @@ impl Command for UpdateRecurring {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
 
     #[async_trait]
     impl ServerCommand for UpdateRecurring {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "UPDATE recurring_invoices SET template_name = ?, interval_unit = ?, interval_value = ?, next_run = ?, enabled = ?, status_template = ?, notes_template = ? WHERE tenant_id = ? AND id = ?",
-            )
-                .bind(&self.template_name)
-                .bind(&self.interval_unit)
-                .bind(self.interval_value)
-                .bind(&self.next_run)
-                .bind(self.enabled)
-                .bind(&self.status_template)
-                .bind(&self.notes_template)
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            recurring_invoice_entity::Entity::update_many()
+                .col_expr(recurring_invoice_entity::Column::TemplateName, self.template_name.clone().into())
+                .col_expr(recurring_invoice_entity::Column::IntervalUnit, self.interval_unit.clone().into())
+                .col_expr(recurring_invoice_entity::Column::IntervalValue, self.interval_value.into())
+                .col_expr(recurring_invoice_entity::Column::NextRun, self.next_run.clone().into())
+                .col_expr(recurring_invoice_entity::Column::Enabled, self.enabled.into())
+                .col_expr(recurring_invoice_entity::Column::StatusTemplate, self.status_template.clone().into())
+                .col_expr(recurring_invoice_entity::Column::NotesTemplate, self.notes_template.clone().into())
+                .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(recurring_invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "UPDATE recurring_invoice {}: {e}",

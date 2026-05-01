@@ -1,7 +1,7 @@
 //! MySQL/TiDB adapter for the sync server.
 //!
 //! Exposes the [`ServerCommand`] trait: every command type implements
-//! `execute_server` to run its SQL directly inside a sqlx `Transaction`.
+//! `execute_server` to run its writes inside a SeaORM `DatabaseTransaction`.
 //! This is where authoritative server-side logic (permission checks,
 //! cross-row invariants, cascade deletes, …) lives.
 

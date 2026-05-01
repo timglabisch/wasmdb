@@ -56,33 +56,34 @@ impl Command for AddRecurringPosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::recurring::recurring_position_server::entity as recurring_position_entity;
 
     #[async_trait]
     impl ServerCommand for AddRecurringPosition {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO recurring_positions (tenant_id, id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .bind(&self.recurring_id.0[..])
-                .bind(self.position_nr)
-                .bind(&self.description)
-                .bind(self.quantity)
-                .bind(self.unit_price)
-                .bind(self.tax_rate)
-                .bind(&self.unit)
-                .bind(&self.item_number)
-                .bind(self.discount_pct)
-                .execute(&mut **tx)
+            let am = recurring_position_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                recurring_id: Set(self.recurring_id.0.to_vec()),
+                position_nr: Set(self.position_nr),
+                description: Set(self.description.clone()),
+                quantity: Set(self.quantity),
+                unit_price: Set(self.unit_price),
+                tax_rate: Set(self.tax_rate),
+                unit: Set(self.unit.clone()),
+                item_number: Set(self.item_number.clone()),
+                discount_pct: Set(self.discount_pct),
+            };
+            recurring_position_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
                     "INSERT recurring_position {}: {e}",

@@ -95,72 +95,68 @@ impl Command for CreateInvoice {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
 
     #[async_trait]
     impl ServerCommand for CreateInvoice {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .bind(self.customer_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.number)
-                .bind(&self.status)
-                .bind(&self.date_issued)
-                .bind(&self.date_due)
-                .bind(&self.notes)
-                .bind(&self.doc_type)
-                .bind(self.parent_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.service_date)
-                .bind(self.cash_allowance_pct)
-                .bind(self.cash_allowance_days)
-                .bind(self.discount_pct)
-                .bind(&self.payment_method)
-                .bind(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&self.currency)
-                .bind(&self.language)
-                .bind(&self.project_ref)
-                .bind(&self.external_id)
-                .bind(&self.billing_street)
-                .bind(&self.billing_zip)
-                .bind(&self.billing_city)
-                .bind(&self.billing_country)
-                .bind(&self.shipping_street)
-                .bind(&self.shipping_zip)
-                .bind(&self.shipping_city)
-                .bind(&self.shipping_country)
-                .execute(&mut **tx)
+            let am = invoice_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                customer_id: Set(self.customer_id.as_ref().map(|u| u.0.to_vec())),
+                number: Set(self.number.clone()),
+                status: Set(self.status.clone()),
+                date_issued: Set(self.date_issued.clone()),
+                date_due: Set(self.date_due.clone()),
+                notes: Set(self.notes.clone()),
+                doc_type: Set(self.doc_type.clone()),
+                parent_id: Set(self.parent_id.as_ref().map(|u| u.0.to_vec())),
+                service_date: Set(self.service_date.clone()),
+                cash_allowance_pct: Set(self.cash_allowance_pct),
+                cash_allowance_days: Set(self.cash_allowance_days),
+                discount_pct: Set(self.discount_pct),
+                payment_method: Set(self.payment_method.clone()),
+                sepa_mandate_id: Set(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec())),
+                currency: Set(self.currency.clone()),
+                language: Set(self.language.clone()),
+                project_ref: Set(self.project_ref.clone()),
+                external_id: Set(self.external_id.clone()),
+                billing_street: Set(self.billing_street.clone()),
+                billing_zip: Set(self.billing_zip.clone()),
+                billing_city: Set(self.billing_city.clone()),
+                billing_country: Set(self.billing_country.clone()),
+                shipping_street: Set(self.shipping_street.clone()),
+                shipping_zip: Set(self.shipping_zip.clone()),
+                shipping_city: Set(self.shipping_city.clone()),
+                shipping_country: Set(self.shipping_country.clone()),
+            };
+            invoice_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT invoice {}: {e}",
-                    self.id,
+                    "INSERT invoice {}: {e}", self.id,
                 )))?;
 
             let detail = detail_for(&self.number);
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'invoice', ?, 'create', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "invoice",
+                &self.id,
+                "create",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

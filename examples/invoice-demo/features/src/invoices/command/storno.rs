@@ -213,134 +213,125 @@ impl Command for Storno {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
+    use crate::positions::position_server::entity as position_entity;
 
     #[async_trait]
     impl ServerCommand for Storno {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             // 1. Cancel original invoice.
-            sqlx::query(
-                "UPDATE invoices SET status = 'cancelled' \
-                 WHERE invoices.tenant_id = ? AND invoices.id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE invoice {} -> cancelled: {e}", self.id,
-            )))?;
+            invoice_entity::Entity::update_many()
+                .col_expr(invoice_entity::Column::Status, "cancelled".to_string().into())
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE invoice {} -> cancelled: {e}", self.id,
+                )))?;
 
             // 2. Look up original invoice number for the activity detail.
-            let number: String = sqlx::query_scalar(
-                "SELECT number FROM invoices WHERE tenant_id = ? AND id = ?",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "lookup number for invoice {}: {e}", self.id,
-            )))?;
+            let number: String = invoice_entity::Entity::find()
+                .select_only()
+                .column(invoice_entity::Column::Number)
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .into_tuple()
+                .one(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "lookup number for invoice {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "invoice {} not found", self.id,
+                )))?;
             let detail = detail_for(&number, &self.credit_note_id);
 
             // 3. Insert credit note header.
-            sqlx::query(
-                "INSERT INTO invoices \
-                 (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, \
-                  doc_type, parent_id, service_date, \
-                  cash_allowance_pct, cash_allowance_days, discount_pct, \
-                  payment_method, sepa_mandate_id, currency, language, \
-                  project_ref, external_id, \
-                  billing_street, billing_zip, billing_city, billing_country, \
-                  shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 'credit_note', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.credit_note_id.0[..])
-            .bind(self.customer_id.as_ref().map(|u| u.0.to_vec()))
-            .bind(&self.credit_note_number)
-            .bind(&self.date_issued)
-            .bind(&self.date_due)
-            .bind(&self.notes)
-            .bind(&self.id.0[..])
-            .bind(&self.service_date)
-            .bind(self.cash_allowance_pct)
-            .bind(self.cash_allowance_days)
-            .bind(self.discount_pct)
-            .bind(&self.payment_method)
-            .bind(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()))
-            .bind(&self.currency)
-            .bind(&self.language)
-            .bind(&self.project_ref)
-            .bind(&self.external_id)
-            .bind(&self.billing_street)
-            .bind(&self.billing_zip)
-            .bind(&self.billing_city)
-            .bind(&self.billing_country)
-            .bind(&self.shipping_street)
-            .bind(&self.shipping_zip)
-            .bind(&self.shipping_city)
-            .bind(&self.shipping_country)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT credit note {}: {e}", self.credit_note_id,
-            )))?;
+            let am = invoice_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.credit_note_id.0.to_vec()),
+                customer_id: Set(self.customer_id.as_ref().map(|u| u.0.to_vec())),
+                number: Set(self.credit_note_number.clone()),
+                status: Set("draft".to_string()),
+                date_issued: Set(self.date_issued.clone()),
+                date_due: Set(self.date_due.clone()),
+                notes: Set(self.notes.clone()),
+                doc_type: Set("credit_note".to_string()),
+                parent_id: Set(Some(self.id.0.to_vec())),
+                service_date: Set(self.service_date.clone()),
+                cash_allowance_pct: Set(self.cash_allowance_pct),
+                cash_allowance_days: Set(self.cash_allowance_days),
+                discount_pct: Set(self.discount_pct),
+                payment_method: Set(self.payment_method.clone()),
+                sepa_mandate_id: Set(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec())),
+                currency: Set(self.currency.clone()),
+                language: Set(self.language.clone()),
+                project_ref: Set(self.project_ref.clone()),
+                external_id: Set(self.external_id.clone()),
+                billing_street: Set(self.billing_street.clone()),
+                billing_zip: Set(self.billing_zip.clone()),
+                billing_city: Set(self.billing_city.clone()),
+                billing_country: Set(self.billing_country.clone()),
+                shipping_street: Set(self.shipping_street.clone()),
+                shipping_zip: Set(self.shipping_zip.clone()),
+                shipping_city: Set(self.shipping_city.clone()),
+                shipping_country: Set(self.shipping_country.clone()),
+            };
+            invoice_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT credit note {}: {e}", self.credit_note_id,
+                )))?;
 
             // 4. Insert credit-note positions.
             for pos in &self.positions {
-                sqlx::query(
-                    "INSERT INTO positions \
-                     (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, \
-                      tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON DUPLICATE KEY UPDATE id = id",
-                )
-                .bind(DEMO_TENANT_ID)
-                .bind(&pos.id.0[..])
-                .bind(&self.credit_note_id.0[..])
-                .bind(pos.position_nr)
-                .bind(&pos.description)
-                .bind(pos.quantity)
-                .bind(pos.unit_price)
-                .bind(pos.tax_rate)
-                .bind(pos.product_id.as_ref().map(|u| u.0.to_vec()))
-                .bind(&pos.item_number)
-                .bind(&pos.unit)
-                .bind(pos.discount_pct)
-                .bind(pos.cost_price)
-                .bind(&pos.position_type)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "INSERT storno position {}: {e}", pos.id,
-                )))?;
+                let pam = position_entity::ActiveModel {
+                    tenant_id: Set(DEMO_TENANT_ID),
+                    id: Set(pos.id.0.to_vec()),
+                    invoice_id: Set(self.credit_note_id.0.to_vec()),
+                    position_nr: Set(pos.position_nr),
+                    description: Set(pos.description.clone()),
+                    quantity: Set(pos.quantity),
+                    unit_price: Set(pos.unit_price),
+                    tax_rate: Set(pos.tax_rate),
+                    product_id: Set(pos.product_id.as_ref().map(|u| u.0.to_vec())),
+                    item_number: Set(pos.item_number.clone()),
+                    unit: Set(pos.unit.clone()),
+                    discount_pct: Set(pos.discount_pct),
+                    cost_price: Set(pos.cost_price),
+                    position_type: Set(pos.position_type.clone()),
+                };
+                position_entity::Entity::insert(pam)
+                    .on_conflict_do_nothing()
+                    .exec_without_returning(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
+                        "INSERT storno position {}: {e}", pos.id,
+                    )))?;
             }
 
             // 5. Activity log.
-            sqlx::query(
-                "INSERT INTO activity_log \
-                 (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'invoice', ?, 'storno', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "invoice",
+                &self.id,
+                "storno",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

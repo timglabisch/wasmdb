@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use borsh::BorshDeserialize;
 use invoice_demo_features::InvoiceCommand;
+use sea_orm::TransactionTrait;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server_mysql::ServerCommand;
 
@@ -25,10 +26,10 @@ pub async fn handle_command(
         }
     };
 
-    let mut tx = match state.ctx.pool.begin().await {
+    let tx = match state.ctx.db.begin().await {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("[server] pool.begin failed: {e}");
+            eprintln!("[server] db.begin failed: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 e.to_string().into_bytes(),
@@ -53,7 +54,7 @@ pub async fn handle_command(
 
         let verdict = match request
             .command
-            .execute_server(&mut tx, &request.client_zset)
+            .execute_server(&tx, &request.client_zset)
             .await
         {
             Ok(server_zset) => Verdict::Confirmed { server_zset },

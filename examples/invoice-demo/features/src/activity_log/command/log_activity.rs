@@ -5,7 +5,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
 use crate::command_helpers::{execute_sql, p_str, p_uuid};
-use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
 pub struct LogActivity {
@@ -47,35 +46,36 @@ impl Command for LogActivity {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{DatabaseTransaction, EntityTrait, Set};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::entity as activity_entity;
+    use crate::shared::DEMO_TENANT_ID;
 
     #[async_trait]
     impl ServerCommand for LogActivity {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query(
-                "INSERT INTO activity_log (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-            )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.entity_type)
-            .bind(&self.entity_id.0[..])
-            .bind(&self.action)
-            .bind(&self.actor)
-            .bind(&self.detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}",
-                self.id,
-            )))?;
+            let am = activity_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(self.id.0.to_vec()),
+                timestamp: Set(self.timestamp.clone()),
+                entity_type: Set(self.entity_type.clone()),
+                entity_id: Set(self.entity_id.0.to_vec()),
+                action: Set(self.action.clone()),
+                actor: Set(self.actor.clone()),
+                detail: Set(self.detail.clone()),
+            };
+            activity_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "INSERT activity {}: {e}", self.id,
+                )))?;
             Ok(client_zset.clone())
         }
     }

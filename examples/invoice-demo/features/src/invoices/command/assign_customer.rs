@@ -109,62 +109,50 @@ impl Command for AssignCustomer {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
 
     #[async_trait]
     impl ServerCommand for AssignCustomer {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             let detail = detail_for(&self.customer_name);
 
-            sqlx::query(
-                "UPDATE invoices SET \
-                 customer_id = ?, \
-                 billing_street = ?, billing_zip = ?, \
-                 billing_city = ?, billing_country = ?, \
-                 shipping_street = ?, shipping_zip = ?, \
-                 shipping_city = ?, shipping_country = ?, \
-                 date_due = ? \
-                 WHERE invoices.tenant_id = ? AND invoices.id = ?",
-            )
-            .bind(self.customer_id.as_ref().map(|u| u.0.to_vec()))
-            .bind(&self.billing_street)
-            .bind(&self.billing_zip)
-            .bind(&self.billing_city)
-            .bind(&self.billing_country)
-            .bind(&self.shipping_street)
-            .bind(&self.shipping_zip)
-            .bind(&self.shipping_city)
-            .bind(&self.shipping_country)
-            .bind(&self.date_due)
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.id.0[..])
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "UPDATE invoice {} assign customer: {e}", self.id,
-            )))?;
+            invoice_entity::Entity::update_many()
+                .col_expr(invoice_entity::Column::CustomerId, self.customer_id.as_ref().map(|u| u.0.to_vec()).into())
+                .col_expr(invoice_entity::Column::BillingStreet, self.billing_street.clone().into())
+                .col_expr(invoice_entity::Column::BillingZip, self.billing_zip.clone().into())
+                .col_expr(invoice_entity::Column::BillingCity, self.billing_city.clone().into())
+                .col_expr(invoice_entity::Column::BillingCountry, self.billing_country.clone().into())
+                .col_expr(invoice_entity::Column::ShippingStreet, self.shipping_street.clone().into())
+                .col_expr(invoice_entity::Column::ShippingZip, self.shipping_zip.clone().into())
+                .col_expr(invoice_entity::Column::ShippingCity, self.shipping_city.clone().into())
+                .col_expr(invoice_entity::Column::ShippingCountry, self.shipping_country.clone().into())
+                .col_expr(invoice_entity::Column::DateDue, self.date_due.clone().into())
+                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
+                    "UPDATE invoice {} assign customer: {e}", self.id,
+                )))?;
 
-            sqlx::query(
-                "INSERT INTO activity_log \
-                 (tenant_id, id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES (?, ?, ?, 'invoice', ?, 'customer_assigned', 'demo', ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
+            insert_activity(
+                tx,
+                &self.activity_id,
+                &self.timestamp,
+                "invoice",
+                &self.id,
+                "customer_assigned",
+                &detail,
             )
-            .bind(DEMO_TENANT_ID)
-            .bind(&self.activity_id.0[..])
-            .bind(&self.timestamp)
-            .bind(&self.id.0[..])
-            .bind(&detail)
-            .execute(&mut **tx)
-            .await
-            .map_err(|e| CommandError::ExecutionFailed(format!(
-                "INSERT activity {}: {e}", self.activity_id,
-            )))?;
+            .await?;
 
             Ok(client_zset.clone())
         }

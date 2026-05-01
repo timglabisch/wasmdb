@@ -27,24 +27,25 @@ impl Command for DeletePayment {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sqlx::{MySql, Transaction};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
+
+    use crate::payments::payment_server::entity as payment_entity;
 
     #[async_trait]
     impl ServerCommand for DeletePayment {
         async fn execute_server(
             &self,
-            tx: &mut Transaction<'static, MySql>,
+            tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sqlx::query("DELETE FROM payments WHERE tenant_id = ? AND id = ?")
-                .bind(DEMO_TENANT_ID)
-                .bind(&self.id.0[..])
-                .execute(&mut **tx)
+            payment_entity::Entity::delete_many()
+                .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
+                .filter(payment_entity::Column::Id.eq(self.id.0.to_vec()))
+                .exec(tx)
                 .await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE payment {}: {e}",
-                    self.id,
+                    "DELETE payment {}: {e}", self.id,
                 )))?;
             Ok(client_zset.clone())
         }
