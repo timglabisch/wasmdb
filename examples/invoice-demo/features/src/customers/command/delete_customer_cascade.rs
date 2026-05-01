@@ -104,7 +104,7 @@ impl Command for DeleteCustomerCascade {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, ModelTrait, QueryFilter, QuerySelect};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -152,80 +152,113 @@ mod server_impl {
                 )))?;
 
             if !recurring_ids.is_empty() {
-                recurring_position_entity::Entity::delete_many()
+                let recurring_positions: Vec<recurring_position_entity::Model> = recurring_position_entity::Entity::find()
                     .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                     .filter(recurring_position_entity::Column::RecurringId.is_in(recurring_ids.clone()))
-                    .exec(tx)
-                    .await
+                    .all(tx).await
                     .map_err(|e| CommandError::ExecutionFailed(format!(
-                        "DELETE recurring_positions for customer {id}: {e}",
+                        "load recurring_positions for customer {id}: {e}",
                     )))?;
+                for rp in recurring_positions {
+                    rp.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE recurring_position for customer {id}: {e}",
+                    )))?;
+                }
 
-                recurring_invoice_entity::Entity::delete_many()
+                let recurring_invoices: Vec<recurring_invoice_entity::Model> = recurring_invoice_entity::Entity::find()
                     .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                     .filter(recurring_invoice_entity::Column::Id.is_in(recurring_ids))
-                    .exec(tx)
-                    .await
+                    .all(tx).await
                     .map_err(|e| CommandError::ExecutionFailed(format!(
-                        "DELETE recurring_invoices for customer {id}: {e}",
+                        "load recurring_invoices for customer {id}: {e}",
                     )))?;
+                for ri in recurring_invoices {
+                    ri.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE recurring_invoice for customer {id}: {e}",
+                    )))?;
+                }
             }
 
             if !invoice_ids.is_empty() {
-                payment_entity::Entity::delete_many()
+                let payments: Vec<payment_entity::Model> = payment_entity::Entity::find()
                     .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                     .filter(payment_entity::Column::InvoiceId.is_in(invoice_ids.clone()))
-                    .exec(tx)
-                    .await
+                    .all(tx).await
                     .map_err(|e| CommandError::ExecutionFailed(format!(
-                        "DELETE payments for customer {id}: {e}",
+                        "load payments for customer {id}: {e}",
                     )))?;
+                for payment in payments {
+                    payment.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE payment for customer {id}: {e}",
+                    )))?;
+                }
 
-                position_entity::Entity::delete_many()
+                let positions: Vec<position_entity::Model> = position_entity::Entity::find()
                     .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                     .filter(position_entity::Column::InvoiceId.is_in(invoice_ids.clone()))
-                    .exec(tx)
-                    .await
+                    .all(tx).await
                     .map_err(|e| CommandError::ExecutionFailed(format!(
-                        "DELETE positions for customer {id}: {e}",
+                        "load positions for customer {id}: {e}",
                     )))?;
+                for pos in positions {
+                    pos.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE position for customer {id}: {e}",
+                    )))?;
+                }
 
-                invoice_entity::Entity::delete_many()
+                let invoices: Vec<invoice_entity::Model> = invoice_entity::Entity::find()
                     .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                     .filter(invoice_entity::Column::Id.is_in(invoice_ids))
-                    .exec(tx)
-                    .await
+                    .all(tx).await
                     .map_err(|e| CommandError::ExecutionFailed(format!(
-                        "DELETE invoices for customer {id}: {e}",
+                        "load invoices for customer {id}: {e}",
                     )))?;
+                for invoice in invoices {
+                    invoice.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                        "DELETE invoice for customer {id}: {e}",
+                    )))?;
+                }
             }
 
-            sepa_mandate_entity::Entity::delete_many()
+            let sepa_mandates: Vec<sepa_mandate_entity::Model> = sepa_mandate_entity::Entity::find()
                 .filter(sepa_mandate_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(sepa_mandate_entity::Column::CustomerId.eq(id_bytes.clone()))
-                .exec(tx)
-                .await
+                .all(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE sepa_mandates for customer {id}: {e}",
+                    "load sepa_mandates for customer {id}: {e}",
                 )))?;
+            for sm in sepa_mandates {
+                sm.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE sepa_mandate for customer {id}: {e}",
+                )))?;
+            }
 
-            contact_entity::Entity::delete_many()
+            let contacts: Vec<contact_entity::Model> = contact_entity::Entity::find()
                 .filter(contact_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(contact_entity::Column::CustomerId.eq(id_bytes.clone()))
-                .exec(tx)
-                .await
+                .all(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE contacts for customer {id}: {e}",
+                    "load contacts for customer {id}: {e}",
                 )))?;
+            for contact in contacts {
+                contact.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE contact for customer {id}: {e}",
+                )))?;
+            }
 
-            customer_entity::Entity::delete_many()
+            let customer = customer_entity::Entity::find()
                 .filter(customer_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(customer_entity::Column::Id.eq(id_bytes))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE customer {id}: {e}",
+                    "load customer {id}: {e}",
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "customer {id} not found",
                 )))?;
+            customer.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "DELETE customer {id}: {e}",
+            )))?;
 
             let detail = detail_for(&self.name);
             insert_activity(

@@ -80,23 +80,31 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            payment_entity::Entity::delete_many()
+            let payments: Vec<payment_entity::Model> = payment_entity::Entity::find()
                 .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(payment_entity::Column::InvoiceId.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .all(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE payments for invoice {}: {e}", self.id,
+                    "load payments for invoice {}: {e}", self.id,
                 )))?;
+            for payment in payments {
+                payment.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE payment for invoice {}: {e}", self.id,
+                )))?;
+            }
 
-            position_entity::Entity::delete_many()
+            let positions: Vec<position_entity::Model> = position_entity::Entity::find()
                 .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(position_entity::Column::InvoiceId.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .all(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE positions for invoice {}: {e}", self.id,
+                    "load positions for invoice {}: {e}", self.id,
                 )))?;
+            for pos in positions {
+                pos.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE position for invoice {}: {e}", self.id,
+                )))?;
+            }
 
             let model = invoice_entity::Entity::find()
                 .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))

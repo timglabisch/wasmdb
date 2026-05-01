@@ -164,12 +164,14 @@ mod server_impl {
     use super::*;
     use async_trait::async_trait;
     use sea_orm::{
-        ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseTransaction,
-        EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement, Value,
+        ActiveModelTrait, ColumnTrait, DatabaseTransaction,
+        EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
     };
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
+    use crate::invoices::invoice_server::entity as invoice_entity;
+    use crate::positions::position_server::entity as position_entity;
     use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
     use crate::recurring::recurring_position_server::entity as recurring_position_entity;
 
@@ -223,80 +225,69 @@ mod server_impl {
                 )));
             }
 
-            // Invoice + position inserts use raw SQL while invoices/positions
-            // are still on sqlx-only schemas. Switch to ActiveModel-based
-            // inserts once those features are migrated.
-            let invoice_stmt = Statement::from_sql_and_values(
-                DatabaseBackend::MySql,
-                "INSERT INTO invoice_demo.invoices (tenant_id, id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                 ON DUPLICATE KEY UPDATE id = id",
-                [
-                    Value::from(DEMO_TENANT_ID),
-                    Value::from(new_invoice_id.0.to_vec()),
-                    Value::from(customer_id_bytes),
-                    Value::from(self.new_number.clone()),
-                    Value::from(status),
-                    Value::from(self.issue_date.clone()),
-                    Value::from(self.due_date.clone()),
-                    Value::from(notes),
-                    Value::from("invoice".to_string()),
-                    Value::Bytes(None),
-                    Value::from("".to_string()),
-                    Value::from(0_i64),
-                    Value::from(0_i64),
-                    Value::from(0_i64),
-                    Value::from("transfer".to_string()),
-                    Value::Bytes(None),
-                    Value::from("EUR".to_string()),
-                    Value::from("de".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                    Value::from("".to_string()),
-                ],
-            );
-            tx.execute_raw(invoice_stmt).await.map_err(|e| {
-                CommandError::ExecutionFailed(format!(
+            let am = invoice_entity::ActiveModel {
+                tenant_id: Set(DEMO_TENANT_ID),
+                id: Set(new_invoice_id.0.to_vec()),
+                customer_id: Set(Some(customer_id_bytes)),
+                number: Set(self.new_number.clone()),
+                status: Set(status),
+                date_issued: Set(self.issue_date.clone()),
+                date_due: Set(self.due_date.clone()),
+                notes: Set(notes),
+                doc_type: Set("invoice".to_string()),
+                parent_id: Set(None),
+                service_date: Set("".to_string()),
+                cash_allowance_pct: Set(0_i64),
+                cash_allowance_days: Set(0_i64),
+                discount_pct: Set(0_i64),
+                payment_method: Set("transfer".to_string()),
+                sepa_mandate_id: Set(None),
+                currency: Set("EUR".to_string()),
+                language: Set("de".to_string()),
+                project_ref: Set("".to_string()),
+                external_id: Set("".to_string()),
+                billing_street: Set("".to_string()),
+                billing_zip: Set("".to_string()),
+                billing_city: Set("".to_string()),
+                billing_country: Set("".to_string()),
+                shipping_street: Set("".to_string()),
+                shipping_zip: Set("".to_string()),
+                shipping_city: Set("".to_string()),
+                shipping_country: Set("".to_string()),
+            };
+            invoice_entity::Entity::insert(am)
+                .on_conflict_do_nothing()
+                .exec_without_returning(tx)
+                .await
+                .map_err(|e| CommandError::ExecutionFailed(format!(
                     "INSERT invoice {new_invoice_id}: {e}",
-                ))
-            })?;
+                )))?;
 
             for (i, pid) in self.position_ids.iter().enumerate() {
                 let pos = &positions[i];
-                let pos_stmt = Statement::from_sql_and_values(
-                    DatabaseBackend::MySql,
-                    "INSERT INTO invoice_demo.positions (tenant_id, id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-                     ON DUPLICATE KEY UPDATE id = id",
-                    [
-                        Value::from(DEMO_TENANT_ID),
-                        Value::from(pid.0.to_vec()),
-                        Value::from(new_invoice_id.0.to_vec()),
-                        Value::from((i as i64 + 1) * 1000),
-                        Value::from(pos.description.clone()),
-                        Value::from(pos.quantity),
-                        Value::from(pos.unit_price),
-                        Value::from(pos.tax_rate),
-                        Value::Bytes(None),
-                        Value::from(pos.item_number.clone()),
-                        Value::from(pos.unit.clone()),
-                        Value::from(pos.discount_pct),
-                        Value::from(0_i64),
-                        Value::from("service".to_string()),
-                    ],
-                );
-                tx.execute_raw(pos_stmt).await.map_err(|e| {
-                    CommandError::ExecutionFailed(format!(
+                let pam = position_entity::ActiveModel {
+                    tenant_id: Set(DEMO_TENANT_ID),
+                    id: Set(pid.0.to_vec()),
+                    invoice_id: Set(new_invoice_id.0.to_vec()),
+                    position_nr: Set((i as i64 + 1) * 1000),
+                    description: Set(pos.description.clone()),
+                    quantity: Set(pos.quantity),
+                    unit_price: Set(pos.unit_price),
+                    tax_rate: Set(pos.tax_rate),
+                    product_id: Set(None),
+                    item_number: Set(pos.item_number.clone()),
+                    unit: Set(pos.unit.clone()),
+                    discount_pct: Set(pos.discount_pct),
+                    cost_price: Set(0_i64),
+                    position_type: Set("service".to_string()),
+                };
+                position_entity::Entity::insert(pam)
+                    .on_conflict_do_nothing()
+                    .exec_without_returning(tx)
+                    .await
+                    .map_err(|e| CommandError::ExecutionFailed(format!(
                         "INSERT position {pid} for invoice {new_invoice_id}: {e}",
-                    ))
-                })?;
+                    )))?;
             }
 
             let template = recurring_invoice_entity::Entity::find()

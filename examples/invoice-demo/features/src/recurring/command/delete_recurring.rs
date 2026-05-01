@@ -72,15 +72,20 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            recurring_position_entity::Entity::delete_many()
+            let recurring_positions: Vec<recurring_position_entity::Model> = recurring_position_entity::Entity::find()
                 .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_position_entity::Column::RecurringId.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .all(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE recurring_positions for recurring_id {}: {e}",
+                    "load recurring_positions for recurring_id {}: {e}",
                     self.id,
                 )))?;
+            for rp in recurring_positions {
+                rp.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                    "DELETE recurring_position for recurring_id {}: {e}",
+                    self.id,
+                )))?;
+            }
             let model = recurring_invoice_entity::Entity::find()
                 .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_invoice_entity::Column::Id.eq(self.id.0.to_vec()))
