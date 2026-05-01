@@ -11,14 +11,16 @@ import { isoDate } from './isoDate.ts';
  */
 export async function createCreditNote(sourceInvoiceId: string): Promise<string | null> {
   const headerRows = peekQuery(
-    `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${sourceInvoiceId}'`,
+    `SELECT invoices.number FROM invoices WHERE invoices.id = :id`,
+    { id: sourceInvoiceId },
   );
   if (headerRows.length === 0) return null;
   const srcNumber = headerRows[0][0] as string;
   if (!confirm(`Gutschrift zu "${srcNumber}" erzeugen?`)) return null;
 
   const positionRows = peekQuery(
-    `SELECT positions.id FROM positions WHERE positions.invoice_id = UUID '${sourceInvoiceId}' ORDER BY positions.position_nr`,
+    `SELECT positions.id FROM positions WHERE positions.invoice_id = :id ORDER BY positions.position_nr`,
+    { id: sourceInvoiceId },
   );
   const newPositionIds: string[] = positionRows.map(() => nextId());
   const newInvoiceId = nextId();
