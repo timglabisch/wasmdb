@@ -41,12 +41,12 @@ export default function CustomerDetailRoute() {
   const { customerId } = useParams({ from: '/customers/$customerId' });
 
   const { status, error } = useRequirements([
-    requirements.customers.all(),
-    requirements.contacts.all(),
-    requirements.invoices.all(),
-    requirements.positions.all(),
-    requirements.payments.all(),
-    requirements.sepaMandates.all(),
+    requirements.customers.customerServer.all(),
+    requirements.contacts.contactServer.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.positions.positionServer.all(),
+    requirements.payments.paymentServer.all(),
+    requirements.sepaMandates.sepaMandateServer.all(),
   ]);
 
   return (

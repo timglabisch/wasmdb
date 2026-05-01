@@ -36,10 +36,10 @@ interface IdRow {
 export default function CustomersTab() {
   const [search, setSearch] = React.useState('');
   const { status, error } = useRequirements([
-    requirements.customers.all(),
-    requirements.invoices.all(),
-    requirements.payments.all(),
-    requirements.positions.all(),
+    requirements.customers.customerServer.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.payments.paymentServer.all(),
+    requirements.positions.positionServer.all(),
   ]);
   const rows = useQuery(
     'SELECT REACTIVE(customers.id), customers.id, customers.name, customers.email FROM customers ORDER BY customers.name',

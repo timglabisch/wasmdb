@@ -34,7 +34,7 @@ import { setProductActive, deleteProduct } from '@/generated/InvoiceCommandFacto
  */
 export default function ProductsTab() {
   const [filter, setFilter] = React.useState('');
-  const { status, error } = useRequirements([requirements.products.all()]);
+  const { status, error } = useRequirements([requirements.products.productServer.all()]);
 
   return (
     <>

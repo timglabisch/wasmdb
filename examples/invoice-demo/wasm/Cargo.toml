@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 sync = { path = "../../../crates/sync", features = ["serde"] }
 sync-client = { path = "../../../crates/sync-client" }
-invoice-demo-commands = { path = "../commands" }
+invoice-demo-features = { path = "../features" }
 invoice-demo-tables-client-generated = { path = "../tables-client-generated" }
 requirements = { path = "../../../crates/requirements" }
 futures = "0.3"

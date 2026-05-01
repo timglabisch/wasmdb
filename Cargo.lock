@@ -969,18 +969,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "invoice-demo-commands"
+name = "invoice-demo-features"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "borsh",
  "database",
+ "requirements",
  "rpc-command",
+ "sea-orm",
  "serde",
  "sql-engine",
+ "sql-parser",
  "sqlx",
  "sync",
+ "sync-client",
  "sync-server-mysql",
+ "tables",
+ "tables-codegen",
+ "tables-storage",
  "ts-rs",
 ]
 
@@ -990,8 +998,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "borsh",
- "invoice-demo-commands",
- "invoice-demo-tables-storage",
+ "invoice-demo-features",
  "sea-orm",
  "sql-engine",
  "sqlx",
@@ -1021,23 +1028,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "invoice-demo-tables-storage"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "borsh",
- "requirements",
- "sea-orm",
- "serde",
- "sql-engine",
- "sql-parser",
- "sqlx",
- "tables",
- "tables-codegen",
- "tables-storage",
-]
-
-[[package]]
 name = "invoice-demo-wasm"
 version = "0.1.0"
 dependencies = [
@@ -1045,7 +1035,7 @@ dependencies = [
  "database",
  "database-reactive",
  "futures",
- "invoice-demo-commands",
+ "invoice-demo-features",
  "invoice-demo-tables-client-generated",
  "js-sys",
  "requirements",

@@ -1,18 +1,18 @@
 use std::cell::RefCell;
 
 use database::Database;
-use invoice_demo_commands::InvoiceCommand;
+use invoice_demo_features::InvoiceCommand;
 use invoice_demo_tables_client_generated::{
-    activity_log::ActivityLogEntry,
-    contacts::Contact,
-    customers::Customer,
-    invoices::Invoice,
-    payments::Payment,
-    positions::Position,
-    products::Product,
-    recurring_invoices::RecurringInvoice,
-    recurring_positions::RecurringPosition,
-    sepa_mandates::SepaMandate,
+    activity_log::activity_log_client::ActivityLogEntry,
+    contacts::contact_client::Contact,
+    customers::customer_client::Customer,
+    invoices::invoice_client::Invoice,
+    payments::payment_client::Payment,
+    positions::position_client::Position,
+    products::product_client::Product,
+    recurring::recurring_invoice_client::RecurringInvoice,
+    recurring::recurring_position_client::RecurringPosition,
+    sepa_mandates::sepa_mandate_client::SepaMandate,
 };
 use sync_client::client::SyncClient;
 

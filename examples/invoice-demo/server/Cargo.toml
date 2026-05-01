@@ -6,8 +6,7 @@ edition = "2021"
 [dependencies]
 sync = { path = "../../../crates/sync" }
 sync-server-mysql = { path = "../../../crates/sync-server-mysql" }
-invoice-demo-commands = { path = "../commands", features = ["server"] }
-invoice-demo-tables-storage = { path = "../tables-storage" }
+invoice-demo-features = { path = "../features", features = ["server"] }
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
 sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }

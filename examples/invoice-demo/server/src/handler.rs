@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use borsh::BorshDeserialize;
-use invoice_demo_commands::InvoiceCommand;
+use invoice_demo_features::InvoiceCommand;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict};
 use sync_server_mysql::ServerCommand;
 

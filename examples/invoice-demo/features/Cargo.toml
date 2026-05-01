@@ -1,0 +1,46 @@
+[package]
+name = "invoice-demo-features"
+version = "0.1.0"
+edition = "2021"
+
+# Vertical-slice umbrella crate. Each business entity (products, customers,
+# invoices, ...) lives in its own folder with `<entity>_client.rs` (DTO +
+# wire format), `<entity>_server.rs` (SeaORM/sqlx, server-only via
+# `feature = "server"`), and `command/` (one file per command).
+
+[features]
+default = []
+# Enable server-side execution: SeaORM, sqlx, ServerCommand impls,
+# `register_all` for the table-fetch registry. Off by default so the wasm
+# client build does not pull in MySQL.
+server = [
+    "dep:sync-server-mysql",
+    "dep:sqlx",
+    "dep:async-trait",
+    "dep:sea-orm",
+    "dep:anyhow",
+]
+
+[dependencies]
+sync = { path = "../../../crates/sync" }
+sync-client = { path = "../../../crates/sync-client", optional = true }
+database = { path = "../../../crates/database", features = ["borsh"] }
+sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde"] }
+sql-parser = { path = "../../../crates/sql-parser" }
+requirements = { path = "../../../crates/requirements" }
+tables = { path = "../../../crates/tables" }
+tables-storage = { path = "../../../crates/tables-storage" }
+rpc-command = { path = "../../../crates/rpc-command" }
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+ts-rs = { version = "12", features = ["serde-compat"] }
+
+# server-only
+sync-server-mysql = { path = "../../../crates/sync-server-mysql", optional = true }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"], optional = true }
+async-trait = { version = "0.1", optional = true }
+sea-orm = { version = "=2.0.0-rc.38", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"], default-features = false, optional = true }
+anyhow = { version = "1", optional = true }
+
+[build-dependencies]
+tables-codegen = { path = "../../../crates/tables-codegen" }

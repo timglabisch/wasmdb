@@ -34,8 +34,8 @@ export default function RecurringTab() {
   const [query, setQuery] = React.useState('');
 
   const { status, error } = useRequirements([
-    requirements.recurringInvoices.all(),
-    requirements.customers.all(),
+    requirements.recurring.recurringInvoiceServer.all(),
+    requirements.customers.customerServer.all(),
   ]);
   const ids = useQuery(
     'SELECT REACTIVE(recurring_invoices.id), recurring_invoices.id, recurring_invoices.next_run ' +

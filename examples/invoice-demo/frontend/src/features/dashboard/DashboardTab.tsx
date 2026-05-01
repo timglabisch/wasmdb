@@ -25,10 +25,10 @@ import { TopCustomers } from '@/features/dashboard/TopCustomers';
  */
 export default function DashboardTab() {
   const { status, error } = useRequirements([
-    requirements.customers.all(),
-    requirements.invoices.all(),
-    requirements.payments.all(),
-    requirements.positions.all(),
+    requirements.customers.customerServer.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.payments.paymentServer.all(),
+    requirements.positions.positionServer.all(),
   ]);
   return (
     <>

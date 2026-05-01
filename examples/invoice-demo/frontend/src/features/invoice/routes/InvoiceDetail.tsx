@@ -15,14 +15,14 @@ import { ActivityCard } from '@/features/invoice/panels/ActivityCard';
 export default function InvoiceDetail() {
   const { invoiceId } = useParams({ from: '/invoices/$invoiceId' });
   const { status, error } = useRequirements([
-    requirements.invoices.all(),
-    requirements.positions.all(),
-    requirements.payments.all(),
-    requirements.customers.all(),
-    requirements.contacts.all(),
-    requirements.sepaMandates.all(),
-    requirements.activityLog.all(),
-    requirements.products.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.positions.positionServer.all(),
+    requirements.payments.paymentServer.all(),
+    requirements.customers.customerServer.all(),
+    requirements.contacts.contactServer.all(),
+    requirements.sepaMandates.sepaMandateServer.all(),
+    requirements.activityLog.activityLogServer.all(),
+    requirements.products.productServer.all(),
   ]);
 
   return (

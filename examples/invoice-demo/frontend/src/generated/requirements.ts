@@ -10,33 +10,51 @@ export interface RequirementSpec {
 
 export const requirements = {
   activityLog: {
-    all: (): RequirementSpec => ({ id: 'activity_log::all', args: [] })
+    activityLogServer: {
+      all: (): RequirementSpec => ({ id: 'activity_log::activity_log_server::all', args: [] })
+    }
   },
   contacts: {
-    all: (): RequirementSpec => ({ id: 'contacts::all', args: [] })
+    contactServer: {
+      all: (): RequirementSpec => ({ id: 'contacts::contact_server::all', args: [] })
+    }
   },
   customers: {
-    all: (): RequirementSpec => ({ id: 'customers::all', args: [] })
+    customerServer: {
+      all: (): RequirementSpec => ({ id: 'customers::customer_server::all', args: [] })
+    }
   },
   invoices: {
-    all: (): RequirementSpec => ({ id: 'invoices::all', args: [] })
+    invoiceServer: {
+      all: (): RequirementSpec => ({ id: 'invoices::invoice_server::all', args: [] })
+    }
   },
   payments: {
-    all: (): RequirementSpec => ({ id: 'payments::all', args: [] })
+    paymentServer: {
+      all: (): RequirementSpec => ({ id: 'payments::payment_server::all', args: [] })
+    }
   },
   positions: {
-    all: (): RequirementSpec => ({ id: 'positions::all', args: [] })
+    positionServer: {
+      all: (): RequirementSpec => ({ id: 'positions::position_server::all', args: [] })
+    }
   },
   products: {
-    all: (): RequirementSpec => ({ id: 'products::all', args: [] })
+    productServer: {
+      all: (): RequirementSpec => ({ id: 'products::product_server::all', args: [] })
+    }
   },
-  recurringInvoices: {
-    all: (): RequirementSpec => ({ id: 'recurring_invoices::all', args: [] })
-  },
-  recurringPositions: {
-    all: (): RequirementSpec => ({ id: 'recurring_positions::all', args: [] })
+  recurring: {
+    recurringInvoiceServer: {
+      all: (): RequirementSpec => ({ id: 'recurring::recurring_invoice_server::all', args: [] })
+    },
+    recurringPositionServer: {
+      all: (): RequirementSpec => ({ id: 'recurring::recurring_position_server::all', args: [] })
+    }
   },
   sepaMandates: {
-    all: (): RequirementSpec => ({ id: 'sepa_mandates::all', args: [] })
+    sepaMandateServer: {
+      all: (): RequirementSpec => ({ id: 'sepa_mandates::sepa_mandate_server::all', args: [] })
+    }
   }
 } as const;

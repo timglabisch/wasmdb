@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use axum::routing::post;
-use invoice_demo_tables_storage::{register_all, AppCtx};
+use invoice_demo_features::{register_all, AppCtx};
 use tables_storage::Registry;
 use tower_http::services::ServeDir;
 
-pub mod schema;
 pub mod handler;
 
 /// Stateless invoice-demo server: TiDB is the single source of truth. The
@@ -22,10 +21,6 @@ pub async fn run() {
     let pool = sqlx::MySqlPool::connect(&database_url)
         .await
         .expect("connect to database");
-
-    schema::assert_mysql_matches(&pool, &schema::build_table_schemas())
-        .await
-        .expect("TiDB schema does not match expected TableSchema — run sql/001_init.sql");
 
     let db = sea_orm::SqlxMySqlConnector::from_sqlx_mysql_pool(pool.clone());
 

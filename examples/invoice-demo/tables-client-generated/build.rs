@@ -4,7 +4,7 @@
 
 fn main() {
     tables_codegen::Builder::new()
-        .source_root("../tables-storage/src")
+        .source_root("../features/src")
         .client()
         .url("/table-fetch")
         .wasm_bindings(true)

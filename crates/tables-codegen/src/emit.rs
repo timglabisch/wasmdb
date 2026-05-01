@@ -4,25 +4,94 @@
 //! `include!`-ing inside `mod __generated { ... }` in the caller crate.
 //! Paths into user code use `crate::<mod_path>::...` absolute references.
 
+use std::collections::BTreeMap;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::Type;
+use syn::{Type, TypePath};
 
 use tables_fieldtypes::{classify, pascal_to_snake, FieldKind};
 
 use crate::parse::{Model, Module, Query, Row, RowExport};
 use crate::CodegenError;
 
+/// Tree of generated modules keyed by path segment. Used to merge sibling
+/// emissions that share a parent path (e.g. `entity::entity_client` and
+/// `entity::entity_server` need to live inside one `pub mod entity { ... }`,
+/// not two top-level duplicates which would be E0428).
+#[derive(Default)]
+struct ModNode {
+    content: TokenStream,
+    children: BTreeMap<String, ModNode>,
+}
+
+impl ModNode {
+    fn insert(&mut self, path: &[String], content: TokenStream) {
+        if path.is_empty() {
+            let prev = std::mem::take(&mut self.content);
+            self.content = quote! { #prev #content };
+        } else {
+            self.children
+                .entry(path[0].clone())
+                .or_default()
+                .insert(&path[1..], content);
+        }
+    }
+
+    fn render(&self, name: Option<&str>) -> TokenStream {
+        let content = &self.content;
+        let children = self
+            .children
+            .iter()
+            .map(|(n, c)| c.render(Some(n)))
+            .collect::<Vec<_>>();
+        let body = quote! { #content #(#children)* };
+        if let Some(n) = name {
+            let id = format_ident!("{n}");
+            quote! { pub mod #id { #body } }
+        } else {
+            body
+        }
+    }
+}
+
+/// Map row-name → its source module path. Lets a `#[query]` in module A
+/// reference a `#[row]` defined in module B (typical when `*_client.rs`
+/// holds the DTO and `*_server.rs` holds the query).
+fn build_row_path_index(model: &Model) -> BTreeMap<String, Vec<String>> {
+    let mut idx = BTreeMap::new();
+    for m in &model.modules {
+        for r in &m.rows {
+            idx.insert(r.name.clone(), m.path.clone());
+        }
+    }
+    idx
+}
+
+/// Extract the leading identifier of a `Type::Path` (e.g. `Customer` from
+/// `Customer` or `crate::foo::Customer`). Returns `None` for non-path types.
+fn type_leading_ident(ty: &Type) -> Option<String> {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        path.segments.last().map(|s| s.ident.to_string())
+    } else {
+        None
+    }
+}
+
 pub fn emit_client(
     model: &Model,
     url: &str,
     wasm_bindings: bool,
 ) -> Result<TokenStream, CodegenError> {
-    let modules = model
-        .modules
-        .iter()
-        .map(|m| emit_client_module(m, url))
-        .collect::<Result<Vec<_>, _>>()?;
+    let row_index = build_row_path_index(model);
+    let mut tree = ModNode::default();
+    for m in &model.modules {
+        let content = emit_client_module_content(m, url, &row_index)?;
+        if !content.is_empty() {
+            tree.insert(&m.path, content);
+        }
+    }
+    let modules = tree.render(None);
     let wasm = if wasm_bindings {
         let bindings = model
             .modules
@@ -32,9 +101,9 @@ pub fn emit_client(
     } else {
         quote! {}
     };
-    let register_all = emit_register_all_requirements(model, url)?;
+    let register_all = emit_register_all_requirements(model, url, &row_index)?;
     Ok(quote! {
-        #(#modules)*
+        #modules
         #wasm
         #register_all
     })
@@ -43,12 +112,16 @@ pub fn emit_client(
 pub fn emit_server(model: &Model, ctx_ty_str: &str) -> Result<TokenStream, CodegenError> {
     let ctx_ty: Type = syn::parse_str(ctx_ty_str)
         .map_err(|e| CodegenError::Emit(format!("ctx_type `{ctx_ty_str}`: {e}")))?;
+    let row_index = build_row_path_index(model);
 
-    let modules = model
-        .modules
-        .iter()
-        .map(|m| emit_server_module(m, &ctx_ty))
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut tree = ModNode::default();
+    for m in &model.modules {
+        let content = emit_server_module_content(m, &ctx_ty, &row_index)?;
+        if !content.is_empty() {
+            tree.insert(&m.path, content);
+        }
+    }
+    let modules = tree.render(None);
 
     let register_calls = model
         .modules
@@ -63,7 +136,7 @@ pub fn emit_server(model: &Model, ctx_ty_str: &str) -> Result<TokenStream, Codeg
         .collect::<Vec<_>>();
 
     Ok(quote! {
-        #(#modules)*
+        #modules
 
         pub fn register_all(registry: &mut ::tables_storage::Registry<#ctx_ty>) {
             #(#register_calls)*
@@ -71,7 +144,14 @@ pub fn emit_server(model: &Model, ctx_ty_str: &str) -> Result<TokenStream, Codeg
     })
 }
 
-fn emit_client_module(m: &Module, url: &str) -> Result<TokenStream, CodegenError> {
+/// Emit a single module's content (no surrounding `pub mod`). Tree
+/// assembly merges sibling content so two source modules sharing a parent
+/// path collapse into one `pub mod` block.
+fn emit_client_module_content(
+    m: &Module,
+    url: &str,
+    row_index: &BTreeMap<String, Vec<String>>,
+) -> Result<TokenStream, CodegenError> {
     let rows = m
         .rows
         .iter()
@@ -80,26 +160,32 @@ fn emit_client_module(m: &Module, url: &str) -> Result<TokenStream, CodegenError
     let queries = m
         .queries
         .iter()
-        .map(|q| emit_client_query(q, url))
+        .map(|q| emit_client_query(q, url, &m.path, row_index))
         .collect::<Result<Vec<_>, _>>()?;
-    let content = quote! {
+    let prelude = module_prelude(m);
+    Ok(quote! {
+        #prelude
         #(#rows)*
         #(#queries)*
-    };
-    Ok(wrap_in_mods(&m.path, module_prelude(m), content))
+    })
 }
 
-fn emit_server_module(m: &Module, ctx_ty: &Type) -> Result<TokenStream, CodegenError> {
+fn emit_server_module_content(
+    m: &Module,
+    ctx_ty: &Type,
+    row_index: &BTreeMap<String, Vec<String>>,
+) -> Result<TokenStream, CodegenError> {
     let user_mod = user_mod_path(&m.path);
     let queries = m
         .queries
         .iter()
-        .map(|q| emit_server_query(q, ctx_ty, &user_mod))
+        .map(|q| emit_server_query(q, ctx_ty, &user_mod, row_index))
         .collect::<Result<Vec<_>, _>>()?;
-    let content = quote! {
+    let prelude = module_prelude(m);
+    Ok(quote! {
+        #prelude
         #(#queries)*
-    };
-    Ok(wrap_in_mods(&m.path, module_prelude(m), content))
+    })
 }
 
 /// Build the `use` prelude needed for a generated module to compile.
@@ -272,11 +358,16 @@ fn emit_dbtable_impl(
     })
 }
 
-fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> {
+fn emit_client_query(
+    q: &Query,
+    url: &str,
+    query_mod_path: &[String],
+    row_index: &BTreeMap<String, Vec<String>>,
+) -> Result<TokenStream, CodegenError> {
     let fn_name = format_ident!("{}", q.fn_name);
     let marker = format_ident!("{}", q.marker_name);
     let id_lit = &q.id;
-    let row_ty = &q.row_ty;
+    let row_path = client_row_path(&q.row_ty, query_mod_path, row_index);
 
     let param_fields = q.params.iter().map(|(n, t)| {
         let ident = format_ident!("{n}");
@@ -305,12 +396,12 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
         impl ::tables::Fetcher for #marker {
             const ID: ::tables::FetcherId = #id_lit;
             type Params = Self;
-            type Row = #row_ty;
+            type Row = #row_path;
         }
 
         impl ::requirements::DbRequirement for #marker {
             const ID: &'static str = #id_lit;
-            type Row = #row_ty;
+            type Row = #row_path;
 
             fn meta() -> ::requirements::RequirementMeta {
                 ::requirements::RequirementMeta {
@@ -322,7 +413,7 @@ fn emit_client_query(q: &Query, url: &str) -> Result<TokenStream, CodegenError> 
 
         pub async fn #fn_name(#(#param_args),*)
             -> ::core::result::Result<
-                ::std::vec::Vec<#row_ty>,
+                ::std::vec::Vec<#row_path>,
                 ::tables_client::FetchError,
             >
         {
@@ -362,6 +453,7 @@ fn emit_server_query(
     q: &Query,
     ctx_ty: &Type,
     user_mod: &TokenStream,
+    row_index: &BTreeMap<String, Vec<String>>,
 ) -> Result<TokenStream, CodegenError> {
     let fn_name = format_ident!("{}", q.fn_name);
     let marker = format_ident!("{}", q.marker_name);
@@ -379,7 +471,11 @@ fn emit_server_query(
         .map(|(n, _)| format_ident!("{n}"))
         .collect();
     let param_defs = emit_param_defs(&q.fn_name, &q.params)?;
-    let row_path = quote! { #user_mod::#row_ty };
+    let row_user_mod = type_leading_ident(&q.row_ty)
+        .and_then(|n| row_index.get(&n))
+        .map(|p| user_mod_path(p))
+        .unwrap_or_else(|| user_mod.clone());
+    let row_path = quote! { #row_user_mod::#row_ty };
 
     Ok(quote! {
         #[derive(
@@ -430,13 +526,25 @@ fn emit_server_query(
 /// closure shares the embedder-supplied `apply` function, fetches via
 /// HTTP, builds a `ZSet` from the typed rows, and applies it — the
 /// embedder decides which database receives the write.
-fn emit_register_all_requirements(model: &Model, url: &str) -> Result<TokenStream, CodegenError> {
+fn emit_register_all_requirements(
+    model: &Model,
+    url: &str,
+    row_index: &BTreeMap<String, Vec<String>>,
+) -> Result<TokenStream, CodegenError> {
     let mut blocks = Vec::new();
     for module in &model.modules {
         let mod_path = module_path_tokens(&module.path);
         for q in &module.queries {
             let marker = format_ident!("{}", q.marker_name);
             let row_ty = &q.row_ty;
+            // Row may live in a sibling generated module (when `*_client.rs`
+            // and `*_server.rs` split). Resolve via the index; fall back to
+            // the query's own mod path for the legacy single-file layout.
+            let row_mod = type_leading_ident(&q.row_ty)
+                .and_then(|n| row_index.get(&n))
+                .map(|p| module_path_tokens(p))
+                .unwrap_or_else(|| mod_path.clone());
+            let _ = row_ty; // reserved for future direct-name use
             let param_names: Vec<_> =
                 q.params.iter().map(|(n, _)| format_ident!("{n}")).collect();
             let arg_bindings = emit_arg_bindings(&q.fn_name, &q.params)?;
@@ -453,8 +561,8 @@ fn emit_register_all_requirements(model: &Model, url: &str) -> Result<TokenStrea
                             let mut zset = ::sql_engine::storage::ZSet::new();
                             for row in rows {
                                 zset.insert(
-                                    <#mod_path::#row_ty as ::sql_engine::DbTable>::TABLE.into(),
-                                    <#mod_path::#row_ty as ::sql_engine::DbTable>::into_cells(row),
+                                    <#row_mod::#row_ty as ::sql_engine::DbTable>::TABLE.into(),
+                                    <#row_mod::#row_ty as ::sql_engine::DbTable>::into_cells(row),
                                 );
                             }
                             apply(&zset)?;
@@ -869,4 +977,38 @@ fn snake_to_camel(s: &str) -> String {
 fn user_mod_path(path: &[String]) -> TokenStream {
     let idents: Vec<_> = path.iter().map(|s| format_ident!("{s}")).collect();
     quote! { crate::#(#idents)::* }
+}
+
+/// In client mode the Row struct is emitted inside the generated tree, so
+/// the path is relative to the *query's* generated module: walk up via
+/// `super::` to the common ancestor, then down into the row's module.
+/// Falls back to a bare type reference when the row isn't indexed (means
+/// it's defined in the same module as the query — old single-file style).
+fn client_row_path(
+    row_ty: &Type,
+    query_mod_path: &[String],
+    row_index: &BTreeMap<String, Vec<String>>,
+) -> TokenStream {
+    let row_path = type_leading_ident(row_ty).and_then(|n| row_index.get(&n).cloned());
+    let Some(row_path) = row_path else {
+        return quote! { #row_ty };
+    };
+    if row_path == query_mod_path {
+        return quote! { #row_ty };
+    }
+    let common = query_mod_path
+        .iter()
+        .zip(row_path.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let ups = query_mod_path.len().saturating_sub(common);
+    let mut segs: Vec<TokenStream> = Vec::with_capacity(ups + (row_path.len() - common));
+    for _ in 0..ups {
+        segs.push(quote! { super });
+    }
+    for s in &row_path[common..] {
+        let id = format_ident!("{s}");
+        segs.push(quote! { #id });
+    }
+    quote! { #(#segs)::* :: #row_ty }
 }

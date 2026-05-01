@@ -44,9 +44,9 @@ const UNIT_OPTIONS: BlurSelectOption[] = [
 export default function ProductDetailRoute() {
   const { productId } = useParams({ from: '/products/$productId' });
   const { status, error } = useRequirements([
-    requirements.products.all(),
-    requirements.invoices.all(),
-    requirements.positions.all(),
+    requirements.products.productServer.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.positions.positionServer.all(),
   ]);
   const exists = useProductExists(productId);
 

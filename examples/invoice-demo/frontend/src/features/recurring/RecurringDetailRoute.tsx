@@ -41,11 +41,11 @@ import {
 export default function RecurringDetailRoute() {
   const { recurringId } = useParams({ from: '/recurring/$recurringId' });
   const { status, error } = useRequirements([
-    requirements.recurringInvoices.all(),
-    requirements.recurringPositions.all(),
-    requirements.customers.all(),
-    requirements.products.all(),
-    requirements.activityLog.all(),
+    requirements.recurring.recurringInvoiceServer.all(),
+    requirements.recurring.recurringPositionServer.all(),
+    requirements.customers.customerServer.all(),
+    requirements.products.productServer.all(),
+    requirements.activityLog.activityLogServer.all(),
   ]);
   return (
     <RequirementsGate status={status} error={error} loadingLabel="Lade Serie…">

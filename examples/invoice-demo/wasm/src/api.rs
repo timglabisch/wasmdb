@@ -5,11 +5,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use database_reactive::SubscriptionHandle;
-use invoice_demo_commands::InvoiceCommand;
+use invoice_demo_features::InvoiceCommand;
 #[cfg(target_arch = "wasm32")]
 use invoice_demo_tables_client_generated::{
     activity_log, contacts, customers, invoices, payments, positions, products,
-    recurring_invoices, recurring_positions, sepa_mandates,
+    recurring, sepa_mandates,
 };
 use sql_engine::execute::{ParamValue, Params};
 use sql_engine::storage::CellValue;

@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
-use invoice_demo_commands::InvoiceCommand;
+use invoice_demo_features::InvoiceCommand;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandRequest, Verdict};
 
 use crate::debug::{log_event, now_ms, DebugEvent};

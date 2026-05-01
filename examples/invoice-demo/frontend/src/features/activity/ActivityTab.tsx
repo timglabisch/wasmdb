@@ -55,15 +55,15 @@ export default function ActivityTab() {
   const [search, setSearch] = React.useState('');
   const [limit, setLimit] = React.useState(PAGE_SIZE);
   const { status, error } = useRequirements([
-    requirements.activityLog.all(),
-    requirements.invoices.all(),
-    requirements.customers.all(),
-    requirements.products.all(),
-    requirements.contacts.all(),
-    requirements.payments.all(),
-    requirements.positions.all(),
-    requirements.recurringInvoices.all(),
-    requirements.sepaMandates.all(),
+    requirements.activityLog.activityLogServer.all(),
+    requirements.invoices.invoiceServer.all(),
+    requirements.customers.customerServer.all(),
+    requirements.products.productServer.all(),
+    requirements.contacts.contactServer.all(),
+    requirements.payments.paymentServer.all(),
+    requirements.positions.positionServer.all(),
+    requirements.recurring.recurringInvoiceServer.all(),
+    requirements.sepaMandates.sepaMandateServer.all(),
   ]);
 
   // Reset limit whenever the filter changes so results don't look stale.
