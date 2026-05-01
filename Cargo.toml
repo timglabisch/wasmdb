@@ -18,6 +18,8 @@ members = [
     "crates/sync-server",
     "crates/sync-server-mysql",
     "crates/wasmdb-debug",
+    "crates/rpc-command",
+    "crates/rpc-command-derive",
     "examples/sync-demo/server",
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",

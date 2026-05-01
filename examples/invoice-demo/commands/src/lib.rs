@@ -1,5 +1,6 @@
 use borsh::{BorshSerialize, BorshDeserialize};
 use database::Database;
+use rpc_command::rpc_command_enum;
 use serde::{Serialize, Deserialize};
 use ts_rs::TS;
 use sync::command::{Command, CommandError};
@@ -61,57 +62,58 @@ use activity::log::LogActivity;
 /// (`{ "type": "X", ...fields }`), Borsh encodes as `variant_idx + struct_bytes`,
 /// ts-rs emits an intersection (`{ "type": "X" } & X`) that is structurally
 /// equivalent to the old flat form. Variant order is API-stable (Borsh index).
+#[rpc_command_enum]
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
 #[serde(tag = "type")]
 #[ts(export)]
 pub enum InvoiceCommand {
-    CreateCustomer(CreateCustomer),
-    UpdateCustomer(UpdateCustomer),
-    DeleteCustomer(DeleteCustomer),
-    DeleteCustomerCascade(DeleteCustomerCascade),
+    #[rpc_command_skip] CreateCustomer(CreateCustomer),
+    #[rpc_command_skip] UpdateCustomer(UpdateCustomer),
+    #[rpc_command_skip] DeleteCustomer(DeleteCustomer),
+    #[rpc_command_skip] DeleteCustomerCascade(DeleteCustomerCascade),
 
-    CreateContact(CreateContact),
-    UpdateContact(UpdateContact),
-    DeleteContact(DeleteContact),
+    #[rpc_command_skip] CreateContact(CreateContact),
+    #[rpc_command_skip] UpdateContact(UpdateContact),
+    #[rpc_command_skip] DeleteContact(DeleteContact),
 
-    CreateInvoice(CreateInvoice),
-    UpdateInvoiceHeader(UpdateInvoiceHeader),
-    DeleteInvoice(DeleteInvoice),
+    #[rpc_command_skip] CreateInvoice(CreateInvoice),
+    #[rpc_command_skip] UpdateInvoiceHeader(UpdateInvoiceHeader),
+    #[rpc_command_skip] DeleteInvoice(DeleteInvoice),
     MarkPaid(MarkPaid),
-    MarkSent(MarkSent),
-    Storno(Storno),
-    ConvertOfferToInvoice(ConvertOfferToInvoice),
-    AssignCustomer(AssignCustomer),
-    DuplicateInvoice(DuplicateInvoice),
-    CreateCreditNote(CreateCreditNote),
+    #[rpc_command_skip] MarkSent(MarkSent),
+    #[rpc_command_skip] Storno(Storno),
+    #[rpc_command_skip] ConvertOfferToInvoice(ConvertOfferToInvoice),
+    #[rpc_command_skip] AssignCustomer(AssignCustomer),
+    #[rpc_command_skip] DuplicateInvoice(DuplicateInvoice),
+    #[rpc_command_skip] CreateCreditNote(CreateCreditNote),
 
-    AddPosition(AddPosition),
-    UpdatePosition(UpdatePosition),
-    DeletePosition(DeletePosition),
-    MovePosition(MovePosition),
+    #[rpc_command_skip] AddPosition(AddPosition),
+    #[rpc_command_skip] UpdatePosition(UpdatePosition),
+    #[rpc_command_skip] DeletePosition(DeletePosition),
+    #[rpc_command_skip] MovePosition(MovePosition),
 
-    CreatePayment(CreatePayment),
-    UpdatePayment(UpdatePayment),
-    DeletePayment(DeletePayment),
+    #[rpc_command_skip] CreatePayment(CreatePayment),
+    #[rpc_command_skip] UpdatePayment(UpdatePayment),
+    #[rpc_command_skip] DeletePayment(DeletePayment),
 
-    CreateProduct(CreateProduct),
-    UpdateProduct(UpdateProduct),
-    DeleteProduct(DeleteProduct),
-    SetProductActive(SetProductActive),
+    #[rpc_command_skip] CreateProduct(CreateProduct),
+    #[rpc_command_skip] UpdateProduct(UpdateProduct),
+    #[rpc_command_skip] DeleteProduct(DeleteProduct),
+    #[rpc_command_skip] SetProductActive(SetProductActive),
 
-    CreateSepaMandate(CreateSepaMandate),
-    UpdateSepaMandate(UpdateSepaMandate),
-    DeleteSepaMandate(DeleteSepaMandate),
+    #[rpc_command_skip] CreateSepaMandate(CreateSepaMandate),
+    #[rpc_command_skip] UpdateSepaMandate(UpdateSepaMandate),
+    #[rpc_command_skip] DeleteSepaMandate(DeleteSepaMandate),
 
-    CreateRecurring(CreateRecurring),
-    UpdateRecurring(UpdateRecurring),
-    DeleteRecurring(DeleteRecurring),
-    AddRecurringPosition(AddRecurringPosition),
-    UpdateRecurringPosition(UpdateRecurringPosition),
-    DeleteRecurringPosition(DeleteRecurringPosition),
-    RunRecurringOnce(RunRecurringOnce),
+    #[rpc_command_skip] CreateRecurring(CreateRecurring),
+    #[rpc_command_skip] UpdateRecurring(UpdateRecurring),
+    #[rpc_command_skip] DeleteRecurring(DeleteRecurring),
+    #[rpc_command_skip] AddRecurringPosition(AddRecurringPosition),
+    #[rpc_command_skip] UpdateRecurringPosition(UpdateRecurringPosition),
+    #[rpc_command_skip] DeleteRecurringPosition(DeleteRecurringPosition),
+    #[rpc_command_skip] RunRecurringOnce(RunRecurringOnce),
 
-    LogActivity(LogActivity),
+    #[rpc_command_skip] LogActivity(LogActivity),
 }
 
 impl Command for InvoiceCommand {

@@ -843,6 +843,7 @@ dependencies = [
  "async-trait",
  "borsh",
  "database",
+ "rpc-command",
  "serde",
  "sql-engine",
  "sqlx",
@@ -1405,6 +1406,26 @@ dependencies = [
  "fnv",
  "sql-engine",
  "sql-parser",
+]
+
+[[package]]
+name = "rpc-command"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "rpc-command-derive",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "rpc-command-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

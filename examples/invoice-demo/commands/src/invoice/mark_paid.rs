@@ -1,30 +1,28 @@
-use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
-use serde::{Deserialize, Serialize};
+use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use ts_rs::TS;
 
 use crate::helpers::{execute_sql, p_str, p_uuid, read_str_col, DEMO_TENANT_ID};
 
 /// Intent-Command: mark an invoice as paid.
 ///
-/// TS-Counterpart: `frontend/src/commands/invoice/markPaid.ts` (Cmd+Shift+O → `markPaid.ts`).
-///
 /// Replaces the old `updateInvoiceHeader({...,status:'paid'}) + logActivity(...)`
 /// pair. The activity row is produced inside `execute_optimistic` /
 /// `execute_server` from the invoice number — callers no longer compose
-/// the audit-log entry themselves. `activity_id` + `timestamp` are passed
-/// in by the client wrapper so client-optimistic and server-authoritative
-/// inserts share the same primary key (idempotent re-apply).
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
+/// the audit-log entry themselves. `activity_id` + `timestamp` are auto-filled
+/// client-side via `#[client_default]` so client-optimistic and server-
+/// authoritative inserts share the same primary key (idempotent re-apply).
+#[rpc_command]
 pub struct MarkPaid {
     #[ts(type = "string")]
     pub id: Uuid,
     #[ts(type = "string")]
+    #[client_default = "nextId()"]
     pub activity_id: Uuid,
+    #[client_default = "new Date().toISOString()"]
     pub timestamp: String,
 }
 

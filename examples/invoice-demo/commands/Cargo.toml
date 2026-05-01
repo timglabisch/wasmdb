@@ -16,6 +16,7 @@ sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde"
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }
+rpc-command = { path = "../../../crates/rpc-command" }
 
 sync-server-mysql = { path = "../../../crates/sync-server-mysql", optional = true }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"], optional = true }
