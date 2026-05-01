@@ -27,12 +27,14 @@ pub async fn run() {
         .await
         .expect("TiDB schema does not match expected TableSchema — run sql/001_init.sql");
 
+    let db = sea_orm::SqlxMySqlConnector::from_sqlx_mysql_pool(pool.clone());
+
     let mut registry = Registry::<AppCtx>::new();
     register_all(&mut registry);
 
     let state = Arc::new(AppState {
         registry,
-        ctx: AppCtx { pool },
+        ctx: AppCtx { pool, db },
     });
 
     let static_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist");

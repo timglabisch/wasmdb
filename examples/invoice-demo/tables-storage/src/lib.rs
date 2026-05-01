@@ -22,9 +22,11 @@ mod sepa_mandates;
 pub const DEMO_TENANT_ID: i64 = 0;
 
 /// App-level storage context. Server boot constructs this once with a
-/// connected pool.
+/// connected pool. `db` is a SeaORM handle that wraps the same pool —
+/// `from_sqlx_mysql_pool` does not open a second connection pool.
 pub struct AppCtx {
     pub pool: sqlx::MySqlPool,
+    pub db: sea_orm::DatabaseConnection,
 }
 
 /// Convert a sqlx-fetched `BINARY(16)` column into a `Uuid`. The MySQL
