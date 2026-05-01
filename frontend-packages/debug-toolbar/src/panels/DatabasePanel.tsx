@@ -21,14 +21,14 @@ function FragBar({ table }: { table: TableInfo }) {
   );
 }
 
-function TableView({ table, dbKind, otherRowCount }: { table: TableInfo; dbKind: 'optimistic' | 'confirmed'; otherRowCount?: number }) {
+function TableView({ table }: { table: TableInfo }) {
   const [expanded, setExpanded] = useState(false);
   const [rows, setRows] = useState<any[][] | null>(null);
 
   const handleExpand = () => {
     if (!expanded) {
       try {
-        setRows(getTableRows(table.name, dbKind, 100));
+        setRows(getTableRows(table.name, 'db', 100));
       } catch {
         setRows([]);
       }
@@ -36,15 +36,11 @@ function TableView({ table, dbKind, otherRowCount }: { table: TableInfo; dbKind:
     setExpanded(!expanded);
   };
 
-  const diffStyle = otherRowCount !== undefined && otherRowCount !== table.row_count
-    ? { color: table.row_count > otherRowCount ? '#4ade80' : '#f87171' }
-    : undefined;
-
   return (
     <div className="debug-table-entry">
       <div className="debug-clickable debug-table-header" onClick={handleExpand}>
         <span className="debug-table-name">{table.name}</span>
-        <span className="debug-table-count" style={diffStyle}>{table.row_count} rows</span>
+        <span className="debug-table-count">{table.row_count} rows</span>
         <FragBar table={table} />
         {table.physical_len !== table.row_count && (
           <span className="debug-table-meta">({table.physical_len} physical)</span>
@@ -112,21 +108,12 @@ function TableView({ table, dbKind, otherRowCount }: { table: TableInfo; dbKind:
   );
 }
 
-function DbColumn({ info, label, dbKind, otherInfo }: { info: DbInfo; label: string; dbKind: 'optimistic' | 'confirmed'; otherInfo?: DbInfo }) {
+function DbColumn({ info }: { info: DbInfo }) {
   return (
     <div className="debug-db-column">
-      <div className="debug-db-label">{label}</div>
-      {info.tables.map(table => {
-        const other = otherInfo?.tables.find(t => t.name === table.name);
-        return (
-          <TableView
-            key={table.name}
-            table={table}
-            dbKind={dbKind}
-            otherRowCount={other?.row_count}
-          />
-        );
-      })}
+      {info.tables.map(table => (
+        <TableView key={table.name} table={table} />
+      ))}
       {info.tables.length === 0 && <div className="debug-empty">No tables</div>}
     </div>
   );
@@ -135,10 +122,7 @@ function DbColumn({ info, label, dbKind, otherInfo }: { info: DbInfo; label: str
 export function DatabasePanel({ data }: { data: DatabaseDebug }) {
   return (
     <div className="debug-panel-db">
-      <div className="debug-db-grid">
-        <DbColumn info={data.optimistic} label="Optimistic" dbKind="optimistic" otherInfo={data.confirmed} />
-        <DbColumn info={data.confirmed} label="Confirmed" dbKind="confirmed" otherInfo={data.optimistic} />
-      </div>
+      <DbColumn info={data.db} />
     </div>
   );
 }

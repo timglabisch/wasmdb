@@ -70,8 +70,8 @@ export default function DashboardTab() {
 
 const CustomersKpi = React.memo(function CustomersKpi() {
   const rows = useQuery(
-    'SELECT COUNT(customers.id) FROM customers',
-    ([n]) => n as number,
+    'SELECT REACTIVE(customers.id), COUNT(customers.id) FROM customers',
+    ([_r, n]) => n as number,
   );
   const count = rows[0] ?? 0;
   return (
@@ -86,8 +86,8 @@ const CustomersKpi = React.memo(function CustomersKpi() {
 
 const InvoicesKpi = React.memo(function InvoicesKpi() {
   const rows = useQuery(
-    `SELECT COUNT(invoices.id) FROM invoices WHERE invoices.doc_type = 'invoice'`,
-    ([n]) => n as number,
+    `SELECT REACTIVE(invoices.id), COUNT(invoices.id) FROM invoices WHERE invoices.doc_type = 'invoice'`,
+    ([_r, n]) => n as number,
   );
   const count = rows[0] ?? 0;
   return (
@@ -102,10 +102,10 @@ const InvoicesKpi = React.memo(function InvoicesKpi() {
 
 const OpenKpi = React.memo(function OpenKpi() {
   const rows = useQuery(
-    `SELECT COUNT(invoices.id) FROM invoices ` +
+    `SELECT REACTIVE(invoices.id), COUNT(invoices.id) FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice' ` +
       `AND invoices.status IN ('draft', 'sent')`,
-    ([n]) => n as number,
+    ([_r, n]) => n as number,
   );
   const count = rows[0] ?? 0;
   return (
@@ -122,11 +122,11 @@ const OpenKpi = React.memo(function OpenKpi() {
 const OverdueKpi = React.memo(function OverdueKpi() {
   const today = new Date().toISOString().slice(0, 10);
   const rows = useQuery(
-    `SELECT COUNT(invoices.id) FROM invoices ` +
+    `SELECT REACTIVE(invoices.id), COUNT(invoices.id) FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice' ` +
       `AND invoices.status IN ('draft', 'sent') ` +
       `AND invoices.date_due < '${today}'`,
-    ([n]) => n as number,
+    ([_r, n]) => n as number,
   );
   const count = rows[0] ?? 0;
   return (
@@ -142,8 +142,8 @@ const OverdueKpi = React.memo(function OverdueKpi() {
 
 const ReceivedKpi = React.memo(function ReceivedKpi() {
   const rows = useQuery(
-    'SELECT SUM(payments.amount) FROM payments',
-    ([n]) => n as number,
+    'SELECT REACTIVE(payments.id), SUM(payments.amount) FROM payments',
+    ([_r, n]) => n as number,
   );
   const cents = rows[0] ?? 0;
   return (
@@ -160,8 +160,8 @@ const ReceivedKpi = React.memo(function ReceivedKpi() {
 const OutstandingKpi = React.memo(function OutstandingKpi() {
   const gross = useGlobalGrossCents();
   const rows = useQuery(
-    'SELECT SUM(payments.amount) FROM payments',
-    ([n]) => n as number,
+    'SELECT REACTIVE(payments.id), SUM(payments.amount) FROM payments',
+    ([_r, n]) => n as number,
   );
   const paid = rows[0] ?? 0;
   const open = gross - paid;

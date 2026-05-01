@@ -25,9 +25,12 @@ pub enum StreamAction {
     Idle,
     /// Waiting for more responses before we can apply.
     WaitingForResponse,
-    /// All pending commands are confirmed. The confirmed ZSets (in order)
-    /// should be applied to the confirmed database.
+    /// All pending commands are confirmed. To reconcile the single database,
+    /// the caller inverts each `client_zsets` entry (rollback of the
+    /// optimistic delta) and applies each `confirmed_zsets` entry (the
+    /// canonical server result). Both vectors are in original seq order.
     AllConfirmed {
+        client_zsets: Vec<ZSet>,
         confirmed_zsets: Vec<ZSet>,
     },
     /// The stream was rejected. All optimistic ZSets must be rolled back.
@@ -124,11 +127,12 @@ impl<C: Command> Stream<C> {
             }
         }
 
-        // All pending confirmed
-        self.pending.clear();
+        // All pending confirmed — surface both client (optimistic) and
+        // server (canonical) ZSets so the caller can roll back + reapply.
+        let client_zsets: Vec<ZSet> = self.pending.drain(..).map(|e| e.zset).collect();
         self.confirmed_buffer.clear();
 
-        StreamAction::AllConfirmed { confirmed_zsets }
+        StreamAction::AllConfirmed { client_zsets, confirmed_zsets }
     }
 
     /// Debug info: (seq_no, zset_entry_count) per pending entry.

@@ -70,8 +70,7 @@ export interface DbInfo {
 }
 
 export interface DatabaseDebug {
-  optimistic: DbInfo;
-  confirmed: DbInfo;
+  db: DbInfo;
 }
 
 // ── Query execution traces ────────────────────────────────────────

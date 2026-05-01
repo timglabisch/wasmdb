@@ -48,7 +48,7 @@ interface TitleBits { number: string; status: string; doc_type: string }
 const HeaderTitle = memo(function HeaderTitle({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<TitleBits>(
     `SELECT invoices.number, invoices.status, invoices.doc_type ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([number, status, doc_type]) => ({
       number: number as string,
       status: status as string,

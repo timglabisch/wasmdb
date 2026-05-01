@@ -38,9 +38,9 @@ export default function RecurringTab() {
     requirements.customers.all(),
   ]);
   const ids = useQuery(
-    'SELECT recurring_invoices.id, recurring_invoices.next_run ' +
+    'SELECT REACTIVE(recurring_invoices.id), recurring_invoices.id, recurring_invoices.next_run ' +
     'FROM recurring_invoices ORDER BY recurring_invoices.next_run ASC',
-    ([id, nextRun]) => ({ id: id as string, nextRun: nextRun as string }),
+    ([_r, id, nextRun]) => ({ id: id as string, nextRun: nextRun as string }),
   );
 
   return (
@@ -130,7 +130,7 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, ` +
     `recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
     `recurring_invoices.next_run, recurring_invoices.enabled, recurring_invoices.status_template ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `FROM recurring_invoices WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([name, cid, unit, value, next, enabled, status]) => ({
       name: name as string,
       customerId: cid as string,
@@ -245,7 +245,7 @@ const RecurringTableRow = React.memo(function RecurringTableRow({ recurringId, q
 
 const CustomerCell = React.memo(function CustomerCell({ customerId }: { customerId: string }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name]) => name as string,
   );
   const name = rows[0];

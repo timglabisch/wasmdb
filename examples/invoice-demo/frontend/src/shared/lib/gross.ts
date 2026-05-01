@@ -16,7 +16,7 @@ export function useInvoicePositions(invoiceId: string): GrossPosition[] {
   return useQuery(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
+    `FROM positions WHERE REACTIVE(positions.invoice_id = UUID '${invoiceId}') ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -62,8 +62,8 @@ export function useInvoiceGrossCents(invoiceId: string): number {
 /** Global gross across all positions — for dashboard KPI. */
 export function useGlobalGrossCents(): number {
   const rows = useQuery(
-    'SELECT positions.quantity, positions.unit_price, positions.tax_rate, positions.discount_pct, positions.position_type FROM positions',
-    ([q, p, t, d, pt]) => ({
+    'SELECT REACTIVE(positions.id), positions.quantity, positions.unit_price, positions.tax_rate, positions.discount_pct, positions.position_type FROM positions',
+    ([_r, q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
       tax_rate: t as number,

@@ -43,8 +43,8 @@ export function NewRecurringDialog({
   const [busy, setBusy] = React.useState(false);
 
   const customers = useQuery(
-    'SELECT customers.id, customers.name FROM customers ORDER BY customers.name',
-    ([id, name]) => ({ id: id as string, name: name as string }),
+    'SELECT REACTIVE(customers.id), customers.id, customers.name FROM customers ORDER BY customers.name',
+    ([_r, id, name]) => ({ id: id as string, name: name as string }),
   );
 
   const filtered = React.useMemo(() => {

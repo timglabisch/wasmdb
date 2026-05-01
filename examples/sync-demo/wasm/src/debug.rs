@@ -206,7 +206,7 @@ pub fn debug_database() -> Result<JsValue, JsError> {
         struct DbInfo { tables: Vec<TableInfo> }
 
         #[derive(Serialize)]
-        struct DatabaseDebug { optimistic: DbInfo, confirmed: DbInfo }
+        struct DatabaseDebug { db: DbInfo }
 
         fn estimate_table_memory(t: &sql_engine::storage::Table) -> usize {
             let mut bytes = 0usize;
@@ -261,8 +261,7 @@ pub fn debug_database() -> Result<JsValue, JsError> {
         }
 
         let debug = DatabaseDebug {
-            optimistic: db_info(client.db().db()),
-            confirmed: db_info(client.confirmed_db()),
+            db: db_info(client.db().db()),
         };
         serde_wasm_bindgen::to_value(&debug)
             .map_err(|e| JsError::new(&e.to_string()))
@@ -270,12 +269,9 @@ pub fn debug_database() -> Result<JsValue, JsError> {
 }
 
 #[wasm_bindgen]
-pub fn debug_table_rows(table_name: &str, db_kind: &str, limit: usize) -> Result<JsValue, JsError> {
+pub fn debug_table_rows(table_name: &str, _db_kind: &str, limit: usize) -> Result<JsValue, JsError> {
     with_client(|client| {
-        let db: &Database = match db_kind {
-            "confirmed" => client.confirmed_db(),
-            _ => client.db().db(),
-        };
+        let db: &Database = client.db().db();
         let table = db.table(table_name)
             .ok_or_else(|| JsError::new(&format!("table not found: {table_name}")))?;
 

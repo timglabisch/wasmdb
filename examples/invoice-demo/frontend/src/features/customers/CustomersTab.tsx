@@ -42,8 +42,8 @@ export default function CustomersTab() {
     requirements.positions.all(),
   ]);
   const rows = useQuery(
-    'SELECT customers.id, customers.name, customers.email FROM customers ORDER BY customers.name',
-    ([id, name, email]) => ({
+    'SELECT REACTIVE(customers.id), customers.id, customers.name, customers.email FROM customers ORDER BY customers.name',
+    ([_r, id, name, email]) => ({
       id: id as string,
       nameKey: ((name as string) ?? '').toLowerCase(),
       emailKey: ((email as string) ?? '').toLowerCase(),
@@ -139,7 +139,7 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
 
   const customer = useQuery(
     `SELECT customers.name, customers.email, customers.payment_terms_days ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name, email, terms]) => ({
       name: name as string,
       email: email as string,
@@ -148,14 +148,14 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
   )[0];
 
   const invoiceIds = useQuery(
-    `SELECT invoices.id FROM invoices WHERE invoices.customer_id = UUID '${customerId}' AND invoices.doc_type = 'invoice'`,
+    `SELECT invoices.id FROM invoices WHERE REACTIVE(invoices.customer_id = UUID '${customerId}') AND invoices.doc_type = 'invoice'`,
     ([id]) => id as string,
   );
 
   const openPositions = useQuery(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, positions.discount_pct, positions.position_type, positions.invoice_id ` +
     `FROM positions JOIN invoices ON invoices.id = positions.invoice_id ` +
-    `WHERE invoices.customer_id = UUID '${customerId}' ` +
+    `WHERE REACTIVE(invoices.customer_id = UUID '${customerId}') ` +
     `AND invoices.doc_type = 'invoice' ` +
     `AND invoices.status IN ('draft', 'sent')`,
     ([q, p, t, d, pt]) => ({
@@ -166,7 +166,7 @@ const CustomerListRow = React.memo(function CustomerListRow({ customerId }: { cu
 
   const openPayments = useQuery(
     `SELECT payments.amount FROM payments JOIN invoices ON invoices.id = payments.invoice_id ` +
-    `WHERE invoices.customer_id = UUID '${customerId}' ` +
+    `WHERE REACTIVE(invoices.customer_id = UUID '${customerId}') ` +
     `AND invoices.doc_type = 'invoice' ` +
     `AND invoices.status IN ('draft', 'sent')`,
     ([amount]) => amount as number,

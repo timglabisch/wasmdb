@@ -35,7 +35,7 @@ export function HeaderFieldsCard({ invoiceId }: { invoiceId: string }) {
 
 const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.number FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -49,7 +49,7 @@ const NumberTile = memo(function NumberTile({ invoiceId }: { invoiceId: string }
 
 const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.doc_type FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.doc_type FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -66,7 +66,7 @@ const DocTypeTile = memo(function DocTypeTile({ invoiceId }: { invoiceId: string
 
 const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.status FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.status FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -83,7 +83,7 @@ const StatusTile = memo(function StatusTile({ invoiceId }: { invoiceId: string }
 
 const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.date_issued FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.date_issued FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -97,7 +97,7 @@ const IssuedTile = memo(function IssuedTile({ invoiceId }: { invoiceId: string }
 interface DueBits { date_due: string; status: string }
 const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<DueBits>(
-    `SELECT invoices.date_due, invoices.status FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.date_due, invoices.status FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([date_due, status]) => ({ date_due: date_due as string, status: status as string }),
   );
   const patch = usePatchInvoice(invoiceId);
@@ -119,7 +119,7 @@ const DueTile = memo(function DueTile({ invoiceId }: { invoiceId: string }) {
 
 const ServiceDateTile = memo(function ServiceDateTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.service_date FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.service_date FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);

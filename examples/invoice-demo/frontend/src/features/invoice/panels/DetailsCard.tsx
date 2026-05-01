@@ -76,7 +76,7 @@ interface PaymentBits {
 function PaymentSection({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<PaymentBits>(
     `SELECT invoices.payment_method, invoices.sepa_mandate_id, invoices.customer_id ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([pm, sm, ci]) => ({
       payment_method: pm as string,
       sepa_mandate_id: (sm as string | null) ?? null,
@@ -122,7 +122,7 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
 }) {
   const mandates = useQuery<SepaMandate>(
     `SELECT sepa_mandates.id, sepa_mandates.mandate_ref, sepa_mandates.status ` +
-    `FROM sepa_mandates WHERE sepa_mandates.customer_id = UUID '${customerId}' ORDER BY sepa_mandates.id`,
+    `FROM sepa_mandates WHERE REACTIVE(sepa_mandates.customer_id = UUID '${customerId}') ORDER BY sepa_mandates.id`,
     ([id, ref, status]) => ({
       id: id as string,
       mandate_ref: ref as string,
@@ -145,7 +145,7 @@ const SepaMandatePicker = memo(function SepaMandatePicker({
 
 const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.cash_allowance_pct FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -158,7 +158,7 @@ const CashAllowancePctTile = memo(function CashAllowancePctTile({ invoiceId }: {
 
 const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.cash_allowance_days FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -171,7 +171,7 @@ const CashAllowanceDaysTile = memo(function CashAllowanceDaysTile({ invoiceId }:
 
 const DiscountPctTile = memo(function DiscountPctTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<number>(
-    `SELECT invoices.discount_pct FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.discount_pct FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as number,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -195,7 +195,7 @@ function FormatSection({ invoiceId }: { invoiceId: string }) {
 
 const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.currency FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.currency FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -212,7 +212,7 @@ const CurrencyTile = memo(function CurrencyTile({ invoiceId }: { invoiceId: stri
 
 const LanguageTile = memo(function LanguageTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.language FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.language FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -276,7 +276,7 @@ interface Addr { street: string; zip: string; city: string; country: string }
 const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<Addr>(
     `SELECT invoices.billing_street, invoices.billing_zip, invoices.billing_city, invoices.billing_country ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -307,7 +307,7 @@ const BillingAddressFields = memo(function BillingAddressFields({ invoiceId }: {
 const ShippingAddressFields = memo(function ShippingAddressFields({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<Addr>(
     `SELECT invoices.shipping_street, invoices.shipping_zip, invoices.shipping_city, invoices.shipping_country ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([s, z, c, co]) => ({
       street: s as string,
       zip: z as string,
@@ -349,7 +349,7 @@ function RefsSection({ invoiceId }: { invoiceId: string }) {
 
 const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.project_ref FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.project_ref FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -362,7 +362,7 @@ const ProjectRefTile = memo(function ProjectRefTile({ invoiceId }: { invoiceId: 
 
 const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.external_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.external_id FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);
@@ -375,7 +375,7 @@ const ExternalIdTile = memo(function ExternalIdTile({ invoiceId }: { invoiceId: 
 
 const NotesTile = memo(function NotesTile({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<string>(
-    `SELECT invoices.notes FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.notes FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([v]) => v as string,
   );
   const patch = usePatchInvoice(invoiceId);

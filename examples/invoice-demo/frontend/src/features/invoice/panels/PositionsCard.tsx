@@ -32,7 +32,7 @@ interface PosIdRow { id: string; position_nr: number }
 export function PositionsCard({ invoiceId }: { invoiceId: string }) {
   const ids = useQuery<PosIdRow>(
     `SELECT positions.id, positions.position_nr FROM positions ` +
-    `WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
+    `WHERE REACTIVE(positions.invoice_id = UUID '${invoiceId}') ORDER BY positions.position_nr`,
     ([id, nr]) => ({ id: id as string, position_nr: nr as number }),
   );
   const nextPositionNr = (ids.length > 0 ? ids[ids.length - 1].position_nr : 0) + 1;
@@ -174,7 +174,7 @@ const PositionRow = memo(function PositionRow({
     `SELECT positions.description, positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.product_id, positions.item_number, positions.unit, positions.discount_pct, ` +
     `positions.cost_price, positions.position_type ` +
-    `FROM positions WHERE positions.id = UUID '${positionId}'`,
+    `FROM positions WHERE REACTIVE(positions.id = UUID '${positionId}')`,
     ([desc, qty, up, tr, pid, item, unit, disc, cost, pt]) => ({
       description: desc as string,
       quantity: qty as number,

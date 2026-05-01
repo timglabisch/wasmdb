@@ -231,3 +231,66 @@ fn test_zset_borsh_roundtrip() {
     let decoded: ZSet = borsh::from_slice(&bytes).unwrap();
     assert_eq!(zset, decoded);
 }
+
+#[test]
+fn test_optimistic_visible_after_confirmed() {
+    let mut client = SyncClient::<TestCommand>::new(make_db());
+    let mut server_db = make_db();
+    let stream = client.create_stream();
+
+    // Pre-load: simulate fetcher writing rows into the single db.
+    let mut fetched = ZSet::new();
+    fetched.insert("users".into(), vec![
+        CellValue::I64(99), CellValue::Str("Pre".into()), CellValue::I64(50),
+    ]);
+    client.db_mut().apply_zset(&fetched).unwrap();
+
+    // Sanity: pre-loaded row is visible.
+    let result = client.db_mut().execute("SELECT users.name FROM users").unwrap();
+    assert_eq!(result[0].len(), 1);
+
+    let cmd = TestCommand::InsertUser { id: 1, name: "Alice".into(), age: 30 };
+    let request = client.execute(stream, cmd).unwrap();
+
+    // Optimistic: both rows visible.
+    let result = client.db_mut().execute("SELECT users.name FROM users").unwrap();
+    assert_eq!(result[0].len(), 2, "after optimistic insert");
+
+    // Server confirms.
+    let response = simulate_server(&mut server_db, &request);
+    let action = client.receive_response(response).unwrap();
+    assert!(matches!(action, StreamAction::AllConfirmed { .. }));
+
+    // After reconciliation: BOTH rows must still be visible.
+    let result = client.db_mut().execute("SELECT users.name FROM users").unwrap();
+    assert_eq!(result[0].len(), 2, "after server confirmation — fetched + confirmed");
+    assert!(result[0].iter().any(|c| matches!(c, CellValue::Str(s) if s == "Pre")));
+    assert!(result[0].iter().any(|c| matches!(c, CellValue::Str(s) if s == "Alice")));
+}
+
+#[test]
+fn test_subscription_wakes_after_execute_and_confirm() {
+    let mut client = SyncClient::<TestCommand>::new(make_db());
+    let mut server_db = make_db();
+    let stream = client.create_stream();
+
+    // Reactivity is opt-in via REACTIVE(...). Plain `SELECT` registers no
+    // conditions and is never woken — that's by design (sub_to_slot ⊆ subs
+    // that explicitly declared a dependency).
+    let (_h, _sub) = client.db_mut()
+        .subscribe("SELECT REACTIVE(users.id), users.id FROM users")
+        .unwrap();
+
+    let cmd = TestCommand::InsertUser { id: 7, name: "Bob".into(), age: 40 };
+    let request = client.execute(stream, cmd).unwrap();
+    let drain1: Vec<_> = std::iter::from_fn(|| client.db_mut().next_dirty()).collect();
+    assert!(!drain1.is_empty(), "optimistic execute must wake REACTIVE subscriber");
+
+    let response = simulate_server(&mut server_db, &request);
+    client.receive_response(response).unwrap();
+
+    let drain2: Vec<_> = std::iter::from_fn(|| client.db_mut().next_dirty()).collect();
+    assert!(!drain2.is_empty(), "confirm reconcile must wake REACTIVE subscriber");
+    let after_conf = client.db_mut().execute("SELECT users.id FROM users").unwrap();
+    assert_eq!(after_conf[0].len(), 1, "row must still be visible after confirmation");
+}

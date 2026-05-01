@@ -74,9 +74,9 @@ interface ProductListRow {
 
 function ProductsList({ filter }: { filter: string }) {
   const rows = useQuery(
-    'SELECT products.id, products.sku, products.name FROM products ' +
+    'SELECT REACTIVE(products.id), products.id, products.sku, products.name FROM products ' +
       'ORDER BY products.name ASC',
-    ([id, sku, name]): ProductListRow => ({
+    ([_r, id, sku, name]): ProductListRow => ({
       id: id as string,
       sku: sku as string,
       name: name as string,
@@ -158,7 +158,7 @@ const ProductListRow = React.memo(function ProductListRow({ productId }: { produ
   const rows = useQuery(
     `SELECT products.sku, products.name, products.unit, products.unit_price, ` +
     `products.tax_rate, products.cost_price, products.active ` +
-    `FROM products WHERE products.id = UUID '${productId}'`,
+    `FROM products WHERE REACTIVE(products.id = UUID '${productId}')`,
     ([sku, name, unit, unit_price, tax_rate, cost_price, active]): ProductRowData => ({
       sku: sku as string,
       name: name as string,

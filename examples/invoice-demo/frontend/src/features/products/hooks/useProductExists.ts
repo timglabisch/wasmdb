@@ -7,7 +7,7 @@ import { useQuery } from '@/wasm';
  */
 export function useProductExists(productId: string): boolean {
   const rows = useQuery(
-    `SELECT products.id FROM products WHERE products.id = UUID '${productId}'`,
+    `SELECT products.id FROM products WHERE REACTIVE(products.id = UUID '${productId}')`,
     ([id]) => id as string,
   );
   return rows.length > 0;

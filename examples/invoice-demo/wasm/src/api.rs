@@ -251,6 +251,10 @@ pub async fn query_async(sql: String, params: JsValue) -> Result<JsValue, JsErro
     query(&sql, params)
 }
 
+/// `query_confirmed` is now an alias for [`query`] — there is only one
+/// database. The optional `triggered` indices still flow through so
+/// `REACTIVE(...)` columns can light up changed rows from the most recent
+/// notification.
 #[wasm_bindgen]
 pub fn query_confirmed(
     sql: &str,
@@ -264,7 +268,7 @@ pub fn query_confirmed(
 
     with_client(|client| {
         let (columns, spans) = client
-            .confirmed_db_mut()
+            .db_mut()
             .execute_traced_with_triggered_and_params(sql, triggered_set, params)
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);

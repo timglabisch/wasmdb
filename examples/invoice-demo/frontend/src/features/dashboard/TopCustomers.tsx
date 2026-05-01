@@ -39,17 +39,17 @@ interface CustomerTotals {
 export function TopCustomers() {
   // Invoice → customer mapping. Only the two columns we need.
   const invoices = useQuery(
-    `SELECT invoices.id, invoices.customer_id FROM invoices ` +
+    `SELECT REACTIVE(invoices.id), invoices.id, invoices.customer_id FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice'`,
-    ([id, customerId]) => ({ id: id as string, customerId: (customerId as string | null) ?? null }),
+    ([_r, id, customerId]) => ({ id: id as string, customerId: (customerId as string | null) ?? null }),
   );
 
   // All positions across all invoices. Gross is computed in JS because
   // the reactive planner rejects arithmetic inside SUM.
   const positions = useQuery(
-    `SELECT positions.invoice_id, positions.quantity, positions.unit_price, ` +
+    `SELECT REACTIVE(positions.id), positions.invoice_id, positions.quantity, positions.unit_price, ` +
       `positions.tax_rate, positions.discount_pct, positions.position_type FROM positions`,
-    ([invoiceId, quantity, unitPrice, taxRate, discountPct, positionType]): InvoicePosition => ({
+    ([_r, invoiceId, quantity, unitPrice, taxRate, discountPct, positionType]): InvoicePosition => ({
       invoiceId: invoiceId as string,
       quantity: quantity as number,
       unitPrice: unitPrice as number,
@@ -61,8 +61,8 @@ export function TopCustomers() {
 
   // All payments. Small flat stream.
   const payments = useQuery(
-    `SELECT payments.invoice_id, payments.amount FROM payments`,
-    ([invoiceId, amount]) => ({
+    `SELECT REACTIVE(payments.id), payments.invoice_id, payments.amount FROM payments`,
+    ([_r, invoiceId, amount]) => ({
       invoiceId: invoiceId as string,
       amount: amount as number,
     }),
@@ -192,7 +192,7 @@ const CustomerIdentity = React.memo(function CustomerIdentity({
   invoiceCount: number;
 }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name]) => name as string,
   );
   const name = rows[0];

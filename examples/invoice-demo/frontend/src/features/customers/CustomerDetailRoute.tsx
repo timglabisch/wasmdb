@@ -60,7 +60,7 @@ export default function CustomerDetailRoute() {
 
 function CustomerExistsGate({ customerId }: { customerId: string }) {
   const exists = useQuery(
-    `SELECT customers.id FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.id FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([id]) => id as string,
   ).length > 0;
 
@@ -111,7 +111,7 @@ function CustomerDetail({ customerId }: { customerId: string }) {
 
   const head = useQuery(
     `SELECT customers.name, customers.company_type, customers.created_at ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name, type, createdAt]) => ({
       name: name as string,
       companyType: type as string,
@@ -227,7 +227,7 @@ function CustomerDetail({ customerId }: { customerId: string }) {
 
 const InlineName = React.memo(function InlineName({ customerId }: { customerId: string }) {
   const name = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name]) => name as string,
   )[0] ?? '';
   const patch = usePatchCustomer(customerId);
@@ -248,7 +248,7 @@ const InlineName = React.memo(function InlineName({ customerId }: { customerId: 
 const BasisCard = React.memo(function BasisCard({ customerId }: { customerId: string }) {
   const row = useQuery(
     `SELECT customers.name, customers.email, customers.company_type, customers.created_at ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name, email, type, createdAt]) => ({
       name: name as string,
       email: email as string,
@@ -302,7 +302,7 @@ const BasisCard = React.memo(function BasisCard({ customerId }: { customerId: st
 const TaxPaymentCard = React.memo(function TaxPaymentCard({ customerId }: { customerId: string }) {
   const row = useQuery(
     `SELECT customers.tax_id, customers.vat_id, customers.payment_terms_days, customers.default_discount_pct ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([taxId, vatId, terms, disc]) => ({
       taxId: taxId as string,
       vatId: vatId as string,
@@ -350,14 +350,14 @@ const TaxPaymentCard = React.memo(function TaxPaymentCard({ customerId }: { cust
 const AddressGrid = React.memo(function AddressGrid({ customerId }: { customerId: string }) {
   const billing = useQuery(
     `SELECT customers.billing_street, customers.billing_zip, customers.billing_city, customers.billing_country ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([s, z, c, co]) => ({
       street: s as string, zip: z as string, city: c as string, country: co as string,
     }),
   )[0];
   const shipping = useQuery(
     `SELECT customers.shipping_street, customers.shipping_zip, customers.shipping_city, customers.shipping_country ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([s, z, c, co]) => ({
       street: s as string, zip: z as string, city: c as string, country: co as string,
     }),
@@ -449,7 +449,7 @@ const AddressGrid = React.memo(function AddressGrid({ customerId }: { customerId
 const BankCard = React.memo(function BankCard({ customerId }: { customerId: string }) {
   const row = useQuery(
     `SELECT customers.default_iban, customers.default_bic ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([iban, bic]) => ({ iban: iban as string, bic: bic as string }),
   )[0];
   const patch = usePatchCustomer(customerId);
@@ -486,7 +486,7 @@ const BankCard = React.memo(function BankCard({ customerId }: { customerId: stri
 
 const NotesCard = React.memo(function NotesCard({ customerId }: { customerId: string }) {
   const row = useQuery(
-    `SELECT customers.notes FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.notes FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([notes]) => notes as string,
   )[0];
   const patch = usePatchCustomer(customerId);
@@ -514,7 +514,7 @@ const NotesCard = React.memo(function NotesCard({ customerId }: { customerId: st
 
 const ContactsCard = React.memo(function ContactsCard({ customerId }: { customerId: string }) {
   const ids = useQuery(
-    `SELECT contacts.id FROM contacts WHERE contacts.customer_id = UUID '${customerId}' ` +
+    `SELECT contacts.id FROM contacts WHERE REACTIVE(contacts.customer_id = UUID '${customerId}') ` +
     `ORDER BY contacts.is_primary DESC, contacts.name`,
     ([id]) => id as string,
   );
@@ -542,7 +542,7 @@ const ContactsCard = React.memo(function ContactsCard({ customerId }: { customer
 const ContactRow = React.memo(function ContactRow({ contactId }: { contactId: string }) {
   const row = useQuery(
     `SELECT contacts.name, contacts.email, contacts.phone, contacts.role, contacts.is_primary ` +
-    `FROM contacts WHERE contacts.id = UUID '${contactId}'`,
+    `FROM contacts WHERE REACTIVE(contacts.id = UUID '${contactId}')`,
     ([name, email, phone, role, isPrimary]) => ({
       name: name as string,
       email: email as string,
@@ -631,7 +631,7 @@ const ContactRow = React.memo(function ContactRow({ contactId }: { contactId: st
 
 const SepaMandatesCard = React.memo(function SepaMandatesCard({ customerId }: { customerId: string }) {
   const ids = useQuery(
-    `SELECT sepa_mandates.id FROM sepa_mandates WHERE sepa_mandates.customer_id = UUID '${customerId}' ` +
+    `SELECT sepa_mandates.id FROM sepa_mandates WHERE REACTIVE(sepa_mandates.customer_id = UUID '${customerId}') ` +
     `ORDER BY sepa_mandates.signed_at DESC`,
     ([id]) => id as string,
   );
@@ -659,7 +659,7 @@ const SepaMandatesCard = React.memo(function SepaMandatesCard({ customerId }: { 
 const SepaRow = React.memo(function SepaRow({ mandateId }: { mandateId: string }) {
   const row = useQuery(
     `SELECT sepa_mandates.mandate_ref, sepa_mandates.iban, sepa_mandates.status, sepa_mandates.signed_at ` +
-    `FROM sepa_mandates WHERE sepa_mandates.id = UUID '${mandateId}'`,
+    `FROM sepa_mandates WHERE REACTIVE(sepa_mandates.id = UUID '${mandateId}')`,
     ([ref, iban, status, signedAt]) => ({
       ref: ref as string,
       iban: iban as string,
@@ -721,7 +721,7 @@ const INVOICE_LIMIT = 10;
 
 const InvoicesCard = React.memo(function InvoicesCard({ customerId }: { customerId: string }) {
   const ids = useQuery(
-    `SELECT invoices.id FROM invoices WHERE invoices.customer_id = UUID '${customerId}' ` +
+    `SELECT invoices.id FROM invoices WHERE REACTIVE(invoices.customer_id = UUID '${customerId}') ` +
     `ORDER BY invoices.date_issued DESC`,
     ([id]) => id as string,
   );
@@ -763,7 +763,7 @@ const InvoicesCard = React.memo(function InvoicesCard({ customerId }: { customer
 const InvoiceRow = React.memo(function InvoiceRow({ invoiceId }: { invoiceId: string }) {
   const row = useQuery(
     `SELECT invoices.number, invoices.status, invoices.date_issued, invoices.date_due, invoices.doc_type ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([num, status, issued, due, docType]) => ({
       number: num as string,
       status: status as string,
@@ -774,7 +774,7 @@ const InvoiceRow = React.memo(function InvoiceRow({ invoiceId }: { invoiceId: st
   )[0];
   const gross = useInvoiceGrossCents(invoiceId);
   const payments = useQuery(
-    `SELECT payments.amount FROM payments WHERE payments.invoice_id = UUID '${invoiceId}'`,
+    `SELECT payments.amount FROM payments WHERE REACTIVE(payments.invoice_id = UUID '${invoiceId}')`,
     ([amount]) => amount as number,
   );
   const paid = payments.reduce((s, n) => s + n, 0);

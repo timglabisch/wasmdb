@@ -40,7 +40,7 @@ interface PaymentRow {
 export function PaymentsCard({ invoiceId }: { invoiceId: string }) {
   const payments = useQuery<PaymentRow>(
     `SELECT payments.id, payments.paid_at, payments.amount, payments.method, payments.reference ` +
-    `FROM payments WHERE payments.invoice_id = UUID '${invoiceId}' ` +
+    `FROM payments WHERE REACTIVE(payments.invoice_id = UUID '${invoiceId}') ` +
     `ORDER BY payments.paid_at DESC, payments.id`,
     ([id, paid_at, amount, method, ref]) => ({
       id: id as string,

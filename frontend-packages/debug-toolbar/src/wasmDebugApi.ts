@@ -5,7 +5,7 @@ export interface WasmDebugApi {
   debug_subscriptions(): SubscriptionDebug;
   debug_database(): DatabaseDebug;
   debug_event_log(): DebugEvent[];
-  debug_table_rows(tableName: string, dbKind: 'optimistic' | 'confirmed', limit: number): any[][];
+  debug_table_rows(tableName: string, dbKind: string, limit: number): any[][];
   debug_wasm_memory(): number;
   debug_event_count(): bigint | number;
   debug_clear_log(): void;
@@ -42,7 +42,7 @@ export function getEventLog(): DebugEvent[] {
   return wasm().debug_event_log();
 }
 
-export function getTableRows(tableName: string, dbKind: 'optimistic' | 'confirmed', limit: number = 100): any[][] {
+export function getTableRows(tableName: string, dbKind: string, limit: number = 100): any[][] {
   return wasm().debug_table_rows(tableName, dbKind, limit);
 }
 

@@ -57,7 +57,7 @@ export const ActivityRow = React.memo(function ActivityRow({
   const rows = useQuery(
     `SELECT activity_log.timestamp, activity_log.entity_type, activity_log.entity_id, ` +
     `activity_log.action, activity_log.actor, activity_log.detail ` +
-    `FROM activity_log WHERE activity_log.id = UUID '${activityId}'`,
+    `FROM activity_log WHERE REACTIVE(activity_log.id = UUID '${activityId}')`,
     ([timestamp, entityType, entityId, action, actor, detail]) => ({
       timestamp: timestamp as string,
       entityType: entityType as string,
@@ -384,7 +384,7 @@ const InvoiceLabel = React.memo(function InvoiceLabel({
   entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT invoices.number FROM invoices WHERE invoices.id = UUID '${entityId}'`,
+    `SELECT invoices.number FROM invoices WHERE REACTIVE(invoices.id = UUID '${entityId}')`,
     ([number]) => number as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -398,7 +398,7 @@ const CustomerLabel = React.memo(function CustomerLabel({
   entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${entityId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${entityId}')`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -416,7 +416,7 @@ const ProductLabel = React.memo(function ProductLabel({
   entityId: string;
 }) {
   const rows = useQuery(
-    `SELECT products.sku, products.name FROM products WHERE products.id = UUID '${entityId}'`,
+    `SELECT products.sku, products.name FROM products WHERE REACTIVE(products.id = UUID '${entityId}')`,
     ([sku, name]) => ({ sku: sku as string, name: name as string }),
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;
@@ -436,7 +436,7 @@ const RecurringLabel = React.memo(function RecurringLabel({
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name FROM recurring_invoices ` +
-    `WHERE recurring_invoices.id = UUID '${entityId}'`,
+    `WHERE REACTIVE(recurring_invoices.id = UUID '${entityId}')`,
     ([name]) => name as string,
   );
   if (rows.length === 0) return <DeletedLabel entityId={entityId} />;

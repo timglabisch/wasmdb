@@ -55,7 +55,7 @@ export default function RecurringDetailRoute() {
 function useRecurringExists(recurringId: string): boolean {
   const rows = useQuery(
     `SELECT recurring_invoices.id FROM recurring_invoices ` +
-    `WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([id]) => id as string,
   );
   return rows.length > 0;
@@ -66,7 +66,7 @@ function RecurringDetail({ recurringId }: { recurringId: string }) {
   const navigate = useNavigate();
   const templateName = useQuery(
     `SELECT recurring_invoices.template_name FROM recurring_invoices ` +
-    `WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([name]) => name as string,
   )[0] ?? recurringId;
 
@@ -149,7 +149,7 @@ function DetailHeader({
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id, recurring_invoices.enabled ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `FROM recurring_invoices WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([name, cid, enabled]) => ({
       name: name as string,
       customerId: cid as string,
@@ -210,7 +210,7 @@ function DetailHeader({
 
 function HeaderSubtitle({ customerId }: { customerId: string }) {
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name]) => name as string,
   );
   const name = rows[0];
@@ -239,14 +239,14 @@ function TemplateCard({
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.template_name, recurring_invoices.customer_id ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `FROM recurring_invoices WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([name, cid]) => ({ name: name as string, customerId: cid as string }),
   );
   const t = rows[0];
 
   const customers = useQuery(
-    'SELECT customers.id, customers.name FROM customers ORDER BY customers.name',
-    ([id, name]) => ({ id: id as string, name: name as string }),
+    'SELECT REACTIVE(customers.id), customers.id, customers.name FROM customers ORDER BY customers.name',
+    ([_r, id, name]) => ({ id: id as string, name: name as string }),
   );
   const customerOptions = React.useMemo(
     () => customers.map(c => ({ value: c.id, label: c.name || '—' })),
@@ -296,7 +296,7 @@ function RhythmCard({
   const rows = useQuery(
     `SELECT recurring_invoices.interval_unit, recurring_invoices.interval_value, ` +
     `recurring_invoices.next_run, recurring_invoices.last_run, recurring_invoices.enabled ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `FROM recurring_invoices WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([unit, value, next, last, enabled]) => ({
       unit: unit as string,
       value: value as number,
@@ -389,7 +389,7 @@ function InvoiceTemplateCard({
 }) {
   const rows = useQuery(
     `SELECT recurring_invoices.status_template, recurring_invoices.notes_template ` +
-    `FROM recurring_invoices WHERE recurring_invoices.id = UUID '${recurringId}'`,
+    `FROM recurring_invoices WHERE REACTIVE(recurring_invoices.id = UUID '${recurringId}')`,
     ([status, notes]) => ({ status: status as string, notes: notes as string }),
   );
   const t = rows[0];
@@ -435,7 +435,7 @@ interface PositionSummary {
 function PositionsCard({ recurringId }: { recurringId: string }) {
   const positions = useQuery(
     `SELECT recurring_positions.id, recurring_positions.position_nr ` +
-    `FROM recurring_positions WHERE recurring_positions.recurring_id = UUID '${recurringId}' ` +
+    `FROM recurring_positions WHERE REACTIVE(recurring_positions.recurring_id = UUID '${recurringId}') ` +
     `ORDER BY recurring_positions.position_nr`,
     ([id, nr]): PositionSummary => ({ id: id as string, positionNr: nr as number }),
   );
@@ -509,7 +509,7 @@ const PositionRow = React.memo(function PositionRow({
     `SELECT recurring_positions.description, recurring_positions.quantity, ` +
     `recurring_positions.unit_price, recurring_positions.tax_rate, recurring_positions.unit, ` +
     `recurring_positions.item_number, recurring_positions.discount_pct ` +
-    `FROM recurring_positions WHERE recurring_positions.id = UUID '${positionId}'`,
+    `FROM recurring_positions WHERE REACTIVE(recurring_positions.id = UUID '${positionId}')`,
     ([desc, qty, price, tax, unit, item, disc]) => ({
       description: desc as string,
       quantity: qty as number,
@@ -610,7 +610,7 @@ function TotalsRow({ recurringId }: { recurringId: string }) {
   const positions = useQuery(
     `SELECT recurring_positions.quantity, recurring_positions.unit_price, ` +
     `recurring_positions.tax_rate, recurring_positions.discount_pct ` +
-    `FROM recurring_positions WHERE recurring_positions.recurring_id = UUID '${recurringId}'`,
+    `FROM recurring_positions WHERE REACTIVE(recurring_positions.recurring_id = UUID '${recurringId}')`,
     ([q, p, t, d]) => ({
       quantity: q as number,
       unitPrice: p as number,
@@ -732,7 +732,7 @@ function HistoryCard({ recurringId }: { recurringId: string }) {
     `SELECT activity_log.id, activity_log.timestamp, activity_log.action, activity_log.detail ` +
     `FROM activity_log ` +
     `WHERE activity_log.entity_type = 'recurring' ` +
-    `AND activity_log.entity_id = UUID '${recurringId}' ` +
+    `AND REACTIVE(activity_log.entity_id = UUID '${recurringId}') ` +
     `ORDER BY activity_log.timestamp DESC`,
     ([id, ts, action, detail]) => ({
       id: id as string,

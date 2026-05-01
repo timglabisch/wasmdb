@@ -20,12 +20,12 @@ export function OverdueList() {
   // Parent subscription: minimal — just the ids of overdue invoices.
   // We still pull date_due so sorting is stable when mutations land.
   const ids = useQuery(
-    `SELECT invoices.id, invoices.date_due FROM invoices ` +
+    `SELECT REACTIVE(invoices.id), invoices.id, invoices.date_due FROM invoices ` +
       `WHERE invoices.doc_type = 'invoice' ` +
       `AND invoices.status IN ('draft', 'sent') ` +
       `AND invoices.date_due < '${today}' ` +
       `ORDER BY invoices.date_due ASC`,
-    ([id, dueDate]) => ({ id: id as string, dueDate: dueDate as string }),
+    ([_r, id, dueDate]) => ({ id: id as string, dueDate: dueDate as string }),
   );
 
   return (
@@ -69,7 +69,7 @@ interface OverdueRowProps {
 const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps) {
   const invoice = useQuery(
     `SELECT invoices.number, invoices.date_due, invoices.customer_id, invoices.status, invoices.doc_type ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([number, dateDue, customerId, status, docType]) => ({
       number: number as string,
       dateDue: dateDue as string,
@@ -111,7 +111,7 @@ const OverdueRow = React.memo(function OverdueRow({ invoiceId }: OverdueRowProps
 const CustomerName = React.memo(function CustomerName({ customerId }: { customerId: string | null }) {
   const lookupId = customerId ?? '00000000-0000-0000-0000-000000000000';
   const rows = useQuery(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${lookupId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${lookupId}')`,
     ([name]) => name as string,
   );
   const name = rows[0];
@@ -131,7 +131,7 @@ const CustomerName = React.memo(function CustomerName({ customerId }: { customer
 const OpenAmount = React.memo(function OpenAmount({ invoiceId }: { invoiceId: string }) {
   const gross = useInvoiceGrossCents(invoiceId);
   const payments = useQuery(
-    `SELECT payments.amount FROM payments WHERE payments.invoice_id = UUID '${invoiceId}'`,
+    `SELECT payments.amount FROM payments WHERE REACTIVE(payments.invoice_id = UUID '${invoiceId}')`,
     ([amount]) => amount as number,
   );
   const paid = payments.reduce((s, n) => s + n, 0);

@@ -77,7 +77,7 @@ export default function ActivityTab() {
         ? ''
         : `WHERE activity_log.entity_type = '${entityFilter}' `;
     return (
-      `SELECT activity_log.id, activity_log.timestamp ` +
+      `SELECT REACTIVE(activity_log.id), activity_log.id, activity_log.timestamp ` +
       `FROM activity_log ` +
       where +
       `ORDER BY activity_log.timestamp DESC, activity_log.id DESC ` +
@@ -85,7 +85,7 @@ export default function ActivityTab() {
     );
   }, [entityFilter, limit]);
 
-  const rows = useQuery(sql, ([id, timestamp]) => ({
+  const rows = useQuery(sql, ([_r, id, timestamp]) => ({
     id: id as string,
     timestamp: timestamp as string,
   }));

@@ -74,8 +74,8 @@ const ProductPicker = memo(function ProductPicker({
   const [term, setTerm] = useState('');
 
   const products = useQuery<ProductRow>(
-    'SELECT products.id, products.sku, products.name, products.unit, products.unit_price, products.tax_rate, products.cost_price FROM products WHERE products.active = 1 ORDER BY products.name',
-    ([id, sku, name, unit, unit_price, tax_rate, cost_price]) => ({
+    'SELECT REACTIVE(products.id), products.id, products.sku, products.name, products.unit, products.unit_price, products.tax_rate, products.cost_price FROM products WHERE products.active = 1 ORDER BY products.name',
+    ([_r, id, sku, name, unit, unit_price, tax_rate, cost_price]) => ({
       id: id as string,
       sku: sku as string,
       name: name as string,

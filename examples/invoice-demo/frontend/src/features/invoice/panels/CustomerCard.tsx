@@ -21,7 +21,7 @@ interface InvoiceFk { customer_id: string | null }
  */
 export const CustomerCard = memo(function CustomerCard({ invoiceId }: { invoiceId: string }) {
   const rows = useQuery<InvoiceFk>(
-    `SELECT invoices.customer_id FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `SELECT invoices.customer_id FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([customer_id]) => ({ customer_id: (customer_id as string | null) ?? null }),
   );
   const customerId = rows[0]?.customer_id ?? null;
@@ -81,7 +81,7 @@ const CustomerBody = memo(function CustomerBody({
   const rows = useQuery<CustomerDisplay>(
     `SELECT customers.name, customers.email, customers.billing_street, customers.billing_zip, ` +
     `customers.billing_city, customers.billing_country, customers.payment_terms_days ` +
-    `FROM customers WHERE customers.id = UUID '${customerId}'`,
+    `FROM customers WHERE REACTIVE(customers.id = UUID '${customerId}')`,
     ([name, email, st, zip, city, country, terms]) => ({
       name: name as string,
       email: email as string,
@@ -160,8 +160,8 @@ const CustomerPicker = memo(function CustomerPicker({
 }) {
   const [term, setTerm] = useState('');
   const customers = useQuery<CustomerOption>(
-    'SELECT customers.id, customers.name, customers.email, customers.billing_city FROM customers ORDER BY customers.name',
-    ([id, name, email, city]) => ({
+    'SELECT REACTIVE(customers.id), customers.id, customers.name, customers.email, customers.billing_city FROM customers ORDER BY customers.name',
+    ([_r, id, name, email, city]) => ({
       id: id as string,
       name: name as string,
       email: email as string,

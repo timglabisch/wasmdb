@@ -253,10 +253,9 @@ pub fn query(sql: &str) -> Result<JsValue, JsError> {
     })
 }
 
-/// Execute a SQL query against the confirmed (server-acknowledged) database.
-/// `triggered` is a `number[]` of condition indices (typically the `triggered`
-/// field from a `next_dirty` notification) used to light up `REACTIVE(...)`
-/// columns. Pass an empty array (or nothing) for a cold read.
+/// Alias for [`query`] — the client now has a single database. `triggered`
+/// is forwarded so `REACTIVE(...)` columns can highlight changed rows from
+/// the most recent notification.
 #[wasm_bindgen]
 pub fn query_confirmed(sql: &str, triggered: Option<Vec<u32>>) -> Result<JsValue, JsError> {
     let triggered_set: Option<HashSet<usize>> = triggered
@@ -265,8 +264,8 @@ pub fn query_confirmed(sql: &str, triggered: Option<Vec<u32>>) -> Result<JsValue
 
     with_client(|client| {
         let (columns, spans) = client
-            .confirmed_db_mut()
-            .execute_traced_with_triggered(sql, triggered_set)
+            .db_mut()
+            .execute_traced_with_triggered_and_params(sql, triggered_set, std::collections::HashMap::new())
             .map_err(|e| JsError::new(&e.to_string()))?;
         let rows = columns_to_rows(columns);
         record_query(sql, "confirmed", spans, rows.len());

@@ -52,7 +52,7 @@ export const InvoiceListRow = memo(function InvoiceListRow({
   const headers = useQuery<Header>(
     `SELECT invoices.number, invoices.doc_type, invoices.status, invoices.date_issued, ` +
     `invoices.date_due, invoices.customer_id ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([number, doc_type, status, date_issued, date_due, customer_id]) => ({
       number: number as string,
       doc_type: doc_type as string,
@@ -140,7 +140,7 @@ export const InvoiceListRow = memo(function InvoiceListRow({
 const CustomerCell = memo(function CustomerCell({ customerId }: { customerId: string | null }) {
   const lookupId = customerId ?? '00000000-0000-0000-0000-000000000000';
   const rows = useQuery<string>(
-    `SELECT customers.name FROM customers WHERE customers.id = UUID '${lookupId}'`,
+    `SELECT customers.name FROM customers WHERE REACTIVE(customers.id = UUID '${lookupId}')`,
     ([name]) => name as string,
   );
   return <span className="text-sm">{customerId ? (rows[0] ?? '—') : '—'}</span>;
@@ -151,7 +151,7 @@ const GrossCell = memo(function GrossCell({ invoiceId }: { invoiceId: string }) 
   const positions = useQuery<GrossPos>(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
+    `FROM positions WHERE REACTIVE(positions.invoice_id = UUID '${invoiceId}') ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -168,7 +168,7 @@ const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: string
   const positions = useQuery<GrossPos>(
     `SELECT positions.quantity, positions.unit_price, positions.tax_rate, ` +
     `positions.discount_pct, positions.position_type ` +
-    `FROM positions WHERE positions.invoice_id = UUID '${invoiceId}' ORDER BY positions.position_nr`,
+    `FROM positions WHERE REACTIVE(positions.invoice_id = UUID '${invoiceId}') ORDER BY positions.position_nr`,
     ([q, p, t, d, pt]) => ({
       quantity: q as number,
       unit_price: p as number,
@@ -178,7 +178,7 @@ const PaymentCell = memo(function PaymentCell({ invoiceId }: { invoiceId: string
     }),
   );
   const payments = useQuery<number>(
-    `SELECT payments.amount FROM payments WHERE payments.invoice_id = UUID '${invoiceId}'`,
+    `SELECT payments.amount FROM payments WHERE REACTIVE(payments.invoice_id = UUID '${invoiceId}')`,
     ([a]) => a as number,
   );
   const gross = computeGrossCents(positions);

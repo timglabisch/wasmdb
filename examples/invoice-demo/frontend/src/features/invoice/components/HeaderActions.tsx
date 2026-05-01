@@ -31,7 +31,7 @@ export const HeaderActions = memo(function HeaderActions({ invoiceId }: { invoic
   const navigate = useNavigate();
   const rows = useQuery<HeaderBits>(
     `SELECT invoices.status, invoices.doc_type, invoices.number ` +
-    `FROM invoices WHERE invoices.id = UUID '${invoiceId}'`,
+    `FROM invoices WHERE REACTIVE(invoices.id = UUID '${invoiceId}')`,
     ([status, doc_type, number]) => ({
       status: status as string,
       doc_type: doc_type as string,

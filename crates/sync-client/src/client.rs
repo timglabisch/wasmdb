@@ -7,13 +7,11 @@ use sync::zset::ZSet;
 use crate::stream::{Stream, StreamAction};
 
 pub struct SyncClient<C: Command> {
-    /// Confirmed database state (only server-confirmed operations). Passive —
-    /// no subscriptions fire from mutations applied here.
-    confirmed_db: Database,
-    /// Optimistic database state (confirmed + all pending commands).
-    /// Owns the subscription registry + callbacks. Rebuilt from confirmed_db
-    /// on reject.
-    optimistic_db: ReactiveDatabase,
+    /// Single source of truth: confirmed state + fetcher-loaded data + pending
+    /// optimistic deltas. Reads (`db()`/`db_mut()`) and reactive subscriptions
+    /// run against this. On confirm we invert the optimistic delta and apply
+    /// the server's canonical ZSet; on reject we invert and drop.
+    db: ReactiveDatabase,
     streams: HashMap<StreamId, Stream<C>>,
     next_stream_id: u64,
 }
@@ -37,36 +35,21 @@ impl std::error::Error for SyncClientError {}
 
 impl<C: Command> SyncClient<C> {
     pub fn new(db: Database) -> Self {
-        let optimistic_db = ReactiveDatabase::from_database(db.clone());
         Self {
-            confirmed_db: db,
-            optimistic_db,
+            db: ReactiveDatabase::from_database(db),
             streams: HashMap::new(),
             next_stream_id: 0,
         }
     }
 
-    /// Optimistic database (what the UI should display) — full reactive API.
+    /// Reactive database (UI reads + subscribes here).
     pub fn db(&self) -> &ReactiveDatabase {
-        &self.optimistic_db
+        &self.db
     }
 
     pub fn db_mut(&mut self) -> &mut ReactiveDatabase {
-        &mut self.optimistic_db
+        &mut self.db
     }
-
-    /// Confirmed database (server-acknowledged state only).
-    pub fn confirmed_db(&self) -> &Database {
-        &self.confirmed_db
-    }
-
-    pub fn confirmed_db_mut(&mut self) -> &mut Database {
-        &mut self.confirmed_db
-    }
-
-    // Subscribe/unsubscribe/on_dirty/next_dirty live on the inner
-    // ReactiveDatabase — consumers reach them via `db()` / `db_mut()`.
-    // SyncClient no longer duplicates the reactivity API surface.
 
     pub fn stream_count(&self) -> usize {
         self.streams.len()
@@ -97,9 +80,9 @@ impl<C: Command> SyncClient<C> {
     ) -> Result<CommandRequest<C>, SyncClientError> {
         let stream = self.streams.get_mut(&stream_id)
             .ok_or(SyncClientError::UnknownStream(stream_id))?;
-        let request = stream.push_command(command, self.optimistic_db.db_mut_raw())
+        let request = stream.push_command(command, self.db.db_mut_raw())
             .map_err(SyncClientError::CommandError)?;
-        self.optimistic_db.notify(&request.client_zset);
+        self.db.notify(&request.client_zset);
         Ok(request)
     }
 
@@ -124,35 +107,30 @@ impl<C: Command> SyncClient<C> {
         let action = stream.receive_response(response);
 
         match &action {
-            StreamAction::AllConfirmed { confirmed_zsets } => {
-                for zset in confirmed_zsets {
-                    self.apply_zset_to_confirmed(zset);
+            StreamAction::AllConfirmed { client_zsets, confirmed_zsets } => {
+                // Reconcile in one batched apply: invert each optimistic
+                // delta in reverse seq order, then apply each server ZSet
+                // in seq order. Concatenated entries flow through one
+                // `apply_zset` call so subscribers see a single notify.
+                let mut combined = ZSet::new();
+                for z in client_zsets.iter().rev() {
+                    combined.extend(z.invert());
                 }
-                self.rebuild_optimistic();
+                for z in confirmed_zsets {
+                    combined.extend(z.clone());
+                }
+                let _ = self.db.apply_zset(&combined);
             }
-            StreamAction::Rejected { .. } => {
-                self.rebuild_optimistic();
+            StreamAction::Rejected { discarded_zsets, .. } => {
+                let mut combined = ZSet::new();
+                for z in discarded_zsets.iter().rev() {
+                    combined.extend(z.invert());
+                }
+                let _ = self.db.apply_zset(&combined);
             }
             StreamAction::Idle | StreamAction::WaitingForResponse => {}
         }
 
         Ok(action)
-    }
-
-    fn apply_zset_to_confirmed(&mut self, zset: &ZSet) {
-        let _ = self.confirmed_db.apply_zset(zset);
-    }
-
-    /// Rebuild optimistic_db from confirmed_db + re-executing all pending commands.
-    /// Subscriptions are preserved (only the inner table data is replaced).
-    /// Fires a brute-force `notify_all()` afterwards.
-    fn rebuild_optimistic(&mut self) {
-        self.optimistic_db.replace_data(&self.confirmed_db);
-        for stream in self.streams.values() {
-            for cmd in stream.pending_commands() {
-                let _ = cmd.execute_optimistic(self.optimistic_db.db_mut_raw());
-            }
-        }
-        self.optimistic_db.notify_all();
     }
 }

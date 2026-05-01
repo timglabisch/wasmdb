@@ -45,7 +45,7 @@ export function ActivityCard({ invoiceId }: { invoiceId: string }) {
   const entries = useQuery<Entry>(
     `SELECT activity_log.id, activity_log.timestamp, activity_log.action, activity_log.detail ` +
     `FROM activity_log ` +
-    `WHERE activity_log.entity_type = 'invoice' AND activity_log.entity_id = UUID '${invoiceId}' ` +
+    `WHERE activity_log.entity_type = 'invoice' AND REACTIVE(activity_log.entity_id = UUID '${invoiceId}') ` +
     `ORDER BY activity_log.timestamp DESC, activity_log.id DESC`,
     ([id, ts, action, detail]) => ({
       id: id as string,
