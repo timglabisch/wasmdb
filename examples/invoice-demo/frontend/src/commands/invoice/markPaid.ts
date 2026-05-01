@@ -5,7 +5,10 @@ type Variant = Extract<InvoiceCommand, { type: 'MarkPaid' }>;
 
 /** Build a MarkPaid intent command. The activity row is emitted by the
  * command itself (see `commands/invoice/mark_paid.rs`) — caller does not
- * compose any LogActivity. */
+ * compose any LogActivity.
+ *
+ * Rust-Counterpart: `commands/src/invoice/mark_paid.rs` (Cmd+Shift+O → `mark_paid.rs`).
+ **/
 export function markPaid(invoiceId: string): InvoiceCommand {
   const cmd: Variant = {
     type: 'MarkPaid',

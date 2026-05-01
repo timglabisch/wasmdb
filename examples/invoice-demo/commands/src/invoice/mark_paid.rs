@@ -11,6 +11,8 @@ use crate::helpers::{execute_sql, p_str, p_uuid, read_str_col, DEMO_TENANT_ID};
 
 /// Intent-Command: mark an invoice as paid.
 ///
+/// TS-Counterpart: `frontend/src/commands/invoice/markPaid.ts` (Cmd+Shift+O → `markPaid.ts`).
+///
 /// Replaces the old `updateInvoiceHeader({...,status:'paid'}) + logActivity(...)`
 /// pair. The activity row is produced inside `execute_optimistic` /
 /// `execute_server` from the invoice number — callers no longer compose
