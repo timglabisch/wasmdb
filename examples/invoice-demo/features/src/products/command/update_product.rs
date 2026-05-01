@@ -51,7 +51,7 @@ impl Command for UpdateProduct {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::products::product_server::entity as product_entity;
@@ -64,22 +64,29 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            product_entity::Entity::update_many()
-                .col_expr(product_entity::Column::Sku, self.sku.clone().into())
-                .col_expr(product_entity::Column::Name, self.name.clone().into())
-                .col_expr(product_entity::Column::Description, self.description.clone().into())
-                .col_expr(product_entity::Column::Unit, self.unit.clone().into())
-                .col_expr(product_entity::Column::UnitPrice, self.unit_price.into())
-                .col_expr(product_entity::Column::TaxRate, self.tax_rate.into())
-                .col_expr(product_entity::Column::CostPrice, self.cost_price.into())
-                .col_expr(product_entity::Column::Active, self.active.into())
+            let model = product_entity::Entity::find()
                 .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE product id={}: {e}", self.id,
+                    "load product {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "product {} not found", self.id,
                 )))?;
+
+            let mut am: product_entity::ActiveModel = model.into();
+            am.sku = Set(self.sku.clone());
+            am.name = Set(self.name.clone());
+            am.description = Set(self.description.clone());
+            am.unit = Set(self.unit.clone());
+            am.unit_price = Set(self.unit_price);
+            am.tax_rate = Set(self.tax_rate);
+            am.cost_price = Set(self.cost_price);
+            am.active = Set(self.active);
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE product {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

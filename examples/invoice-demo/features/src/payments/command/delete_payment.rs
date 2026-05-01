@@ -27,7 +27,7 @@ impl Command for DeletePayment {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, ModelTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
 
     use crate::payments::payment_server::entity as payment_entity;
@@ -39,14 +39,19 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            payment_entity::Entity::delete_many()
+            let model = payment_entity::Entity::find()
                 .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(payment_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE payment {}: {e}", self.id,
+                    "load payment {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "payment {} not found", self.id,
                 )))?;
+            model.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "DELETE payment {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

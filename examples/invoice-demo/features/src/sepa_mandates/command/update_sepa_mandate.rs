@@ -42,7 +42,7 @@ impl Command for UpdateSepaMandate {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::sepa_mandates::sepa_mandate_server::entity as sepa_mandate_entity;
@@ -55,20 +55,27 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            sepa_mandate_entity::Entity::update_many()
-                .col_expr(sepa_mandate_entity::Column::MandateRef, self.mandate_ref.clone().into())
-                .col_expr(sepa_mandate_entity::Column::Iban, self.iban.clone().into())
-                .col_expr(sepa_mandate_entity::Column::Bic, self.bic.clone().into())
-                .col_expr(sepa_mandate_entity::Column::HolderName, self.holder_name.clone().into())
-                .col_expr(sepa_mandate_entity::Column::SignedAt, self.signed_at.clone().into())
-                .col_expr(sepa_mandate_entity::Column::Status, self.status.clone().into())
+            let model = sepa_mandate_entity::Entity::find()
                 .filter(sepa_mandate_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(sepa_mandate_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE sepa_mandate id={}: {e}", self.id,
+                    "load sepa_mandate {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "sepa_mandate {} not found", self.id,
                 )))?;
+
+            let mut am: sepa_mandate_entity::ActiveModel = model.into();
+            am.mandate_ref = Set(self.mandate_ref.clone());
+            am.iban = Set(self.iban.clone());
+            am.bic = Set(self.bic.clone());
+            am.holder_name = Set(self.holder_name.clone());
+            am.signed_at = Set(self.signed_at.clone());
+            am.status = Set(self.status.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE sepa_mandate {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

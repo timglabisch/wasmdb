@@ -77,7 +77,7 @@ impl Command for UpdateInvoiceHeader {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::invoices::invoice_server::entity as invoice_entity;
@@ -89,39 +89,46 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            invoice_entity::Entity::update_many()
-                .col_expr(invoice_entity::Column::Number, self.number.clone().into())
-                .col_expr(invoice_entity::Column::Status, self.status.clone().into())
-                .col_expr(invoice_entity::Column::DateIssued, self.date_issued.clone().into())
-                .col_expr(invoice_entity::Column::DateDue, self.date_due.clone().into())
-                .col_expr(invoice_entity::Column::Notes, self.notes.clone().into())
-                .col_expr(invoice_entity::Column::DocType, self.doc_type.clone().into())
-                .col_expr(invoice_entity::Column::ParentId, self.parent_id.as_ref().map(|u| u.0.to_vec()).into())
-                .col_expr(invoice_entity::Column::ServiceDate, self.service_date.clone().into())
-                .col_expr(invoice_entity::Column::CashAllowancePct, self.cash_allowance_pct.into())
-                .col_expr(invoice_entity::Column::CashAllowanceDays, self.cash_allowance_days.into())
-                .col_expr(invoice_entity::Column::DiscountPct, self.discount_pct.into())
-                .col_expr(invoice_entity::Column::PaymentMethod, self.payment_method.clone().into())
-                .col_expr(invoice_entity::Column::SepaMandateId, self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()).into())
-                .col_expr(invoice_entity::Column::Currency, self.currency.clone().into())
-                .col_expr(invoice_entity::Column::Language, self.language.clone().into())
-                .col_expr(invoice_entity::Column::ProjectRef, self.project_ref.clone().into())
-                .col_expr(invoice_entity::Column::ExternalId, self.external_id.clone().into())
-                .col_expr(invoice_entity::Column::BillingStreet, self.billing_street.clone().into())
-                .col_expr(invoice_entity::Column::BillingZip, self.billing_zip.clone().into())
-                .col_expr(invoice_entity::Column::BillingCity, self.billing_city.clone().into())
-                .col_expr(invoice_entity::Column::BillingCountry, self.billing_country.clone().into())
-                .col_expr(invoice_entity::Column::ShippingStreet, self.shipping_street.clone().into())
-                .col_expr(invoice_entity::Column::ShippingZip, self.shipping_zip.clone().into())
-                .col_expr(invoice_entity::Column::ShippingCity, self.shipping_city.clone().into())
-                .col_expr(invoice_entity::Column::ShippingCountry, self.shipping_country.clone().into())
+            let model = invoice_entity::Entity::find()
                 .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE invoice {}: {e}", self.id,
+                    "load invoice {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "invoice {} not found", self.id,
                 )))?;
+
+            let mut am: invoice_entity::ActiveModel = model.into();
+            am.number = Set(self.number.clone());
+            am.status = Set(self.status.clone());
+            am.date_issued = Set(self.date_issued.clone());
+            am.date_due = Set(self.date_due.clone());
+            am.notes = Set(self.notes.clone());
+            am.doc_type = Set(self.doc_type.clone());
+            am.parent_id = Set(self.parent_id.as_ref().map(|u| u.0.to_vec()));
+            am.service_date = Set(self.service_date.clone());
+            am.cash_allowance_pct = Set(self.cash_allowance_pct);
+            am.cash_allowance_days = Set(self.cash_allowance_days);
+            am.discount_pct = Set(self.discount_pct);
+            am.payment_method = Set(self.payment_method.clone());
+            am.sepa_mandate_id = Set(self.sepa_mandate_id.as_ref().map(|u| u.0.to_vec()));
+            am.currency = Set(self.currency.clone());
+            am.language = Set(self.language.clone());
+            am.project_ref = Set(self.project_ref.clone());
+            am.external_id = Set(self.external_id.clone());
+            am.billing_street = Set(self.billing_street.clone());
+            am.billing_zip = Set(self.billing_zip.clone());
+            am.billing_city = Set(self.billing_city.clone());
+            am.billing_country = Set(self.billing_country.clone());
+            am.shipping_street = Set(self.shipping_street.clone());
+            am.shipping_zip = Set(self.shipping_zip.clone());
+            am.shipping_city = Set(self.shipping_city.clone());
+            am.shipping_country = Set(self.shipping_country.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE invoice {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

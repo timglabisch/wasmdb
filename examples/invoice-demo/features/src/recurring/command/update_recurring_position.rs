@@ -49,7 +49,7 @@ impl Command for UpdateRecurringPosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::recurring::recurring_position_server::entity as recurring_position_entity;
@@ -61,22 +61,28 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            recurring_position_entity::Entity::update_many()
-                .col_expr(recurring_position_entity::Column::Description, self.description.clone().into())
-                .col_expr(recurring_position_entity::Column::Quantity, self.quantity.into())
-                .col_expr(recurring_position_entity::Column::UnitPrice, self.unit_price.into())
-                .col_expr(recurring_position_entity::Column::TaxRate, self.tax_rate.into())
-                .col_expr(recurring_position_entity::Column::Unit, self.unit.clone().into())
-                .col_expr(recurring_position_entity::Column::ItemNumber, self.item_number.clone().into())
-                .col_expr(recurring_position_entity::Column::DiscountPct, self.discount_pct.into())
+            let model = recurring_position_entity::Entity::find()
                 .filter(recurring_position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_position_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE recurring_position {}: {e}",
-                    self.id,
+                    "load recurring_position {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "recurring_position {} not found", self.id,
                 )))?;
+
+            let mut am: recurring_position_entity::ActiveModel = model.into();
+            am.description = Set(self.description.clone());
+            am.quantity = Set(self.quantity);
+            am.unit_price = Set(self.unit_price);
+            am.tax_rate = Set(self.tax_rate);
+            am.unit = Set(self.unit.clone());
+            am.item_number = Set(self.item_number.clone());
+            am.discount_pct = Set(self.discount_pct);
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE recurring_position {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

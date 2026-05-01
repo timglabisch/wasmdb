@@ -78,7 +78,7 @@ impl Command for SetProductActive {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -92,30 +92,24 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            product_entity::Entity::update_many()
-                .col_expr(product_entity::Column::Active, self.active.into())
+            let model = product_entity::Entity::find()
                 .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE product {} -> active={}: {e}", self.id, self.active,
-                )))?;
-
-            let name: String = product_entity::Entity::find()
-                .select_only()
-                .column(product_entity::Column::Name)
-                .filter(product_entity::Column::TenantId.eq(DEMO_TENANT_ID))
-                .filter(product_entity::Column::Id.eq(self.id.0.to_vec()))
-                .into_tuple()
-                .one(tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "lookup name for product {}: {e}", self.id,
+                    "load product {}: {e}", self.id,
                 )))?
                 .ok_or_else(|| CommandError::ExecutionFailed(format!(
                     "product {} not found", self.id,
                 )))?;
+
+            let name = model.name.clone();
+
+            let mut am: product_entity::ActiveModel = model.into();
+            am.active = Set(self.active);
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE product {}: {e}", self.id,
+            )))?;
 
             let detail = detail_for(&name, self.active);
             let action = action_for(self.active);

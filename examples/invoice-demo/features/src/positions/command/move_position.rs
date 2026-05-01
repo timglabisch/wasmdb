@@ -34,7 +34,7 @@ impl Command for MovePosition {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::positions::position_server::entity as position_entity;
@@ -46,16 +46,22 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            position_entity::Entity::update_many()
-                .col_expr(position_entity::Column::PositionNr, self.new_position_nr.into())
+            let model = position_entity::Entity::find()
                 .filter(position_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(position_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE position id={} position_nr={}: {e}",
-                    self.id, self.new_position_nr,
+                    "load position {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "position {} not found", self.id,
                 )))?;
+
+            let mut am: position_entity::ActiveModel = model.into();
+            am.position_nr = Set(self.new_position_nr);
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE position {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

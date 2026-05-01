@@ -213,7 +213,7 @@ impl Command for Storno {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect, Set};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -228,32 +228,25 @@ mod server_impl {
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
             // 1. Cancel original invoice.
-            invoice_entity::Entity::update_many()
-                .col_expr(invoice_entity::Column::Status, "cancelled".to_string().into())
+            let model = invoice_entity::Entity::find()
                 .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE invoice {} -> cancelled: {e}", self.id,
-                )))?;
-
-            // 2. Look up original invoice number for the activity detail.
-            let number: String = invoice_entity::Entity::find()
-                .select_only()
-                .column(invoice_entity::Column::Number)
-                .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
-                .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .into_tuple()
-                .one(tx)
-                .await
-                .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "lookup number for invoice {}: {e}", self.id,
+                    "load invoice {}: {e}", self.id,
                 )))?
                 .ok_or_else(|| CommandError::ExecutionFailed(format!(
                     "invoice {} not found", self.id,
                 )))?;
+
+            let number = model.number.clone();
             let detail = detail_for(&number, &self.credit_note_id);
+
+            let mut am: invoice_entity::ActiveModel = model.into();
+            am.status = Set("cancelled".to_string());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE invoice {} -> cancelled: {e}", self.id,
+            )))?;
 
             // 3. Insert credit note header.
             let am = invoice_entity::ActiveModel {

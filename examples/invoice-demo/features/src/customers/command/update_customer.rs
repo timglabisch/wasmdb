@@ -76,7 +76,7 @@ impl Command for UpdateCustomer {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::customers::customer_server::entity as customer_entity;
@@ -88,32 +88,39 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            customer_entity::Entity::update_many()
-                .col_expr(customer_entity::Column::Name, self.name.clone().into())
-                .col_expr(customer_entity::Column::Email, self.email.clone().into())
-                .col_expr(customer_entity::Column::CompanyType, self.company_type.clone().into())
-                .col_expr(customer_entity::Column::TaxId, self.tax_id.clone().into())
-                .col_expr(customer_entity::Column::VatId, self.vat_id.clone().into())
-                .col_expr(customer_entity::Column::PaymentTermsDays, self.payment_terms_days.into())
-                .col_expr(customer_entity::Column::DefaultDiscountPct, self.default_discount_pct.into())
-                .col_expr(customer_entity::Column::BillingStreet, self.billing_street.clone().into())
-                .col_expr(customer_entity::Column::BillingZip, self.billing_zip.clone().into())
-                .col_expr(customer_entity::Column::BillingCity, self.billing_city.clone().into())
-                .col_expr(customer_entity::Column::BillingCountry, self.billing_country.clone().into())
-                .col_expr(customer_entity::Column::ShippingStreet, self.shipping_street.clone().into())
-                .col_expr(customer_entity::Column::ShippingZip, self.shipping_zip.clone().into())
-                .col_expr(customer_entity::Column::ShippingCity, self.shipping_city.clone().into())
-                .col_expr(customer_entity::Column::ShippingCountry, self.shipping_country.clone().into())
-                .col_expr(customer_entity::Column::DefaultIban, self.default_iban.clone().into())
-                .col_expr(customer_entity::Column::DefaultBic, self.default_bic.clone().into())
-                .col_expr(customer_entity::Column::Notes, self.notes.clone().into())
+            let model = customer_entity::Entity::find()
                 .filter(customer_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(customer_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE customer {}: {e}", self.id,
+                    "load customer {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "customer {} not found", self.id,
                 )))?;
+
+            let mut am: customer_entity::ActiveModel = model.into();
+            am.name = Set(self.name.clone());
+            am.email = Set(self.email.clone());
+            am.company_type = Set(self.company_type.clone());
+            am.tax_id = Set(self.tax_id.clone());
+            am.vat_id = Set(self.vat_id.clone());
+            am.payment_terms_days = Set(self.payment_terms_days);
+            am.default_discount_pct = Set(self.default_discount_pct);
+            am.billing_street = Set(self.billing_street.clone());
+            am.billing_zip = Set(self.billing_zip.clone());
+            am.billing_city = Set(self.billing_city.clone());
+            am.billing_country = Set(self.billing_country.clone());
+            am.shipping_street = Set(self.shipping_street.clone());
+            am.shipping_zip = Set(self.shipping_zip.clone());
+            am.shipping_city = Set(self.shipping_city.clone());
+            am.shipping_country = Set(self.shipping_country.clone());
+            am.default_iban = Set(self.default_iban.clone());
+            am.default_bic = Set(self.default_bic.clone());
+            am.notes = Set(self.notes.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE customer {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

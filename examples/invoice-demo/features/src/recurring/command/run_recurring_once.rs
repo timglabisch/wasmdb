@@ -164,8 +164,8 @@ mod server_impl {
     use super::*;
     use async_trait::async_trait;
     use sea_orm::{
-        ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseTransaction, EntityTrait,
-        QueryFilter, QueryOrder, QuerySelect, Statement, Value,
+        ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseTransaction,
+        EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement, Value,
     };
     use sync_server_mysql::ServerCommand;
 
@@ -299,16 +299,22 @@ mod server_impl {
                 })?;
             }
 
-            recurring_invoice_entity::Entity::update_many()
-                .col_expr(recurring_invoice_entity::Column::LastRun, self.issue_date.clone().into())
-                .col_expr(recurring_invoice_entity::Column::NextRun, self.new_next_run.clone().into())
+            let template = recurring_invoice_entity::Entity::find()
                 .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_invoice_entity::Column::Id.eq(recurring_id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE recurring {recurring_id} last_run/next_run: {e}",
+                    "load recurring template {recurring_id}: {e}",
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "recurring template {recurring_id} not found",
                 )))?;
+            let mut tam: recurring_invoice_entity::ActiveModel = template.into();
+            tam.last_run = Set(self.issue_date.clone());
+            tam.next_run = Set(self.new_next_run.clone());
+            tam.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE recurring template {recurring_id}: {e}",
+            )))?;
 
             let detail = activity_detail_for(&template_name, &self.new_number);
             insert_activity(

@@ -109,7 +109,7 @@ impl Command for AssignCustomer {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -124,24 +124,31 @@ mod server_impl {
         ) -> Result<ZSet, CommandError> {
             let detail = detail_for(&self.customer_name);
 
-            invoice_entity::Entity::update_many()
-                .col_expr(invoice_entity::Column::CustomerId, self.customer_id.as_ref().map(|u| u.0.to_vec()).into())
-                .col_expr(invoice_entity::Column::BillingStreet, self.billing_street.clone().into())
-                .col_expr(invoice_entity::Column::BillingZip, self.billing_zip.clone().into())
-                .col_expr(invoice_entity::Column::BillingCity, self.billing_city.clone().into())
-                .col_expr(invoice_entity::Column::BillingCountry, self.billing_country.clone().into())
-                .col_expr(invoice_entity::Column::ShippingStreet, self.shipping_street.clone().into())
-                .col_expr(invoice_entity::Column::ShippingZip, self.shipping_zip.clone().into())
-                .col_expr(invoice_entity::Column::ShippingCity, self.shipping_city.clone().into())
-                .col_expr(invoice_entity::Column::ShippingCountry, self.shipping_country.clone().into())
-                .col_expr(invoice_entity::Column::DateDue, self.date_due.clone().into())
+            let model = invoice_entity::Entity::find()
                 .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE invoice {} assign customer: {e}", self.id,
+                    "load invoice {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "invoice {} not found", self.id,
                 )))?;
+
+            let mut am: invoice_entity::ActiveModel = model.into();
+            am.customer_id = Set(self.customer_id.as_ref().map(|u| u.0.to_vec()));
+            am.billing_street = Set(self.billing_street.clone());
+            am.billing_zip = Set(self.billing_zip.clone());
+            am.billing_city = Set(self.billing_city.clone());
+            am.billing_country = Set(self.billing_country.clone());
+            am.shipping_street = Set(self.shipping_street.clone());
+            am.shipping_zip = Set(self.shipping_zip.clone());
+            am.shipping_city = Set(self.shipping_city.clone());
+            am.shipping_country = Set(self.shipping_country.clone());
+            am.date_due = Set(self.date_due.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE invoice {} assign customer: {e}", self.id,
+            )))?;
 
             insert_activity(
                 tx,

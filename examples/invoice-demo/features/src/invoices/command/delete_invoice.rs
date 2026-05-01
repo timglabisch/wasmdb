@@ -65,7 +65,7 @@ impl Command for DeleteInvoice {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, ModelTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -98,14 +98,19 @@ mod server_impl {
                     "DELETE positions for invoice {}: {e}", self.id,
                 )))?;
 
-            invoice_entity::Entity::delete_many()
+            let model = invoice_entity::Entity::find()
                 .filter(invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE invoice {}: {e}", self.id,
+                    "load invoice {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "invoice {} not found", self.id,
                 )))?;
+            model.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "DELETE invoice {}: {e}", self.id,
+            )))?;
 
             let detail = detail_for(&self.number);
             insert_activity(

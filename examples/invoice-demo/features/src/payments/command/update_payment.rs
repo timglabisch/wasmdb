@@ -41,7 +41,7 @@ impl Command for UpdatePayment {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::payments::payment_server::entity as payment_entity;
@@ -54,19 +54,26 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            payment_entity::Entity::update_many()
-                .col_expr(payment_entity::Column::Amount, self.amount.into())
-                .col_expr(payment_entity::Column::PaidAt, self.paid_at.clone().into())
-                .col_expr(payment_entity::Column::Method, self.method.clone().into())
-                .col_expr(payment_entity::Column::Reference, self.reference.clone().into())
-                .col_expr(payment_entity::Column::Note, self.note.clone().into())
+            let model = payment_entity::Entity::find()
                 .filter(payment_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(payment_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE payment {}: {e}", self.id,
+                    "load payment {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "payment {} not found", self.id,
                 )))?;
+
+            let mut am: payment_entity::ActiveModel = model.into();
+            am.amount = Set(self.amount);
+            am.paid_at = Set(self.paid_at.clone());
+            am.method = Set(self.method.clone());
+            am.reference = Set(self.reference.clone());
+            am.note = Set(self.note.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE payment {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

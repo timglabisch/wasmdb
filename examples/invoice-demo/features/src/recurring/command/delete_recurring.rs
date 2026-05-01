@@ -58,7 +58,7 @@ impl Command for DeleteRecurring {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, ModelTrait, QueryFilter};
     use sync_server_mysql::ServerCommand;
 
     use crate::activity_log::activity_log_server::insert_activity;
@@ -81,15 +81,19 @@ mod server_impl {
                     "DELETE recurring_positions for recurring_id {}: {e}",
                     self.id,
                 )))?;
-            recurring_invoice_entity::Entity::delete_many()
+            let model = recurring_invoice_entity::Entity::find()
                 .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "DELETE recurring_invoice {}: {e}",
-                    self.id,
+                    "load recurring {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "recurring {} not found", self.id,
                 )))?;
+            model.delete(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "DELETE recurring {}: {e}", self.id,
+            )))?;
 
             let detail = detail_for(&self.label_for_detail);
             insert_activity(

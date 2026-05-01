@@ -47,7 +47,7 @@ impl Command for UpdateRecurring {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::recurring::recurring_invoice_server::entity as recurring_invoice_entity;
@@ -59,22 +59,28 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            recurring_invoice_entity::Entity::update_many()
-                .col_expr(recurring_invoice_entity::Column::TemplateName, self.template_name.clone().into())
-                .col_expr(recurring_invoice_entity::Column::IntervalUnit, self.interval_unit.clone().into())
-                .col_expr(recurring_invoice_entity::Column::IntervalValue, self.interval_value.into())
-                .col_expr(recurring_invoice_entity::Column::NextRun, self.next_run.clone().into())
-                .col_expr(recurring_invoice_entity::Column::Enabled, self.enabled.into())
-                .col_expr(recurring_invoice_entity::Column::StatusTemplate, self.status_template.clone().into())
-                .col_expr(recurring_invoice_entity::Column::NotesTemplate, self.notes_template.clone().into())
+            let model = recurring_invoice_entity::Entity::find()
                 .filter(recurring_invoice_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(recurring_invoice_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE recurring_invoice {}: {e}",
-                    self.id,
+                    "load recurring {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "recurring {} not found", self.id,
                 )))?;
+
+            let mut am: recurring_invoice_entity::ActiveModel = model.into();
+            am.template_name = Set(self.template_name.clone());
+            am.interval_unit = Set(self.interval_unit.clone());
+            am.interval_value = Set(self.interval_value);
+            am.next_run = Set(self.next_run.clone());
+            am.enabled = Set(self.enabled);
+            am.status_template = Set(self.status_template.clone());
+            am.notes_template = Set(self.notes_template.clone());
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE recurring {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }

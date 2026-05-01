@@ -41,7 +41,7 @@ impl Command for UpdateContact {
 mod server_impl {
     use super::*;
     use async_trait::async_trait;
-    use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter};
+    use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, Set};
     use sync_server_mysql::ServerCommand;
 
     use crate::contacts::contact_server::entity as contact_entity;
@@ -54,19 +54,26 @@ mod server_impl {
             tx: &DatabaseTransaction,
             client_zset: &ZSet,
         ) -> Result<ZSet, CommandError> {
-            contact_entity::Entity::update_many()
-                .col_expr(contact_entity::Column::Name, self.name.clone().into())
-                .col_expr(contact_entity::Column::Email, self.email.clone().into())
-                .col_expr(contact_entity::Column::Phone, self.phone.clone().into())
-                .col_expr(contact_entity::Column::Role, self.role.clone().into())
-                .col_expr(contact_entity::Column::IsPrimary, self.is_primary.into())
+            let model = contact_entity::Entity::find()
                 .filter(contact_entity::Column::TenantId.eq(DEMO_TENANT_ID))
                 .filter(contact_entity::Column::Id.eq(self.id.0.to_vec()))
-                .exec(tx)
-                .await
+                .one(tx).await
                 .map_err(|e| CommandError::ExecutionFailed(format!(
-                    "UPDATE contact {}: {e}", self.id,
+                    "load contact {}: {e}", self.id,
+                )))?
+                .ok_or_else(|| CommandError::ExecutionFailed(format!(
+                    "contact {} not found", self.id,
                 )))?;
+
+            let mut am: contact_entity::ActiveModel = model.into();
+            am.name = Set(self.name.clone());
+            am.email = Set(self.email.clone());
+            am.phone = Set(self.phone.clone());
+            am.role = Set(self.role.clone());
+            am.is_primary = Set(self.is_primary);
+            am.update(tx).await.map_err(|e| CommandError::ExecutionFailed(format!(
+                "UPDATE contact {}: {e}", self.id,
+            )))?;
             Ok(client_zset.clone())
         }
     }
