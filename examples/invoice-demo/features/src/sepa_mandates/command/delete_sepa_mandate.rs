@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct DeleteSepaMandate {
@@ -17,7 +17,7 @@ impl Command for DeleteSepaMandate {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(db, sql!("DELETE FROM sepa_mandates WHERE sepa_mandates.id = {id}", id = self.id))
+        sql!("DELETE FROM sepa_mandates WHERE sepa_mandates.id = {id}", id = self.id).execute(db)
     }
 }
 

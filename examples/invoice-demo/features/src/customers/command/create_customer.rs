@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -50,20 +50,18 @@ impl Command for CreateCustomer {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.name);
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
-                 VALUES ({self.id}, {self.name}, {self.email}, {self.created_at}, {self.company_type}, {self.tax_id}, {self.vat_id}, {self.payment_terms_days}, {self.default_discount_pct}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country}, {self.default_iban}, {self.default_bic}, {self.notes})"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
+             VALUES ({self.id}, {self.name}, {self.email}, {self.created_at}, {self.company_type}, {self.tax_id}, {self.vat_id}, {self.payment_terms_days}, {self.default_discount_pct}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country}, {self.default_iban}, {self.default_bic}, {self.notes})"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'customer', {self.id}, 'create', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

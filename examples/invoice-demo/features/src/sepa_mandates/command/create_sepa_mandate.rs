@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -35,20 +35,18 @@ impl Command for CreateSepaMandate {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.mandate_ref);
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
-                 VALUES ({self.id}, {self.customer_id}, {self.mandate_ref}, {self.iban}, {self.bic}, {self.holder_name}, {self.signed_at}, 'active')"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
+             VALUES ({self.id}, {self.customer_id}, {self.mandate_ref}, {self.iban}, {self.bic}, {self.holder_name}, {self.signed_at}, 'active')"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'sepa', {self.id}, 'create', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -37,13 +37,11 @@ impl Command for AddRecurringPosition {
             id, recurring_id, position_nr, description, quantity, unit_price, tax_rate,
             unit, item_number, discount_pct,
         } = self;
-        execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
-                 VALUES ({id}, {recurring_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {unit}, {item_number}, {discount_pct})"
-            ),
+        sql!(
+            "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
+             VALUES ({id}, {recurring_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {unit}, {item_number}, {discount_pct})"
         )
+        .execute(db)
     }
 }
 

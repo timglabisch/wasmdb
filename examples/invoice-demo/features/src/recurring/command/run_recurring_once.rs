@@ -1,13 +1,11 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, execute_stmt, p_uuid, read_i64_col, read_str_col, read_uuid_col};
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
-use crate::invoices::command::invoice_params::invoice_params;
 
 fn activity_detail_for(template_name: &str, new_number: &str) -> String {
     format!("Serie \"{template_name}\" ausgeführt — Rechnung {new_number} erstellt")
@@ -49,45 +47,57 @@ impl Command for RunRecurringOnce {
         let due_date = &self.due_date;
         let new_next_run = &self.new_next_run;
 
-        let customer_id = read_uuid_col(db,
-            "SELECT customer_id FROM recurring_invoices WHERE id = :rid",
-            Params::from([p_uuid("rid", &recurring_id)]))?
-            .into_iter().next()
-            .ok_or_else(|| CommandError::ExecutionFailed(format!("recurring #{recurring_id} not found")))?;
-        let status_templates = read_str_col(db,
-            "SELECT status_template FROM recurring_invoices WHERE id = :rid",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let notes_templates = read_str_col(db,
-            "SELECT notes_template FROM recurring_invoices WHERE id = :rid",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let template_names = read_str_col(db,
-            "SELECT template_name FROM recurring_invoices WHERE id = :rid",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
+        let customer_id = sql!(
+            "SELECT customer_id FROM recurring_invoices WHERE id = {recurring_id}"
+        )
+        .read_uuid_col(db)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| CommandError::ExecutionFailed(format!("recurring #{recurring_id} not found")))?;
+        let status_templates = sql!(
+            "SELECT status_template FROM recurring_invoices WHERE id = {recurring_id}"
+        )
+        .read_str_col(db)?;
+        let notes_templates = sql!(
+            "SELECT notes_template FROM recurring_invoices WHERE id = {recurring_id}"
+        )
+        .read_str_col(db)?;
+        let template_names = sql!(
+            "SELECT template_name FROM recurring_invoices WHERE id = {recurring_id}"
+        )
+        .read_str_col(db)?;
         let status = status_templates.into_iter().next().unwrap_or_else(|| "draft".into());
         let notes = notes_templates.into_iter().next().unwrap_or_default();
         let template_name = template_names.into_iter().next().unwrap_or_default();
 
-        let descs = read_str_col(db,
-            "SELECT description FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let qtys = read_i64_col(db,
-            "SELECT quantity FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let prices = read_i64_col(db,
-            "SELECT unit_price FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let taxes = read_i64_col(db,
-            "SELECT tax_rate FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let units = read_str_col(db,
-            "SELECT unit FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let items = read_str_col(db,
-            "SELECT item_number FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
-        let discounts = read_i64_col(db,
-            "SELECT discount_pct FROM recurring_positions WHERE recurring_id = :rid ORDER BY position_nr",
-            Params::from([p_uuid("rid", &recurring_id)]))?;
+        let descs = sql!(
+            "SELECT description FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_str_col(db)?;
+        let qtys = sql!(
+            "SELECT quantity FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_i64_col(db)?;
+        let prices = sql!(
+            "SELECT unit_price FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_i64_col(db)?;
+        let taxes = sql!(
+            "SELECT tax_rate FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_i64_col(db)?;
+        let units = sql!(
+            "SELECT unit FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_str_col(db)?;
+        let items = sql!(
+            "SELECT item_number FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_str_col(db)?;
+        let discounts = sql!(
+            "SELECT discount_pct FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        )
+        .read_i64_col(db)?;
 
         if descs.len() != position_ids.len() {
             return Err(CommandError::ExecutionFailed(format!(
@@ -98,21 +108,16 @@ impl Command for RunRecurringOnce {
 
         let mut acc = ZSet::new();
 
-        let some_customer = Some(customer_id);
-        let inv_params = invoice_params(
-            &new_invoice_id, Some(&some_customer), new_number, &status,
-            issue_date, due_date, &notes,
-            "invoice", &None, "",
-            0, 0, 0,
-            "transfer", &None, "EUR", "de",
-            "", "",
-            "", "", "", "",
-            "", "", "", "",
+        let some_customer: Option<Uuid> = Some(customer_id);
+        let parent_id: Option<Uuid> = None;
+        let sepa_mandate_id: Option<Uuid> = None;
+        acc.extend(
+            sql!(
+                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES ({new_invoice_id}, {some_customer}, {new_number}, {status}, {issue_date}, {due_date}, {notes}, 'invoice', {parent_id}, '', 0, 0, 0, 'transfer', {sepa_mandate_id}, 'EUR', 'de', '', '', '', '', '', '', '', '', '', '')"
+            )
+            .execute(db)?,
         );
-        acc.extend(execute_sql(db,
-            "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
-            inv_params)?);
 
         for (i, pid) in position_ids.iter().enumerate() {
             let position_nr = (i as i64 + 1) * 1000;
@@ -124,39 +129,30 @@ impl Command for RunRecurringOnce {
             let unit = &units[i];
             let discount_pct = discounts[i];
             let product_id: Option<Uuid> = None;
-            acc.extend(execute_stmt(db, sql!(
-                "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, 0, 'service')",
-                id = pid,
-                invoice_id = new_invoice_id,
-                position_nr = position_nr,
-                description = description,
-                quantity = quantity,
-                unit_price = unit_price,
-                tax_rate = tax_rate,
-                product_id = product_id,
-                item_number = item_number,
-                unit = unit,
-                discount_pct = discount_pct,
-            ))?);
+            acc.extend(
+                sql!(
+                    "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                     VALUES ({pid}, {new_invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, 0, 'service')"
+                )
+                .execute(db)?,
+            );
         }
 
-        acc.extend(execute_stmt(db, sql!(
-            "UPDATE recurring_invoices SET last_run = {last_run}, next_run = {next_run} WHERE recurring_invoices.id = {id}",
-            id = recurring_id,
-            last_run = issue_date,
-            next_run = new_next_run,
-        ))?);
+        acc.extend(
+            sql!(
+                "UPDATE recurring_invoices SET last_run = {issue_date}, next_run = {new_next_run} WHERE recurring_invoices.id = {recurring_id}"
+            )
+            .execute(db)?,
+        );
 
         let detail = activity_detail_for(&template_name, new_number);
-        acc.extend(execute_stmt(db, sql!(
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES ({aid}, {ts}, 'recurring', {eid}, 'run', 'demo', {detail})",
-            aid = self.activity_id,
-            ts = self.timestamp,
-            eid = recurring_id,
-            detail = detail,
-        ))?);
+        acc.extend(
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'recurring', {recurring_id}, 'run', 'demo', {detail})"
+            )
+            .execute(db)?,
+        );
 
         Ok(acc)
     }

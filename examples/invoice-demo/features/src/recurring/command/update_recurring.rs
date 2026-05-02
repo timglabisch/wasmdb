@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -27,20 +27,18 @@ impl Command for UpdateRecurring {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(
-            db,
-            sql!(
-                "UPDATE recurring_invoices SET template_name = {template_name}, interval_unit = {interval_unit}, interval_value = {interval_value}, next_run = {next_run}, enabled = {enabled}, status_template = {status_template}, notes_template = {notes_template} WHERE recurring_invoices.id = {id}",
-                id = self.id,
-                template_name = self.template_name,
-                interval_unit = self.interval_unit,
-                interval_value = self.interval_value,
-                next_run = self.next_run,
-                enabled = self.enabled,
-                status_template = self.status_template,
-                notes_template = self.notes_template,
-            ),
+        sql!(
+            "UPDATE recurring_invoices SET template_name = {template_name}, interval_unit = {interval_unit}, interval_value = {interval_value}, next_run = {next_run}, enabled = {enabled}, status_template = {status_template}, notes_template = {notes_template} WHERE recurring_invoices.id = {id}",
+            id = self.id,
+            template_name = self.template_name,
+            interval_unit = self.interval_unit,
+            interval_value = self.interval_value,
+            next_run = self.next_run,
+            enabled = self.enabled,
+            status_template = self.status_template,
+            notes_template = self.notes_template,
         )
+        .execute(db)
     }
 }
 

@@ -1,12 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_stmt, p_uuid, read_uuid_col};
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -30,67 +29,64 @@ impl Command for DeleteCustomerCascade {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let id = self.id;
         let detail = detail_for(&self.name);
 
-        let recurring_ids = read_uuid_col(db,
-            "SELECT id FROM recurring_invoices WHERE customer_id = :cid",
-            Params::from([p_uuid("cid", &id)]))?;
-        let invoice_ids = read_uuid_col(db,
-            "SELECT id FROM invoices WHERE customer_id = :cid",
-            Params::from([p_uuid("cid", &id)]))?;
+        let recurring_ids = sql!(
+            "SELECT id FROM recurring_invoices WHERE customer_id = {self.id}"
+        )
+        .read_uuid_col(db)?;
+        let invoice_ids = sql!(
+            "SELECT id FROM invoices WHERE customer_id = {self.id}"
+        )
+        .read_uuid_col(db)?;
 
         let mut acc = ZSet::new();
 
         if !recurring_ids.is_empty() {
             let rids: Vec<[u8; 16]> = recurring_ids.iter().map(|u| u.0).collect();
-            acc.extend(execute_stmt(db, sql!(
-                "DELETE FROM recurring_positions WHERE recurring_id IN ({rids})",
-                rids = rids,
-            ))?);
-            acc.extend(execute_stmt(db, sql!(
-                "DELETE FROM recurring_invoices WHERE id IN ({rids})",
-                rids = rids,
-            ))?);
+            acc.extend(
+                sql!("DELETE FROM recurring_positions WHERE recurring_id IN ({rids})", rids = rids)
+                    .execute(db)?,
+            );
+            acc.extend(
+                sql!("DELETE FROM recurring_invoices WHERE id IN ({rids})", rids = rids)
+                    .execute(db)?,
+            );
         }
 
         if !invoice_ids.is_empty() {
             let iids: Vec<[u8; 16]> = invoice_ids.iter().map(|u| u.0).collect();
-            acc.extend(execute_stmt(db, sql!(
-                "DELETE FROM payments WHERE invoice_id IN ({iids})",
-                iids = iids,
-            ))?);
-            acc.extend(execute_stmt(db, sql!(
-                "DELETE FROM positions WHERE invoice_id IN ({iids})",
-                iids = iids,
-            ))?);
-            acc.extend(execute_stmt(db, sql!(
-                "DELETE FROM invoices WHERE id IN ({iids})",
-                iids = iids,
-            ))?);
+            acc.extend(
+                sql!("DELETE FROM payments WHERE invoice_id IN ({iids})", iids = iids)
+                    .execute(db)?,
+            );
+            acc.extend(
+                sql!("DELETE FROM positions WHERE invoice_id IN ({iids})", iids = iids)
+                    .execute(db)?,
+            );
+            acc.extend(
+                sql!("DELETE FROM invoices WHERE id IN ({iids})", iids = iids)
+                    .execute(db)?,
+            );
         }
 
-        acc.extend(execute_stmt(db, sql!(
-            "DELETE FROM sepa_mandates WHERE customer_id = {id}",
-            id = id,
-        ))?);
-        acc.extend(execute_stmt(db, sql!(
-            "DELETE FROM contacts WHERE customer_id = {id}",
-            id = id,
-        ))?);
-        acc.extend(execute_stmt(db, sql!(
-            "DELETE FROM customers WHERE id = {id}",
-            id = id,
-        ))?);
+        acc.extend(
+            sql!("DELETE FROM sepa_mandates WHERE customer_id = {self.id}").execute(db)?,
+        );
+        acc.extend(
+            sql!("DELETE FROM contacts WHERE customer_id = {self.id}").execute(db)?,
+        );
+        acc.extend(
+            sql!("DELETE FROM customers WHERE id = {self.id}").execute(db)?,
+        );
 
-        acc.extend(execute_stmt(db, sql!(
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES ({aid}, {ts}, 'customer', {id}, 'delete', 'demo', {detail})",
-            aid = self.activity_id,
-            ts = self.timestamp,
-            id = self.id,
-            detail = detail,
-        ))?);
+        acc.extend(
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'customer', {self.id}, 'delete', 'demo', {detail})"
+            )
+            .execute(db)?,
+        );
 
         Ok(acc)
     }

@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: assign (or remove) a customer from an invoice.
@@ -64,26 +64,24 @@ impl Command for AssignCustomer {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.customer_name);
 
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "UPDATE invoices SET \
-                 customer_id = {self.customer_id}, \
-                 billing_street = {self.billing_street}, billing_zip = {self.billing_zip}, \
-                 billing_city = {self.billing_city}, billing_country = {self.billing_country}, \
-                 shipping_street = {self.shipping_street}, shipping_zip = {self.shipping_zip}, \
-                 shipping_city = {self.shipping_city}, shipping_country = {self.shipping_country}, \
-                 date_due = {self.date_due} \
-                 WHERE invoices.id = {self.id}"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "UPDATE invoices SET \
+             customer_id = {self.customer_id}, \
+             billing_street = {self.billing_street}, billing_zip = {self.billing_zip}, \
+             billing_city = {self.billing_city}, billing_country = {self.billing_country}, \
+             shipping_street = {self.shipping_street}, shipping_zip = {self.shipping_zip}, \
+             shipping_city = {self.shipping_city}, shipping_country = {self.shipping_country}, \
+             date_due = {self.date_due} \
+             WHERE invoices.id = {self.id}"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'customer_assigned', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

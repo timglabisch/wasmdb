@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct LogActivity {
@@ -26,7 +26,7 @@ impl Command for LogActivity {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(db, sql!(
+        sql!(
             "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
              VALUES ({id}, {timestamp}, {entity_type}, {entity_id}, {action}, {actor}, {detail})",
             id = self.id,
@@ -36,7 +36,8 @@ impl Command for LogActivity {
             action = self.action,
             actor = self.actor,
             detail = self.detail,
-        ))
+        )
+        .execute(db)
     }
 }
 

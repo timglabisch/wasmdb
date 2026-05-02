@@ -1,12 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
+use crate::command_helpers::SqlStmtExt;
 
 /// Intent-Command: activate or deactivate a product. Replaces the old
 /// `updateProduct({...,active}) + logActivity(...)` pair. Activity is
@@ -40,36 +39,26 @@ fn action_for(active: i64) -> &'static str {
 
 impl Command for SetProductActive {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "UPDATE products SET active = {active} WHERE products.id = {id}",
-                active = self.active,
-                id = self.id,
-            ),
-        )?;
+        let mut acc = sql!(
+            "UPDATE products SET active = {self.active} WHERE products.id = {self.id}"
+        )
+        .execute(db)?;
 
-        let names = read_str_col(
-            db,
-            "SELECT products.name FROM products WHERE products.id = :id",
-            Params::from([p_uuid("id", &self.id)]),
-        )?;
+        let names = sql!(
+            "SELECT products.name FROM products WHERE products.id = {self.id}"
+        )
+        .read_str_col(db)?;
         let name = names.into_iter().next().unwrap_or_default();
         let detail = detail_for(&name, self.active);
         let action = action_for(self.active);
 
-        acc.extend(execute_stmt(
-            db,
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES ({aid}, {ts}, 'product', {id}, {action}, 'demo', {detail})",
-                aid = self.activity_id,
-                ts = self.timestamp,
-                id = self.id,
-                action = action,
-                detail = detail,
-            ),
-        )?);
+                 VALUES ({self.activity_id}, {self.timestamp}, 'product', {self.id}, {action}, 'demo', {detail})"
+            )
+            .execute(db)?,
+        );
 
         Ok(acc)
     }

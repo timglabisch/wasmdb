@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -20,14 +20,12 @@ impl Command for MovePosition {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(
-            db,
-            sql!(
-                "UPDATE positions SET position_nr = {position_nr} WHERE positions.id = {id}",
-                id = self.id,
-                position_nr = self.new_position_nr,
-            ),
+        sql!(
+            "UPDATE positions SET position_nr = {position_nr} WHERE positions.id = {id}",
+            id = self.id,
+            position_nr = self.new_position_nr,
         )
+        .execute(db)
     }
 }
 

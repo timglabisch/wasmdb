@@ -1,12 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_stmt, p_uuid, read_i64_col, read_str_col, read_uuid_col};
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: create a credit-note (Gutschrift) referencing an existing
@@ -51,102 +50,90 @@ impl Command for CreateCreditNote {
         let new_id = self.new_invoice_id;
 
         // --- read source invoice header ---
-        let numbers = read_str_col(db,
-            "SELECT invoices.number FROM invoices WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &src)]))?;
+        let numbers = sql!("SELECT invoices.number FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?;
         let src_number = numbers.into_iter().next().unwrap_or_default();
         let detail = detail_for(&src_number, &src, &new_id);
 
-        let customer_ids = read_uuid_col(db,
-            "SELECT invoices.customer_id FROM invoices WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &src)]))?;
-        let customer_id: Option<Uuid> = customer_ids.into_iter().next();
+        let customer_id: Option<Uuid> =
+            sql!("SELECT invoices.customer_id FROM invoices WHERE invoices.id = {src}")
+                .read_uuid_col(db)?
+                .into_iter()
+                .next();
 
-        macro_rules! str_field {
-            ($col:literal) => {{
-                read_str_col(db,
-                    concat!("SELECT invoices.", $col, " FROM invoices WHERE invoices.id = :id"),
-                    Params::from([p_uuid("id", &src)]))?
-                    .into_iter().next().unwrap_or_default()
-            }};
-        }
-        macro_rules! int_field {
-            ($col:literal) => {{
-                read_i64_col(db,
-                    concat!("SELECT invoices.", $col, " FROM invoices WHERE invoices.id = :id"),
-                    Params::from([p_uuid("id", &src)]))?
-                    .into_iter().next().unwrap_or_default()
-            }};
-        }
+        let notes           = sql!("SELECT invoices.notes FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let service_date    = sql!("SELECT invoices.service_date FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let cash_pct        = sql!("SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = {src}")
+            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
+        let cash_days       = sql!("SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = {src}")
+            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
+        let discount_pct    = sql!("SELECT invoices.discount_pct FROM invoices WHERE invoices.id = {src}")
+            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
+        let payment_method  = sql!("SELECT invoices.payment_method FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let currency        = sql!("SELECT invoices.currency FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let language        = sql!("SELECT invoices.language FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let project_ref     = sql!("SELECT invoices.project_ref FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let external_id     = sql!("SELECT invoices.external_id FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let billing_street  = sql!("SELECT invoices.billing_street FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let billing_zip     = sql!("SELECT invoices.billing_zip FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let billing_city    = sql!("SELECT invoices.billing_city FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let billing_country = sql!("SELECT invoices.billing_country FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let shipping_street  = sql!("SELECT invoices.shipping_street FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let shipping_zip     = sql!("SELECT invoices.shipping_zip FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let shipping_city    = sql!("SELECT invoices.shipping_city FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
+        let shipping_country = sql!("SELECT invoices.shipping_country FROM invoices WHERE invoices.id = {src}")
+            .read_str_col(db)?.into_iter().next().unwrap_or_default();
 
-        let notes           = str_field!("notes");
-        let service_date    = str_field!("service_date");
-        let cash_pct        = int_field!("cash_allowance_pct");
-        let cash_days       = int_field!("cash_allowance_days");
-        let discount_pct    = int_field!("discount_pct");
-        let payment_method  = str_field!("payment_method");
-        let currency        = str_field!("currency");
-        let language        = str_field!("language");
-        let project_ref     = str_field!("project_ref");
-        let external_id     = str_field!("external_id");
-        let billing_street  = str_field!("billing_street");
-        let billing_zip     = str_field!("billing_zip");
-        let billing_city    = str_field!("billing_city");
-        let billing_country = str_field!("billing_country");
-        let shipping_street  = str_field!("shipping_street");
-        let shipping_zip     = str_field!("shipping_zip");
-        let shipping_city    = str_field!("shipping_city");
-        let shipping_country = str_field!("shipping_country");
-
-        let sepa_mandate_id: Option<Uuid> = read_uuid_col(db,
-            "SELECT invoices.sepa_mandate_id FROM invoices WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &src)]))?
-            .into_iter().next();
+        let sepa_mandate_id: Option<Uuid> =
+            sql!("SELECT invoices.sepa_mandate_id FROM invoices WHERE invoices.id = {src}")
+                .read_uuid_col(db)?
+                .into_iter()
+                .next();
 
         // credit note: doc_type = 'credit_note', parent_id = source
         let parent_id: Option<Uuid> = Some(src);
 
-        let mut acc = execute_stmt(db, sql!(
+        let mut acc = sql!(
             "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES ({id}, {customer_id}, {number}, 'draft', {date_issued}, {date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_allowance_pct}, {cash_allowance_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
-            id = new_id,
-            customer_id = customer_id,
-            number = self.new_number,
-            date_issued = self.date_issued,
-            date_due = self.date_due,
-            notes = notes,
-            parent_id = parent_id,
-            service_date = service_date,
-            cash_allowance_pct = cash_pct,
-            cash_allowance_days = cash_days,
-            discount_pct = discount_pct,
-            payment_method = payment_method,
-            sepa_mandate_id = sepa_mandate_id,
-            currency = currency,
-            language = language,
-            project_ref = project_ref,
-            external_id = external_id,
-            billing_street = billing_street,
-            billing_zip = billing_zip,
-            billing_city = billing_city,
-            billing_country = billing_country,
-            shipping_street = shipping_street,
-            shipping_zip = shipping_zip,
-            shipping_city = shipping_city,
-            shipping_country = shipping_country,
-        ))?;
+             VALUES ({new_id}, {customer_id}, {self.new_number}, 'draft', {self.date_issued}, {self.date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_pct}, {cash_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})"
+        )
+        .execute(db)?;
 
         // --- copy positions with negated quantities ---
-        let descs     = read_str_col(db, "SELECT description FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr", Params::from([p_uuid("iid", &src)]))?;
-        let qtys      = read_i64_col(db, "SELECT quantity FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",    Params::from([p_uuid("iid", &src)]))?;
-        let prices    = read_i64_col(db, "SELECT unit_price FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",  Params::from([p_uuid("iid", &src)]))?;
-        let taxes     = read_i64_col(db, "SELECT tax_rate FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",     Params::from([p_uuid("iid", &src)]))?;
-        let items     = read_str_col(db, "SELECT item_number FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",  Params::from([p_uuid("iid", &src)]))?;
-        let units     = read_str_col(db, "SELECT unit FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",         Params::from([p_uuid("iid", &src)]))?;
-        let discounts = read_i64_col(db, "SELECT discount_pct FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr", Params::from([p_uuid("iid", &src)]))?;
-        let costs     = read_i64_col(db, "SELECT cost_price FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",   Params::from([p_uuid("iid", &src)]))?;
-        let pos_types = read_str_col(db, "SELECT position_type FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",Params::from([p_uuid("iid", &src)]))?;
-        let pos_nrs   = read_i64_col(db, "SELECT position_nr FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr",  Params::from([p_uuid("iid", &src)]))?;
+        let descs     = sql!("SELECT description FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_str_col(db)?;
+        let qtys      = sql!("SELECT quantity FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
+        let prices    = sql!("SELECT unit_price FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
+        let taxes     = sql!("SELECT tax_rate FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
+        let items     = sql!("SELECT item_number FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_str_col(db)?;
+        let units     = sql!("SELECT unit FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_str_col(db)?;
+        let discounts = sql!("SELECT discount_pct FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
+        let costs     = sql!("SELECT cost_price FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
+        let pos_types = sql!("SELECT position_type FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_str_col(db)?;
+        let pos_nrs   = sql!("SELECT position_nr FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
+            .read_i64_col(db)?;
 
         if descs.len() != self.new_position_ids.len() {
             return Err(CommandError::ExecutionFailed(format!(
@@ -168,34 +155,23 @@ impl Command for CreateCreditNote {
             let cost_price = costs.get(i).copied().unwrap_or(0);
             let position_type = pos_types.get(i).map(|s| s.as_str()).unwrap_or("service");
 
-            acc.extend(execute_stmt(db, sql!(
-                "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})",
-                id = pid,
-                invoice_id = new_id,
-                position_nr = position_nr,
-                description = description,
-                quantity = quantity,
-                unit_price = unit_price,
-                tax_rate = tax_rate,
-                product_id = product_id,
-                item_number = item_number,
-                unit = unit,
-                discount_pct = discount_pct,
-                cost_price = cost_price,
-                position_type = position_type,
-            ))?);
+            acc.extend(
+                sql!(
+                    "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                     VALUES ({pid}, {new_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})"
+                )
+                .execute(db)?,
+            );
         }
 
         // --- activity row ---
-        acc.extend(execute_stmt(db, sql!(
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES ({activity_id}, {timestamp}, 'invoice', {entity_id}, 'credit_note_created', 'demo', {detail})",
-            activity_id = self.activity_id,
-            timestamp = self.timestamp,
-            entity_id = new_id,
-            detail = detail,
-        ))?);
+        acc.extend(
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {new_id}, 'credit_note_created', 'demo', {detail})"
+            )
+            .execute(db)?,
+        );
 
         Ok(acc)
     }

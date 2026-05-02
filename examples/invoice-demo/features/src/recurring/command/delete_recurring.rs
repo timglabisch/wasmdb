@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Cascades recurring_positions + recurring_invoice atomically.
@@ -31,21 +31,15 @@ impl Command for DeleteRecurring {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.label_for_detail);
-        let mut acc = execute_stmt(
-            db,
-            sql!("DELETE FROM recurring_positions WHERE recurring_id = {self.id}"),
-        )?;
-        acc.extend(execute_stmt(
-            db,
-            sql!("DELETE FROM recurring_invoices WHERE id = {self.id}"),
-        )?);
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!("DELETE FROM recurring_positions WHERE recurring_id = {self.id}").execute(db)?;
+        acc.extend(sql!("DELETE FROM recurring_invoices WHERE id = {self.id}").execute(db)?);
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'recurring', {self.id}, 'delete', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

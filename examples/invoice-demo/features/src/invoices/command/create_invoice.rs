@@ -4,7 +4,7 @@ use rpc_command::rpc_command;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -60,20 +60,18 @@ impl Command for CreateInvoice {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.number);
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES ({self.id}, {self.customer_id}, {self.number}, {self.status}, {self.date_issued}, {self.date_due}, {self.notes}, {self.doc_type}, {self.parent_id}, {self.service_date}, {self.cash_allowance_pct}, {self.cash_allowance_days}, {self.discount_pct}, {self.payment_method}, {self.sepa_mandate_id}, {self.currency}, {self.language}, {self.project_ref}, {self.external_id}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country})"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+             VALUES ({self.id}, {self.customer_id}, {self.number}, {self.status}, {self.date_issued}, {self.date_due}, {self.notes}, {self.doc_type}, {self.parent_id}, {self.service_date}, {self.cash_allowance_pct}, {self.cash_allowance_days}, {self.discount_pct}, {self.payment_method}, {self.sepa_mandate_id}, {self.currency}, {self.language}, {self.project_ref}, {self.external_id}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country})"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'create', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

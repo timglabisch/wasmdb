@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct UpdateContact {
@@ -23,18 +23,16 @@ impl Command for UpdateContact {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(
-            db,
-            sql!(
-                "UPDATE contacts SET name = {name}, email = {email}, phone = {phone}, role = {role}, is_primary = {is_primary} WHERE contacts.id = {id}",
-                id = self.id,
-                name = self.name,
-                email = self.email,
-                phone = self.phone,
-                role = self.role,
-                is_primary = self.is_primary,
-            ),
+        sql!(
+            "UPDATE contacts SET name = {name}, email = {email}, phone = {phone}, role = {role}, is_primary = {is_primary} WHERE contacts.id = {id}",
+            id = self.id,
+            name = self.name,
+            email = self.email,
+            phone = self.phone,
+            role = self.role,
+            is_primary = self.is_primary,
         )
+        .execute(db)
     }
 }
 

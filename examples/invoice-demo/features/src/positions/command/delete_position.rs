@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -18,7 +18,7 @@ impl Command for DeletePosition {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(db, sql!("DELETE FROM positions WHERE positions.id = {id}", id = self.id))
+        sql!("DELETE FROM positions WHERE positions.id = {id}", id = self.id).execute(db)
     }
 }
 

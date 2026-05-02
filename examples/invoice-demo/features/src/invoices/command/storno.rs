@@ -2,14 +2,13 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
 use rpc_command::rpc_command;
 use serde::{Deserialize, Serialize};
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use ts_rs::TS;
 
-use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// A position embedded in the Storno credit note (pre-negated quantity,
@@ -103,24 +102,21 @@ fn detail_for(number: &str, credit_note_id: &Uuid) -> String {
 impl Command for Storno {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         // 1. Cancel the original invoice.
-        let mut acc = execute_stmt(
-            db,
-            sql!("UPDATE invoices SET status = 'cancelled' WHERE invoices.id = {id}",
-                id = self.id),
-        )?;
+        let mut acc = sql!(
+            "UPDATE invoices SET status = 'cancelled' WHERE invoices.id = {self.id}"
+        )
+        .execute(db)?;
 
         // 2. Look up the original invoice number for the activity detail.
-        let numbers = read_str_col(
-            db,
-            "SELECT invoices.number FROM invoices WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &self.id)]),
-        )?;
+        let numbers = sql!(
+            "SELECT invoices.number FROM invoices WHERE invoices.id = {self.id}"
+        )
+        .read_str_col(db)?;
         let number = numbers.into_iter().next().unwrap_or_default();
         let detail = detail_for(&number, &self.credit_note_id);
 
         // 3. Insert the credit note header.
-        acc.extend(execute_stmt(
-            db,
+        acc.extend(
             sql!(
                 "INSERT INTO invoices \
                  (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, \
@@ -129,84 +125,39 @@ impl Command for Storno {
                   billing_street, billing_zip, billing_city, billing_country, \
                   shipping_street, shipping_zip, shipping_city, shipping_country) \
                  VALUES \
-                 ({credit_note_id}, {customer_id}, {credit_note_number}, 'draft', {date_issued}, {date_due}, {notes}, 'credit_note', {parent_id}, \
-                  {service_date}, {cash_allowance_pct}, {cash_allowance_days}, {discount_pct}, \
-                  {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, \
-                  {billing_street}, {billing_zip}, {billing_city}, {billing_country}, \
-                  {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
-                credit_note_id = self.credit_note_id,
-                customer_id = self.customer_id,
-                credit_note_number = self.credit_note_number,
-                date_issued = self.date_issued,
-                date_due = self.date_due,
-                notes = self.notes,
-                parent_id = self.id,
-                service_date = self.service_date,
-                cash_allowance_pct = self.cash_allowance_pct,
-                cash_allowance_days = self.cash_allowance_days,
-                discount_pct = self.discount_pct,
-                payment_method = self.payment_method,
-                sepa_mandate_id = self.sepa_mandate_id,
-                currency = self.currency,
-                language = self.language,
-                project_ref = self.project_ref,
-                external_id = self.external_id,
-                billing_street = self.billing_street,
-                billing_zip = self.billing_zip,
-                billing_city = self.billing_city,
-                billing_country = self.billing_country,
-                shipping_street = self.shipping_street,
-                shipping_zip = self.shipping_zip,
-                shipping_city = self.shipping_city,
-                shipping_country = self.shipping_country,
-            ),
-        )?);
+                 ({self.credit_note_id}, {self.customer_id}, {self.credit_note_number}, 'draft', {self.date_issued}, {self.date_due}, {self.notes}, 'credit_note', {self.id}, \
+                  {self.service_date}, {self.cash_allowance_pct}, {self.cash_allowance_days}, {self.discount_pct}, \
+                  {self.payment_method}, {self.sepa_mandate_id}, {self.currency}, {self.language}, {self.project_ref}, {self.external_id}, \
+                  {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, \
+                  {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country})"
+            )
+            .execute(db)?,
+        );
 
         // 4. Insert credit-note positions.
         for pos in &self.positions {
-            let StornoPosition {
-                id, position_nr, description, quantity, unit_price, tax_rate,
-                product_id, item_number, unit, discount_pct, cost_price, position_type,
-            } = pos;
-            acc.extend(execute_stmt(
-                db,
+            acc.extend(
                 sql!(
                     "INSERT INTO positions \
                      (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, \
                       product_id, item_number, unit, discount_pct, cost_price, position_type) \
                      VALUES \
-                     ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, \
-                      {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})",
-                    id = id,
-                    invoice_id = self.credit_note_id,
-                    position_nr = position_nr,
-                    description = description,
-                    quantity = quantity,
-                    unit_price = unit_price,
-                    tax_rate = tax_rate,
-                    product_id = product_id,
-                    item_number = item_number,
-                    unit = unit,
-                    discount_pct = discount_pct,
-                    cost_price = cost_price,
-                    position_type = position_type,
-                ),
-            )?);
+                     ({pos.id}, {self.credit_note_id}, {pos.position_nr}, {pos.description}, {pos.quantity}, {pos.unit_price}, {pos.tax_rate}, \
+                      {pos.product_id}, {pos.item_number}, {pos.unit}, {pos.discount_pct}, {pos.cost_price}, {pos.position_type})"
+                )
+                .execute(db)?,
+            );
         }
 
         // 5. Activity log on the original invoice.
-        acc.extend(execute_stmt(
-            db,
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log \
                  (id, timestamp, entity_type, entity_id, action, actor, detail) \
-                 VALUES ({activity_id}, {timestamp}, 'invoice', {id}, 'storno', 'demo', {detail})",
-                activity_id = self.activity_id,
-                timestamp = self.timestamp,
-                id = self.id,
-                detail = detail,
-            ),
-        )?);
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'storno', 'demo', {detail})"
+            )
+            .execute(db)?,
+        );
 
         Ok(acc)
     }

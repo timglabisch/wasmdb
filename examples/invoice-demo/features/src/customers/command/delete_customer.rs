@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -19,7 +19,7 @@ impl Command for DeleteCustomer {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(db, sql!("DELETE FROM customers WHERE customers.id = {id}", id = self.id))
+        sql!("DELETE FROM customers WHERE customers.id = {id}", id = self.id).execute(db)
     }
 }
 

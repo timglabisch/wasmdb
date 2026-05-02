@@ -1,12 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: mark an invoice as sent.
@@ -34,25 +33,22 @@ fn detail_for(number: &str) -> String {
 
 impl Command for MarkSent {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let numbers = read_str_col(
-            db,
-            "SELECT invoices.number FROM invoices WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &self.id)]),
-        )?;
+        let numbers = sql!(
+            "SELECT invoices.number FROM invoices WHERE invoices.id = {self.id}"
+        )
+        .read_str_col(db)?;
         let number = numbers.into_iter().next().unwrap_or_default();
         let detail = detail_for(&number);
 
-        let mut acc = execute_stmt(
-            db,
-            sql!("UPDATE invoices SET status = 'sent' WHERE invoices.id = {self.id}"),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!("UPDATE invoices SET status = 'sent' WHERE invoices.id = {self.id}")
+            .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'status_sent', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

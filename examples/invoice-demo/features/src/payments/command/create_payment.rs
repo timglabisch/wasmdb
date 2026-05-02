@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -24,13 +24,11 @@ pub struct CreatePayment {
 impl Command for CreatePayment {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let Self { id, invoice_id, amount, paid_at, method, reference, note } = self;
-        execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
-                 VALUES ({id}, {invoice_id}, {amount}, {paid_at}, {method}, {reference}, {note})"
-            ),
+        sql!(
+            "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
+             VALUES ({id}, {invoice_id}, {amount}, {paid_at}, {method}, {reference}, {note})"
         )
+        .execute(db)
     }
 }
 

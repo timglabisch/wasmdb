@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct DeleteProduct {
@@ -29,17 +29,14 @@ impl Command for DeleteProduct {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.name);
-        let mut acc = execute_stmt(
-            db,
-            sql!("DELETE FROM products WHERE products.id = {self.id}"),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!("DELETE FROM products WHERE products.id = {self.id}").execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'product', {self.id}, 'delete', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

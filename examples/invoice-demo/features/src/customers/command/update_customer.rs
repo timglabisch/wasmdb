@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -39,37 +39,35 @@ impl Command for UpdateCustomer {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        execute_stmt(
-            db,
-            sql!(
-                "UPDATE customers SET name = {name}, email = {email}, \
-                 company_type = {company_type}, tax_id = {tax_id}, vat_id = {vat_id}, \
-                 payment_terms_days = {payment_terms_days}, default_discount_pct = {default_discount_pct}, \
-                 billing_street = {billing_street}, billing_zip = {billing_zip}, billing_city = {billing_city}, billing_country = {billing_country}, \
-                 shipping_street = {shipping_street}, shipping_zip = {shipping_zip}, shipping_city = {shipping_city}, shipping_country = {shipping_country}, \
-                 default_iban = {default_iban}, default_bic = {default_bic}, notes = {notes} \
-                 WHERE customers.id = {id}",
-                id = self.id,
-                name = self.name,
-                email = self.email,
-                company_type = self.company_type,
-                tax_id = self.tax_id,
-                vat_id = self.vat_id,
-                payment_terms_days = self.payment_terms_days,
-                default_discount_pct = self.default_discount_pct,
-                billing_street = self.billing_street,
-                billing_zip = self.billing_zip,
-                billing_city = self.billing_city,
-                billing_country = self.billing_country,
-                shipping_street = self.shipping_street,
-                shipping_zip = self.shipping_zip,
-                shipping_city = self.shipping_city,
-                shipping_country = self.shipping_country,
-                default_iban = self.default_iban,
-                default_bic = self.default_bic,
-                notes = self.notes,
-            ),
+        sql!(
+            "UPDATE customers SET name = {name}, email = {email}, \
+             company_type = {company_type}, tax_id = {tax_id}, vat_id = {vat_id}, \
+             payment_terms_days = {payment_terms_days}, default_discount_pct = {default_discount_pct}, \
+             billing_street = {billing_street}, billing_zip = {billing_zip}, billing_city = {billing_city}, billing_country = {billing_country}, \
+             shipping_street = {shipping_street}, shipping_zip = {shipping_zip}, shipping_city = {shipping_city}, shipping_country = {shipping_country}, \
+             default_iban = {default_iban}, default_bic = {default_bic}, notes = {notes} \
+             WHERE customers.id = {id}",
+            id = self.id,
+            name = self.name,
+            email = self.email,
+            company_type = self.company_type,
+            tax_id = self.tax_id,
+            vat_id = self.vat_id,
+            payment_terms_days = self.payment_terms_days,
+            default_discount_pct = self.default_discount_pct,
+            billing_street = self.billing_street,
+            billing_zip = self.billing_zip,
+            billing_city = self.billing_city,
+            billing_country = self.billing_country,
+            shipping_street = self.shipping_street,
+            shipping_zip = self.shipping_zip,
+            shipping_city = self.shipping_city,
+            shipping_country = self.shipping_country,
+            default_iban = self.default_iban,
+            default_bic = self.default_bic,
+            notes = self.notes,
         )
+        .execute(db)
     }
 }
 

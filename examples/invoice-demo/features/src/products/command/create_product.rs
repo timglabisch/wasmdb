@@ -5,7 +5,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -41,20 +41,18 @@ impl Command for CreateProduct {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.name);
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO products (id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
-                 VALUES ({self.id}, {self.sku}, {self.name}, {self.description}, {self.unit}, {self.unit_price}, {self.tax_rate}, {self.cost_price}, {self.active})"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "INSERT INTO products (id, sku, name, description, unit, unit_price, tax_rate, cost_price, active) \
+             VALUES ({self.id}, {self.sku}, {self.name}, {self.description}, {self.unit}, {self.unit_price}, {self.tax_rate}, {self.cost_price}, {self.active})"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'product', {self.id}, 'create', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }

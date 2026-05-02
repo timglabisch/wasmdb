@@ -4,7 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::execute_stmt;
+use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -37,20 +37,18 @@ impl Command for CreateRecurring {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.template_name);
-        let mut acc = execute_stmt(
-            db,
-            sql!(
-                "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
-                 VALUES ({self.id}, {self.customer_id}, {self.template_name}, {self.interval_unit}, {self.interval_value}, {self.next_run}, '', 1, {self.status_template}, {self.notes_template})"
-            ),
-        )?;
-        acc.extend(execute_stmt(
-            db,
+        let mut acc = sql!(
+            "INSERT INTO recurring_invoices (id, customer_id, template_name, interval_unit, interval_value, next_run, last_run, enabled, status_template, notes_template) \
+             VALUES ({self.id}, {self.customer_id}, {self.template_name}, {self.interval_unit}, {self.interval_value}, {self.next_run}, '', 1, {self.status_template}, {self.notes_template})"
+        )
+        .execute(db)?;
+        acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
                  VALUES ({self.activity_id}, {self.timestamp}, 'recurring', {self.id}, 'create', 'demo', {detail})"
-            ),
-        )?);
+            )
+            .execute(db)?,
+        );
         Ok(acc)
     }
 }
