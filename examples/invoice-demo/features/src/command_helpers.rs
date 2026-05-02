@@ -5,6 +5,7 @@
 use database::{Database, MutResult};
 use sql_engine::execute::{Params, ParamValue};
 use sql_engine::storage::{CellValue, Uuid};
+use sqlbuilder::{SqlStmt, Value};
 use sync::command::CommandError;
 use sync::zset::ZSet;
 
@@ -84,6 +85,45 @@ pub fn read_i64_col(
                 .collect()
         })
         .unwrap_or_default())
+}
+
+// ── sqlbuilder integration ────────────────────────────────────────────────
+
+fn to_param_value(v: Value) -> ParamValue {
+    match v {
+        Value::Int(n) => ParamValue::Int(n),
+        Value::Text(s) => ParamValue::Text(s),
+        Value::Uuid(b) => ParamValue::Uuid(b),
+        Value::Null => ParamValue::Null,
+        Value::IntList(xs) => ParamValue::IntList(xs),
+        Value::TextList(xs) => ParamValue::TextList(xs),
+        Value::UuidList(xs) => ParamValue::UuidList(xs),
+    }
+}
+
+/// Render an [`SqlStmt`] and run it through the optimistic [`Database`].
+pub fn execute_stmt(db: &mut Database, stmt: SqlStmt) -> Result<ZSet, CommandError> {
+    let rendered = stmt
+        .render()
+        .map_err(|e| CommandError::ExecutionFailed(e.to_string()))?;
+    let params: Params = rendered
+        .params
+        .into_iter()
+        .map(|(k, v)| (k, to_param_value(v)))
+        .collect();
+    execute_sql(db, &rendered.sql, params)
+}
+
+/// Run an iterator of statements, accumulating their `ZSet` deltas.
+pub fn execute_all<I>(db: &mut Database, stmts: I) -> Result<ZSet, CommandError>
+where
+    I: IntoIterator<Item = SqlStmt>,
+{
+    let mut acc = ZSet::new();
+    for stmt in stmts {
+        acc.extend(execute_stmt(db, stmt)?);
+    }
+    Ok(acc)
 }
 
 pub fn read_str_col(

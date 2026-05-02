@@ -20,6 +20,8 @@ members = [
     "crates/wasmdb-debug",
     "crates/rpc-command",
     "crates/rpc-command-derive",
+    "crates/sqlbuilder",
+    "crates/sqlbuilder-macros",
     "examples/sync-demo/server",
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",

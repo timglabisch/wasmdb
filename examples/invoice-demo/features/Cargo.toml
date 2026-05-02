@@ -31,6 +31,7 @@ requirements = { path = "../../../crates/requirements" }
 tables = { path = "../../../crates/tables" }
 tables-storage = { path = "../../../crates/tables-storage" }
 rpc-command = { path = "../../../crates/rpc-command" }
+sqlbuilder = { path = "../../../crates/sqlbuilder", features = ["sql-engine"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }

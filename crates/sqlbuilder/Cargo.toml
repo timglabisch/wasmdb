@@ -1,0 +1,14 @@
+[package]
+name = "sqlbuilder"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+# Bind impls for `sql_engine::storage::Uuid`. Enable this when driving the
+# in-repo SQL engine; pure consumers of the DSL leave it off.
+sql-engine = ["dep:sql-engine"]
+
+[dependencies]
+sqlbuilder-macros = { path = "../sqlbuilder-macros" }
+sql-engine = { path = "../sql-engine", optional = true }

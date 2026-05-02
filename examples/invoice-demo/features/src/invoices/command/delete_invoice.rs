@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
+use sqlbuilder::{sql, sql_batch};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_all;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Cascades positions + payments + invoice — all in one atomic ZSet.
@@ -34,30 +34,20 @@ impl Command for DeleteInvoice {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let id = self.id;
         let detail = detail_for(&self.number);
-        let mut acc = ZSet::new();
-        let p = Params::from([p_uuid("iid", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM payments WHERE invoice_id = :iid", p)?);
-        let p = Params::from([p_uuid("iid", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM positions WHERE invoice_id = :iid", p)?);
-        let p = Params::from([p_uuid("id", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM invoices WHERE id = :id", p)?);
-        acc.extend(execute_sql(
+        execute_all(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :id, 'delete', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
+            sql_batch!(Self { id, activity_id, timestamp, .. } = self => [
+                sql!("DELETE FROM payments WHERE invoice_id = {id}"),
+                sql!("DELETE FROM positions WHERE invoice_id = {id}"),
+                sql!("DELETE FROM invoices WHERE id = {id}"),
+                sql!(
+                    "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                     VALUES ({activity_id}, {timestamp}, 'invoice', {id}, 'delete', 'demo', {detail})",
+                    detail = detail,
+                ),
             ]),
-        )?);
-        Ok(acc)
+        )
     }
 }
 

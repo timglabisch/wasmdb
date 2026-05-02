@@ -982,6 +982,7 @@ dependencies = [
  "serde",
  "sql-engine",
  "sql-parser",
+ "sqlbuilder",
  "sqlx",
  "sync",
  "sync-client",
@@ -2089,6 +2090,23 @@ dependencies = [
 [[package]]
 name = "sql-parser"
 version = "0.1.0"
+
+[[package]]
+name = "sqlbuilder"
+version = "0.1.0"
+dependencies = [
+ "sql-engine",
+ "sqlbuilder-macros",
+]
+
+[[package]]
+name = "sqlbuilder-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "sqlx"
