@@ -88,6 +88,8 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
         .map(|(_, e)| LitStr::new(e, proc_macro2::Span::call_site()))
         .collect();
 
+    let export_path_lit = ts_export_path_lit();
+
     let expanded = quote! {
         #[derive(
             ::std::fmt::Debug,
@@ -98,6 +100,7 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
             ::serde::Deserialize,
             ::ts_rs::TS,
         )]
+        #[ts(export_to = #export_path_lit)]
         #s
 
         impl #struct_name {
@@ -226,6 +229,12 @@ pub fn rpc_command_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
         &format!("__rpc_command_bundle_{enum_name_str}"),
         proc_macro2::Span::call_site(),
     );
+    let export_path_lit = ts_export_path_lit();
+    // Append AFTER existing attrs so the user-supplied `#[derive(TS)]` (which
+    // introduces the `ts` helper) is in scope when the compiler sees our
+    // injected `#[ts(export_to = ...)]`.
+    e.attrs
+        .push(syn::parse_quote!(#[ts(export_to = #export_path_lit)]));
 
     let expanded = quote! {
         #e
@@ -241,6 +250,17 @@ pub fn rpc_command_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
     expanded.into()
+}
+
+/// Convention: per-command + enum bindings land next to the
+/// `<EnumName>Factories.ts` bundle, i.e. `<CARGO_MANIFEST_DIR>/../frontend/src/generated/`.
+/// Mirrors `rpc_command::ts_root()`. Path is computed at proc-macro expansion
+/// time and baked into each `#[ts(export_to = ...)]` attribute.
+fn ts_export_path_lit() -> LitStr {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .expect("CARGO_MANIFEST_DIR — proc-macro runs under cargo");
+    let path = format!("{manifest_dir}/../frontend/src/generated/");
+    LitStr::new(&path, proc_macro2::Span::call_site())
 }
 
 fn camel_case(s: &str) -> String {

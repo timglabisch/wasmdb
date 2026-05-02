@@ -31,13 +31,9 @@ sync-dev: sync-types
 	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run dev
 
 invoice-types:
-	cargo test -p invoice-demo-features -- --test-threads=1
 	mkdir -p examples/invoice-demo/frontend/src/generated
 	rm -f examples/invoice-demo/frontend/src/generated/*.ts
-	for f in examples/invoice-demo/features/bindings/*.ts; do \
-	  sed 's/: bigint/: number/g; s/Array<bigint>/Array<number>/g' "$$f" \
-	    > "examples/invoice-demo/frontend/src/generated/$$(basename $$f)"; \
-	done
+	cargo test -p invoice-demo-features -- --test-threads=1
 	# requirements.ts wird von der build.rs von invoice-demo-tables-client-generated emittiert.
 	# Nach dem Wipe oben fehlt sie — touch zwingt cargo, das Build-Script beim
 	# nächsten wasm-pack-Lauf erneut auszuführen und die Datei neu zu schreiben.

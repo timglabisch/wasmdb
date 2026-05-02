@@ -1,0 +1,6 @@
+[env]
+# ts-rs maps Rust 64-bit ints to TS `bigint` by default. All i64 fields in
+# this workspace fit comfortably in JS `Number` (cents, quantities, position
+# numbers — never timestamps in nanos or huge counters), so emitting `number`
+# avoids `bigint`-vs-`number` arithmetic friction in the frontend.
+TS_RS_LARGE_INT = "number"
