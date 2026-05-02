@@ -1,9 +1,11 @@
 use sql_engine::storage::Uuid;
+use sqlbuilder::FromRow;
 use tables_storage::row;
 
 #[row(table = "recurring_positions")]
 #[export(name = "", groups = ["all"])]
 #[export(name = "WithoutPk", groups = ["non_pk"])]
+#[derive(FromRow)]
 pub struct RecurringPosition {
     #[pk]
     pub id: Uuid,

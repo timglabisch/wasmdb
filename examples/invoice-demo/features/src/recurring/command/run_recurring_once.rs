@@ -4,6 +4,7 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
+use crate::recurring::{RecurringInvoice, RecurringPosition};
 use crate::shared::DEMO_TENANT_ID;
 
 fn activity_detail_for(template_name: &str, new_number: &str) -> String {
@@ -41,97 +42,49 @@ impl Command for RunRecurringOnce {
         let recurring_id = self.recurring_id;
         let new_invoice_id = self.new_invoice_id;
         let position_ids = &self.position_ids;
-        let new_number = &self.new_number;
-        let issue_date = &self.issue_date;
-        let due_date = &self.due_date;
-        let new_next_run = &self.new_next_run;
 
-        let customer_id = sql!(
-            "SELECT customer_id FROM recurring_invoices WHERE id = {recurring_id}"
+        // Read the full recurring template row. SELECT column order matches
+        // the field order in `RecurringInvoice` for `#[derive(FromRow)]`.
+        let hdr: RecurringInvoice = sql!(
+            "SELECT id, customer_id, template_name, interval_unit, interval_value, \
+                    next_run, last_run, enabled, status_template, notes_template \
+             FROM recurring_invoices WHERE id = {recurring_id}"
         )
-        .read_uuid_col(db)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| CommandError::ExecutionFailed(format!("recurring #{recurring_id} not found")))?;
-        let status_templates = sql!(
-            "SELECT status_template FROM recurring_invoices WHERE id = {recurring_id}"
-        )
-        .read_str_col(db)?;
-        let notes_templates = sql!(
-            "SELECT notes_template FROM recurring_invoices WHERE id = {recurring_id}"
-        )
-        .read_str_col(db)?;
-        let template_names = sql!(
-            "SELECT template_name FROM recurring_invoices WHERE id = {recurring_id}"
-        )
-        .read_str_col(db)?;
-        let status = status_templates.into_iter().next().unwrap_or_else(|| "draft".into());
-        let notes = notes_templates.into_iter().next().unwrap_or_default();
-        let template_name = template_names.into_iter().next().unwrap_or_default();
+        .read_row(db)?
+        .ok_or_else(|| CommandError::ExecutionFailed(format!(
+            "recurring #{recurring_id} not found",
+        )))?;
 
-        let descs = sql!(
-            "SELECT description FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
+        let positions: Vec<RecurringPosition> = sql!(
+            "SELECT id, recurring_id, position_nr, description, quantity, \
+                    unit_price, tax_rate, unit, item_number, discount_pct \
+             FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
         )
-        .read_str_col(db)?;
-        let qtys = sql!(
-            "SELECT quantity FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_i64_col(db)?;
-        let prices = sql!(
-            "SELECT unit_price FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_i64_col(db)?;
-        let taxes = sql!(
-            "SELECT tax_rate FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_i64_col(db)?;
-        let units = sql!(
-            "SELECT unit FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_str_col(db)?;
-        let items = sql!(
-            "SELECT item_number FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_str_col(db)?;
-        let discounts = sql!(
-            "SELECT discount_pct FROM recurring_positions WHERE recurring_id = {recurring_id} ORDER BY position_nr"
-        )
-        .read_i64_col(db)?;
+        .read_rows(db)?;
 
-        if descs.len() != position_ids.len() {
+        if positions.len() != position_ids.len() {
             return Err(CommandError::ExecutionFailed(format!(
                 "RunRecurringOnce: template has {} positions but got {} ids",
-                descs.len(), position_ids.len(),
+                positions.len(), position_ids.len(),
             )));
         }
 
-        let mut acc = ZSet::new();
-
-        let some_customer: Option<Uuid> = Some(customer_id);
+        let some_customer: Option<Uuid> = Some(hdr.customer_id);
         let parent_id: Option<Uuid> = None;
         let sepa_mandate_id: Option<Uuid> = None;
-        acc.extend(
-            sql!(
-                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-                 VALUES ({new_invoice_id}, {some_customer}, {new_number}, {status}, {issue_date}, {due_date}, {notes}, 'invoice', {parent_id}, '', 0, 0, 0, 'transfer', {sepa_mandate_id}, 'EUR', 'de', '', '', '', '', '', '', '', '', '', '')"
-            )
-            .execute(db)?,
-        );
+        let mut acc = sql!(
+            "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+             VALUES ({new_invoice_id}, {some_customer}, {self.new_number}, {hdr.status_template}, {self.issue_date}, {self.due_date}, {hdr.notes_template}, 'invoice', {parent_id}, '', 0, 0, 0, 'transfer', {sepa_mandate_id}, 'EUR', 'de', '', '', '', '', '', '', '', '', '', '')"
+        )
+        .execute(db)?;
 
-        for (i, pid) in position_ids.iter().enumerate() {
+        let product_id: Option<Uuid> = None;
+        for (i, (pid, pos)) in position_ids.iter().zip(positions.iter()).enumerate() {
             let position_nr = (i as i64 + 1) * 1000;
-            let description = &descs[i];
-            let quantity = qtys[i];
-            let unit_price = prices[i];
-            let tax_rate = taxes[i];
-            let item_number = &items[i];
-            let unit = &units[i];
-            let discount_pct = discounts[i];
-            let product_id: Option<Uuid> = None;
             acc.extend(
                 sql!(
                     "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES ({pid}, {new_invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, 0, 'service')"
+                     VALUES ({pid}, {new_invoice_id}, {position_nr}, {pos.description}, {pos.quantity}, {pos.unit_price}, {pos.tax_rate}, {product_id}, {pos.item_number}, {pos.unit}, {pos.discount_pct}, 0, 'service')"
                 )
                 .execute(db)?,
             );
@@ -139,12 +92,12 @@ impl Command for RunRecurringOnce {
 
         acc.extend(
             sql!(
-                "UPDATE recurring_invoices SET last_run = {issue_date}, next_run = {new_next_run} WHERE recurring_invoices.id = {recurring_id}"
+                "UPDATE recurring_invoices SET last_run = {self.issue_date}, next_run = {self.new_next_run} WHERE recurring_invoices.id = {recurring_id}"
             )
             .execute(db)?,
         );
 
-        let detail = activity_detail_for(&template_name, new_number);
+        let detail = activity_detail_for(&hdr.template_name, &self.new_number);
         acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \

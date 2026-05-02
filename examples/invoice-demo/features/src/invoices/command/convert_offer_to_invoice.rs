@@ -30,11 +30,13 @@ fn detail_for(number: &str) -> String {
 
 impl Command for ConvertOfferToInvoice {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let numbers = sql!(
+        let (number,): (String,) = sql!(
             "SELECT invoices.number FROM invoices WHERE invoices.id = {self.id}"
         )
-        .read_str_col(db)?;
-        let number = numbers.into_iter().next().unwrap_or_default();
+        .read_row(db)?
+        .ok_or_else(|| {
+            CommandError::ExecutionFailed(format!("invoice {} not found", self.id))
+        })?;
         let detail = detail_for(&number);
 
         let mut acc = sql!(

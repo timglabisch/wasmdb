@@ -1,9 +1,11 @@
 use sql_engine::storage::Uuid;
+use sqlbuilder::FromRow;
 use tables_storage::row;
 
 #[row(table = "recurring_invoices")]
 #[export(name = "", groups = ["all"])]
 #[export(name = "WithoutPk", groups = ["non_pk"])]
+#[derive(FromRow)]
 pub struct RecurringInvoice {
     #[pk]
     pub id: Uuid,
