@@ -261,6 +261,75 @@ fn batch_destructures_borrowed_subject() {
     assert_eq!(as_int(&params[0].1), 3);
 }
 
+// ── Dotted-path capture (`{self.field}`) ─────────────────────────────────
+
+#[test]
+fn dotted_path_captures_struct_field() {
+    struct S {
+        id: i64,
+        name: String,
+    }
+    let s = S { id: 42, name: "Alice".into() };
+    let (sql, params) = binds(sql!(
+        "UPDATE t SET name = {s.name} WHERE id = {s.id}"
+    ));
+    // `:self.id` is invalid engine syntax, so dotted names get rewritten.
+    assert!(!sql.contains(':') || !sql.contains('.'));
+    assert_eq!(params.len(), 2);
+    assert_eq!(as_text(&params[0].1), "Alice");
+    assert_eq!(as_int(&params[1].1), 42);
+}
+
+#[test]
+fn dotted_path_works_through_borrowed_self() {
+    // Mimics the real `&self` Command::execute_optimistic case.
+    struct S {
+        id: i64,
+    }
+    fn run(this: &S) -> Vec<(String, Value)> {
+        binds(sql!("DELETE FROM t WHERE id = {this.id}")).1
+    }
+    let s = S { id: 7 };
+    let p = run(&s);
+    assert_eq!(as_int(&p[0].1), 7);
+}
+
+#[test]
+fn dotted_path_walks_nested_structs() {
+    struct Inner {
+        value: i64,
+    }
+    struct Outer {
+        inner: Inner,
+        label: String,
+    }
+    let o = Outer {
+        inner: Inner { value: 99 },
+        label: "tag".into(),
+    };
+    let (_, params) = binds(sql!(
+        "INSERT INTO t (v, l) VALUES ({o.inner.value}, {o.label})"
+    ));
+    assert_eq!(params.len(), 2);
+    assert_eq!(as_int(&params[0].1), 99);
+    assert_eq!(as_text(&params[1].1), "tag");
+}
+
+#[test]
+fn dotted_path_used_twice_shares_one_bind() {
+    struct S {
+        id: i64,
+    }
+    let s = S { id: 9 };
+    let (sql, params) = binds(sql!(
+        "SELECT * FROM x WHERE a = {s.id} OR b = {s.id}"
+    ));
+    assert_eq!(params.len(), 1);
+    // Same placeholder name reused — should resolve to same bind.
+    let bind_name = &params[0].0;
+    assert_eq!(sql.matches(&format!(":{bind_name}")).count(), 2);
+}
+
 // ── List parameters ──────────────────────────────────────────────────────
 
 #[test]

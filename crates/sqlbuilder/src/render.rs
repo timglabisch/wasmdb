@@ -49,6 +49,9 @@ struct RenderState {
     seen: HashMap<(String, String), String>,
     /// Counter for generating unique fragment-rename prefixes.
     fragment_counter: usize,
+    /// Counter for generating unique bind names from dotted placeholders
+    /// (`self.id` → `d0_self_id`) — `:self.id` is invalid engine syntax.
+    dotted_counter: usize,
 }
 
 impl RenderState {
@@ -115,18 +118,26 @@ impl RenderState {
                     i += 2;
                     continue;
                 }
-                // `{name}` placeholder
+                // `{name}` placeholder; supports dotted paths like `self.id`.
                 let name_start = i + 1;
-                if name_start >= bytes.len() || !is_ident_start(bytes[name_start]) {
-                    return Err(RenderError::UnbalancedBraces {
-                        detail: format!(
-                            "expected identifier after `{{` at byte {i}; use `{{{{` for a literal brace"
-                        ),
-                    });
-                }
                 let mut end = name_start;
-                while end < bytes.len() && is_ident_cont(bytes[end]) {
+                loop {
+                    if end >= bytes.len() || !is_ident_start(bytes[end]) {
+                        return Err(RenderError::UnbalancedBraces {
+                            detail: format!(
+                                "expected identifier after `{{` (or `.`) at byte {end}; use `{{{{` for a literal brace"
+                            ),
+                        });
+                    }
                     end += 1;
+                    while end < bytes.len() && is_ident_cont(bytes[end]) {
+                        end += 1;
+                    }
+                    if end < bytes.len() && bytes[end] == b'.' {
+                        end += 1;
+                        continue;
+                    }
+                    break;
                 }
                 if end >= bytes.len() || bytes[end] != b'}' {
                     return Err(RenderError::UnbalancedBraces {
@@ -143,11 +154,11 @@ impl RenderState {
                         let bound_name = if let Some(existing) = self.seen.get(&key) {
                             existing.clone()
                         } else {
-                            let bound = if prefix.is_empty() {
-                                name.to_string()
-                            } else {
-                                format!("{prefix}{name}")
-                            };
+                            let bound = make_bound_name(
+                                prefix,
+                                name,
+                                &mut self.dotted_counter,
+                            );
                             self.params.push((bound.clone(), v.clone()));
                             self.seen.insert(key, bound.clone());
                             bound
@@ -196,6 +207,19 @@ fn is_ident_start(b: u8) -> bool {
 
 fn is_ident_cont(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn make_bound_name(prefix: &str, name: &str, counter: &mut usize) -> String {
+    if name.contains('.') {
+        let idx = *counter;
+        *counter += 1;
+        let sanitized = name.replace('.', "_");
+        format!("{prefix}d{idx}_{sanitized}")
+    } else if prefix.is_empty() {
+        name.to_string()
+    } else {
+        format!("{prefix}{name}")
+    }
 }
 
 #[cfg(test)]

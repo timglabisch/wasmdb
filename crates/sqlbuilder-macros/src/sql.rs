@@ -79,10 +79,9 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     // Each unique placeholder gets one entry in `parts`. For explicit
-    // bindings we use the bound expression; otherwise we emit the
-    // identifier so it captures from scope (`format!`-style). Capture
-    // identifiers must be valid Rust idents — `:foo.bar` style is not
-    // supported, callers use explicit bindings for field access.
+    // bindings we use the bound expression; otherwise we parse the name as
+    // a Rust expression so dotted paths like `self.id` capture as field
+    // access. Plain idents take the same path (Ident is a valid Expr).
     let mut seen = HashSet::new();
     let mut part_inits: Vec<TokenStream> = Vec::new();
     for name in &placeholders {
@@ -92,16 +91,16 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         let value_expr: TokenStream = if let Some(expr) = explicit.remove(name) {
             quote! { #expr }
         } else {
-            let ident = syn::parse_str::<Ident>(name).map_err(|_| {
+            let parsed = syn::parse_str::<Expr>(name).map_err(|_| {
                 syn::Error::new(
                     sql.span(),
                     format!(
-                        "placeholder `{{{name}}}` has no binding and is not a valid Rust identifier \
-                         to capture from scope; pass `{name} = <expr>` explicitly"
+                        "placeholder `{{{name}}}` has no binding and is not a valid Rust expression \
+                         to capture from scope; pass `<ident> = <expr>` explicitly"
                     ),
                 )
             })?;
-            quote! { #ident }
+            quote! { #parsed }
         };
         part_inits.push(quote! {
             (

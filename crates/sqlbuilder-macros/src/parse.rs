@@ -56,15 +56,28 @@ pub fn collect_placeholders(sql: &str, span: Span) -> Result<Vec<String>, ParseE
                 continue;
             }
             let start = i + 1;
-            if start >= bytes.len() || !is_ident_start(bytes[start]) {
-                return Err(ParseError {
-                    message: format!("expected identifier after `{{` at byte {i}; use `{{{{` for a literal brace"),
-                    _span: span,
-                });
-            }
             let mut end = start;
-            while end < bytes.len() && is_ident_cont(bytes[end]) {
+            // Read `ident ('.' ident)*` so dotted paths like `self.id` are
+            // accepted as a single placeholder name; the macro then parses the
+            // text as a Rust expression for capture from scope.
+            loop {
+                if end >= bytes.len() || !is_ident_start(bytes[end]) {
+                    return Err(ParseError {
+                        message: format!(
+                            "expected identifier after `{{` (or `.`) at byte {end}; use `{{{{` for a literal brace"
+                        ),
+                        _span: span,
+                    });
+                }
                 end += 1;
+                while end < bytes.len() && is_ident_cont(bytes[end]) {
+                    end += 1;
+                }
+                if end < bytes.len() && bytes[end] == b'.' {
+                    end += 1;
+                    continue;
+                }
+                break;
             }
             if end >= bytes.len() || bytes[end] != b'}' {
                 return Err(ParseError {
