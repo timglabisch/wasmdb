@@ -9,11 +9,11 @@ edition = "2021"
 # crate's `#[row]` / `#[query]` declarations.
 
 [dependencies]
-tables = { path = "../../../crates/tables" }
-tables-client = { path = "../../../crates/tables-client" }
-sql-engine = { path = "../../../crates/sql-engine" }
-sql-parser = { path = "../../../crates/sql-parser" }
-requirements = { path = "../../../crates/requirements" }
+tables = { workspace = true }
+tables-client = { workspace = true }
+sql-engine = { workspace = true }
+sql-parser = { workspace = true }
+requirements = { workspace = true }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
@@ -21,4 +21,4 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 
 [build-dependencies]
-tables-codegen = { path = "../../../crates/tables-codegen" }
+tables-codegen = { workspace = true }

@@ -11,17 +11,17 @@ publish = false
 # real database backend.
 
 [dependencies]
-tables = { path = "../tables" }
-tables-storage = { path = "../tables-storage" }
-sql-engine = { path = "../sql-engine", features = ["serde", "borsh"] }
-sql-parser = { path = "../sql-parser" }
-requirements = { path = "../requirements" }
+tables = { workspace = true }
+tables-storage = { workspace = true }
+sql-engine = { workspace = true, features = ["serde", "borsh"] }
+sql-parser = { workspace = true }
+requirements = { workspace = true }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
-tables-codegen = { path = "../tables-codegen" }
+tables-codegen = { workspace = true }
 
 [dev-dependencies]
-database = { path = "../database" }
+database = { workspace = true }
 pollster = "0.4"

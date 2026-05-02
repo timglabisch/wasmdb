@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sql-parser = { path = "../sql-parser" }
-sql-engine = { path = "../sql-engine" }
+sql-parser = { workspace = true }
+sql-engine = { workspace = true }
 
 [dev-dependencies]
 pollster = "0.3"

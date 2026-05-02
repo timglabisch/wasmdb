@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sync = { path = "../sync" }
+sync = { workspace = true }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio"] }
 sea-orm = { version = "=2.0.0-rc.38", features = ["sqlx-mysql", "runtime-tokio-rustls", "macros"], default-features = false }
 async-trait = "0.1"

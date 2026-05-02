@@ -1,15 +1,11 @@
 [package]
-name = "sync-demo-server"
+name = "sync-client"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 sync = { workspace = true }
-sync-server = { workspace = true }
-sync-demo-commands = { path = "../commands" }
 database = { workspace = true, features = ["borsh"] }
+database-reactive = { workspace = true, features = ["borsh"] }
 sql-engine = { workspace = true, features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }
-axum = "0.7"
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }

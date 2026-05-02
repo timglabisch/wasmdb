@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sync = { path = "../../../crates/sync" }
-database = { path = "../../../crates/database", features = ["borsh"] }
-sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
-sqlbuilder = { path = "../../../crates/sqlbuilder", features = ["sql-engine"] }
+sync = { workspace = true }
+database = { workspace = true, features = ["borsh"] }
+sql-engine = { workspace = true, features = ["borsh"] }
+sqlbuilder = { workspace = true, features = ["sql-engine"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }

@@ -7,14 +7,14 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-sync = { path = "../../../crates/sync", features = ["serde"] }
-sync-client = { path = "../../../crates/sync-client" }
+sync = { workspace = true, features = ["serde"] }
+sync-client = { workspace = true }
 sync-demo-commands = { path = "../commands" }
-database = { path = "../../../crates/database", features = ["borsh", "serde"] }
-database-reactive = { path = "../../../crates/database-reactive", features = ["borsh", "serde"] }
-sql-engine = { path = "../../../crates/sql-engine", features = ["borsh", "serde", "wasm-timing"] }
-sql-parser = { path = "../../../crates/sql-parser" }
-wasmdb-debug = { path = "../../../crates/wasmdb-debug" }
+database = { workspace = true, features = ["borsh", "serde"] }
+database-reactive = { workspace = true, features = ["borsh", "serde"] }
+sql-engine = { workspace = true, features = ["borsh", "serde", "wasm-timing"] }
+sql-parser = { workspace = true }
+wasmdb-debug = { workspace = true }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

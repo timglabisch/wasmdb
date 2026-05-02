@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sql-engine = { path = "../sql-engine", features = ["borsh"] }
-database = { path = "../database", features = ["borsh"] }
+sql-engine = { workspace = true, features = ["borsh"] }
+database = { workspace = true, features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"], optional = true }
 

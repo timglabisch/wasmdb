@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tables = { path = "../tables" }
-tables-macros = { path = "../tables-macros" }
+tables = { workspace = true }
+tables-macros = { workspace = true }
 borsh = { version = "1", features = ["derive"] }

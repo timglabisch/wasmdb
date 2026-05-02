@@ -1,27 +1,43 @@
 [workspace]
+# Explicit member list — tried `crates/*/*` globs but they also match
+# non-crate subdirs (e.g. `crates/frontend/src`, `examples/*/sql`,
+# `examples/*/frontend`) which Cargo then errors on. Explicit is bulletproof.
 members = [
-    "crates/sql-parser",
-    "crates/sql-engine",
+    # Core query layer
+    "crates/core/sql-parser",
+    "crates/core/sql-engine",
+    "crates/core/database",
+    "crates/core/database-reactive",
+    "crates/core/dirty-set",
+
+    # Sync subsystem
+    "crates/sync/sync",
+    "crates/sync/sync-client",
+    "crates/sync/sync-server",
+    "crates/sync/sync-server-mysql",
+
+    # Tables / parameterized fetcher subsystem
+    "crates/tables/tables",
+    "crates/tables/tables-client",
+    "crates/tables/tables-codegen",
+    "crates/tables/tables-e2e",
+    "crates/tables/tables-fieldtypes",
+    "crates/tables/tables-macros",
+    "crates/tables/tables-storage",
+
+    # RPC command subsystem
+    "crates/rpc-command/rpc-command",
+    "crates/rpc-command/rpc-command-derive",
+
+    # SQL builder DSL
+    "crates/sqlbuilder/sqlbuilder",
+    "crates/sqlbuilder/sqlbuilder-macros",
+
+    # Standalone utilities
     "crates/requirements",
-    "crates/database",
-    "crates/database-reactive",
-    "crates/dirty-set",
-    "crates/sync",
-    "crates/sync-client",
-    "crates/tables",
-    "crates/tables-client",
-    "crates/tables-codegen",
-    "crates/tables-e2e",
-    "crates/tables-fieldtypes",
-    "crates/tables-macros",
-    "crates/tables-storage",
-    "crates/sync-server",
-    "crates/sync-server-mysql",
     "crates/wasmdb-debug",
-    "crates/rpc-command",
-    "crates/rpc-command-derive",
-    "crates/sqlbuilder",
-    "crates/sqlbuilder-macros",
+
+    # Examples
     "examples/sync-demo/server",
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",
@@ -31,3 +47,35 @@ members = [
     "examples/invoice-demo/features",
 ]
 resolver = "2"
+
+# Centralized path-deps. Crate Cargo.tomls reference these via
+# `name = { workspace = true, features = [...] }` so directory moves only
+# touch this file.
+[workspace.dependencies]
+sql-parser            = { path = "crates/core/sql-parser" }
+sql-engine            = { path = "crates/core/sql-engine" }
+database              = { path = "crates/core/database" }
+database-reactive     = { path = "crates/core/database-reactive" }
+dirty-set             = { path = "crates/core/dirty-set" }
+
+sync                  = { path = "crates/sync/sync" }
+sync-client           = { path = "crates/sync/sync-client" }
+sync-server           = { path = "crates/sync/sync-server" }
+sync-server-mysql     = { path = "crates/sync/sync-server-mysql" }
+
+tables                = { path = "crates/tables/tables" }
+tables-client         = { path = "crates/tables/tables-client" }
+tables-codegen        = { path = "crates/tables/tables-codegen" }
+tables-e2e            = { path = "crates/tables/tables-e2e" }
+tables-fieldtypes     = { path = "crates/tables/tables-fieldtypes" }
+tables-macros         = { path = "crates/tables/tables-macros" }
+tables-storage        = { path = "crates/tables/tables-storage" }
+
+rpc-command           = { path = "crates/rpc-command/rpc-command" }
+rpc-command-derive    = { path = "crates/rpc-command/rpc-command-derive" }
+
+sqlbuilder            = { path = "crates/sqlbuilder/sqlbuilder" }
+sqlbuilder-macros     = { path = "crates/sqlbuilder/sqlbuilder-macros" }
+
+requirements          = { path = "crates/requirements" }
+wasmdb-debug          = { path = "crates/wasmdb-debug" }

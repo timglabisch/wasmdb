@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-database = { path = "../database" }
-sql-engine = { path = "../sql-engine" }
-sql-parser = { path = "../sql-parser" }
-dirty-set = { path = "../dirty-set" }
+database = { workspace = true }
+sql-engine = { workspace = true }
+sql-parser = { workspace = true }
+dirty-set = { workspace = true }
 fnv = "1"
 
 [features]

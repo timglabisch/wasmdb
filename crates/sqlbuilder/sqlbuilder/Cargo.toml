@@ -11,7 +11,7 @@ default = []
 sql-engine = ["dep:sql-engine", "dep:database", "dep:sync"]
 
 [dependencies]
-sqlbuilder-macros = { path = "../sqlbuilder-macros" }
-sql-engine = { path = "../sql-engine", optional = true }
-database = { path = "../database", optional = true }
-sync = { path = "../sync", optional = true }
+sqlbuilder-macros = { workspace = true }
+sql-engine = { workspace = true, optional = true }
+database = { workspace = true, optional = true }
+sync = { workspace = true, optional = true }
