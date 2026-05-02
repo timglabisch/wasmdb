@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct DeleteProduct {
@@ -29,18 +29,16 @@ impl Command for DeleteProduct {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.name);
-        let params = Params::from([p_uuid("id", &self.id)]);
-        let mut acc = execute_sql(db, "DELETE FROM products WHERE products.id = :id", params)?;
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'product', :id, 'delete', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!("DELETE FROM products WHERE products.id = {self.id}"),
+        )?;
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'product', {self.id}, 'delete', 'demo', {detail})"
+            ),
         )?);
         Ok(acc)
     }

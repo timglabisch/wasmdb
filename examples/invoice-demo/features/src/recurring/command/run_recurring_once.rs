@@ -1,10 +1,11 @@
 use sql_engine::storage::Uuid;
 use database::Database;
 use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col};
+use crate::command_helpers::{execute_sql, execute_stmt, p_uuid, read_i64_col, read_str_col, read_uuid_col};
 use crate::shared::DEMO_TENANT_ID;
 use crate::invoices::command::invoice_params::invoice_params;
 
@@ -114,46 +115,48 @@ impl Command for RunRecurringOnce {
             inv_params)?);
 
         for (i, pid) in position_ids.iter().enumerate() {
-            let params = Params::from([
-                p_uuid("id", pid),
-                p_uuid("invoice_id", &new_invoice_id),
-                p_int("position_nr", (i as i64 + 1) * 1000),
-                p_str("description", &descs[i]),
-                p_int("quantity", qtys[i]),
-                p_int("unit_price", prices[i]),
-                p_int("tax_rate", taxes[i]),
-                p_uuid_opt("product_id", &None),
-                p_str("item_number", &items[i]),
-                p_str("unit", &units[i]),
-                p_int("discount_pct", discounts[i]),
-                p_int("cost_price", 0),
-                p_str("position_type", "service"),
-            ]);
-            acc.extend(execute_sql(db,
+            let position_nr = (i as i64 + 1) * 1000;
+            let description = &descs[i];
+            let quantity = qtys[i];
+            let unit_price = prices[i];
+            let tax_rate = taxes[i];
+            let item_number = &items[i];
+            let unit = &units[i];
+            let discount_pct = discounts[i];
+            let product_id: Option<Uuid> = None;
+            acc.extend(execute_stmt(db, sql!(
                 "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES (:id, :invoice_id, :position_nr, :description, :quantity, :unit_price, :tax_rate, :product_id, :item_number, :unit, :discount_pct, :cost_price, :position_type)",
-                params)?);
+                 VALUES ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, 0, 'service')",
+                id = pid,
+                invoice_id = new_invoice_id,
+                position_nr = position_nr,
+                description = description,
+                quantity = quantity,
+                unit_price = unit_price,
+                tax_rate = tax_rate,
+                product_id = product_id,
+                item_number = item_number,
+                unit = unit,
+                discount_pct = discount_pct,
+            ))?);
         }
 
-        let params = Params::from([
-            p_uuid("id", &recurring_id),
-            p_str("last_run", issue_date),
-            p_str("next_run", new_next_run),
-        ]);
-        acc.extend(execute_sql(db,
-            "UPDATE recurring_invoices SET last_run = :last_run, next_run = :next_run WHERE recurring_invoices.id = :id",
-            params)?);
+        acc.extend(execute_stmt(db, sql!(
+            "UPDATE recurring_invoices SET last_run = {last_run}, next_run = {next_run} WHERE recurring_invoices.id = {id}",
+            id = recurring_id,
+            last_run = issue_date,
+            next_run = new_next_run,
+        ))?);
 
         let detail = activity_detail_for(&template_name, new_number);
-        acc.extend(execute_sql(db,
+        acc.extend(execute_stmt(db, sql!(
             "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'recurring', :eid, 'run', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("eid", &recurring_id),
-                p_str("detail", &detail),
-            ]))?);
+             VALUES ({aid}, {ts}, 'recurring', {eid}, 'run', 'demo', {detail})",
+            aid = self.activity_id,
+            ts = self.timestamp,
+            eid = recurring_id,
+            detail = detail,
+        ))?);
 
         Ok(acc)
     }

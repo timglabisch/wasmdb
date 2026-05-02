@@ -1,11 +1,11 @@
 use sql_engine::storage::Uuid;
 use database::Database;
 use rpc_command::rpc_command;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
-use super::invoice_params::invoice_params;
 
 #[rpc_command]
 pub struct CreateInvoice {
@@ -59,34 +59,21 @@ impl Command for CreateInvoice {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = invoice_params(
-            &self.id, Some(&self.customer_id),
-            &self.number, &self.status, &self.date_issued, &self.date_due, &self.notes,
-            &self.doc_type, &self.parent_id, &self.service_date,
-            self.cash_allowance_pct, self.cash_allowance_days, self.discount_pct,
-            &self.payment_method, &self.sepa_mandate_id, &self.currency, &self.language,
-            &self.project_ref, &self.external_id,
-            &self.billing_street, &self.billing_zip, &self.billing_city, &self.billing_country,
-            &self.shipping_street, &self.shipping_zip, &self.shipping_city, &self.shipping_country,
-        );
-        let mut acc = execute_sql(db,
-            "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
-            params)?;
-
         let detail = detail_for(&self.number);
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :id, 'create', 'demo', :detail)",
-            sql_engine::execute::Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES ({self.id}, {self.customer_id}, {self.number}, {self.status}, {self.date_issued}, {self.date_due}, {self.notes}, {self.doc_type}, {self.parent_id}, {self.service_date}, {self.cash_allowance_pct}, {self.cash_allowance_days}, {self.discount_pct}, {self.payment_method}, {self.sepa_mandate_id}, {self.currency}, {self.language}, {self.project_ref}, {self.external_id}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country})"
+            ),
+        )?;
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'create', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

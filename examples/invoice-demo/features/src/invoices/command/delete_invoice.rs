@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
 use rpc_command::rpc_command;
-use sqlbuilder::{sql, sql_batch};
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::execute_all;
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Cascades positions + payments + invoice — all in one atomic ZSet.
@@ -35,19 +35,17 @@ impl Command for DeleteInvoice {
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.number);
-        execute_all(
+        let mut acc = execute_stmt(db, sql!("DELETE FROM payments WHERE invoice_id = {self.id}"))?;
+        acc.extend(execute_stmt(db, sql!("DELETE FROM positions WHERE invoice_id = {self.id}"))?);
+        acc.extend(execute_stmt(db, sql!("DELETE FROM invoices WHERE id = {self.id}"))?);
+        acc.extend(execute_stmt(
             db,
-            sql_batch!(Self { id, activity_id, timestamp, .. } = self => [
-                sql!("DELETE FROM payments WHERE invoice_id = {id}"),
-                sql!("DELETE FROM positions WHERE invoice_id = {id}"),
-                sql!("DELETE FROM invoices WHERE id = {id}"),
-                sql!(
-                    "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-                     VALUES ({activity_id}, {timestamp}, 'invoice', {id}, 'delete', 'demo', {detail})",
-                    detail = detail,
-                ),
-            ]),
-        )
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'delete', 'demo', {detail})"
+            ),
+        )?);
+        Ok(acc)
     }
 }
 

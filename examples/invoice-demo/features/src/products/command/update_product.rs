@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct UpdateProduct {
@@ -30,20 +30,21 @@ impl Command for UpdateProduct {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("sku", &self.sku),
-            p_str("name", &self.name),
-            p_str("description", &self.description),
-            p_str("unit", &self.unit),
-            p_int("unit_price", self.unit_price),
-            p_int("tax_rate", self.tax_rate),
-            p_int("cost_price", self.cost_price),
-            p_int("active", self.active),
-        ]);
-        execute_sql(db,
-            "UPDATE products SET sku = :sku, name = :name, description = :description, unit = :unit, unit_price = :unit_price, tax_rate = :tax_rate, cost_price = :cost_price, active = :active WHERE products.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE products SET sku = {sku}, name = {name}, description = {description}, unit = {unit}, unit_price = {unit_price}, tax_rate = {tax_rate}, cost_price = {cost_price}, active = {active} WHERE products.id = {id}",
+                id = self.id,
+                sku = self.sku,
+                name = self.name,
+                description = self.description,
+                unit = self.unit,
+                unit_price = self.unit_price,
+                tax_rate = self.tax_rate,
+                cost_price = self.cost_price,
+                active = self.active,
+            ),
+        )
     }
 }
 

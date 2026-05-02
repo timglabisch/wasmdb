@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -35,34 +35,22 @@ impl Command for CreateContact {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_uuid("customer_id", &self.customer_id),
-            p_str("name", &self.name),
-            p_str("email", &self.email),
-            p_str("phone", &self.phone),
-            p_str("role", &self.role),
-            p_int("is_primary", self.is_primary),
-        ]);
-        let mut acc = execute_sql(db,
-            "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
-             VALUES (:id, :customer_id, :name, :email, :phone, :role, :is_primary)",
-            params)?;
-
         let detail = detail_for(&self.name);
-        // entity_type='customer', entity_id=customer_id — preserves original semantics
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'customer', :customer_id, 'contact_create', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("customer_id", &self.customer_id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO contacts (id, customer_id, name, email, phone, role, is_primary) \
+                 VALUES ({self.id}, {self.customer_id}, {self.name}, {self.email}, {self.phone}, {self.role}, {self.is_primary})"
+            ),
+        )?;
+        // entity_type='customer', entity_id=customer_id — preserves original semantics
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'customer', {self.customer_id}, 'contact_create', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

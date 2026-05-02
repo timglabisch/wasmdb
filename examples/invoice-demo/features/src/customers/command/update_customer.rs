@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -39,36 +39,37 @@ impl Command for UpdateCustomer {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("name", &self.name),
-            p_str("email", &self.email),
-            p_str("company_type", &self.company_type),
-            p_str("tax_id", &self.tax_id),
-            p_str("vat_id", &self.vat_id),
-            p_int("payment_terms_days", self.payment_terms_days),
-            p_int("default_discount_pct", self.default_discount_pct),
-            p_str("billing_street", &self.billing_street),
-            p_str("billing_zip", &self.billing_zip),
-            p_str("billing_city", &self.billing_city),
-            p_str("billing_country", &self.billing_country),
-            p_str("shipping_street", &self.shipping_street),
-            p_str("shipping_zip", &self.shipping_zip),
-            p_str("shipping_city", &self.shipping_city),
-            p_str("shipping_country", &self.shipping_country),
-            p_str("default_iban", &self.default_iban),
-            p_str("default_bic", &self.default_bic),
-            p_str("notes", &self.notes),
-        ]);
-        execute_sql(db,
-            "UPDATE customers SET name = :name, email = :email, \
-             company_type = :company_type, tax_id = :tax_id, vat_id = :vat_id, \
-             payment_terms_days = :payment_terms_days, default_discount_pct = :default_discount_pct, \
-             billing_street = :billing_street, billing_zip = :billing_zip, billing_city = :billing_city, billing_country = :billing_country, \
-             shipping_street = :shipping_street, shipping_zip = :shipping_zip, shipping_city = :shipping_city, shipping_country = :shipping_country, \
-             default_iban = :default_iban, default_bic = :default_bic, notes = :notes \
-             WHERE customers.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE customers SET name = {name}, email = {email}, \
+                 company_type = {company_type}, tax_id = {tax_id}, vat_id = {vat_id}, \
+                 payment_terms_days = {payment_terms_days}, default_discount_pct = {default_discount_pct}, \
+                 billing_street = {billing_street}, billing_zip = {billing_zip}, billing_city = {billing_city}, billing_country = {billing_country}, \
+                 shipping_street = {shipping_street}, shipping_zip = {shipping_zip}, shipping_city = {shipping_city}, shipping_country = {shipping_country}, \
+                 default_iban = {default_iban}, default_bic = {default_bic}, notes = {notes} \
+                 WHERE customers.id = {id}",
+                id = self.id,
+                name = self.name,
+                email = self.email,
+                company_type = self.company_type,
+                tax_id = self.tax_id,
+                vat_id = self.vat_id,
+                payment_terms_days = self.payment_terms_days,
+                default_discount_pct = self.default_discount_pct,
+                billing_street = self.billing_street,
+                billing_zip = self.billing_zip,
+                billing_city = self.billing_city,
+                billing_country = self.billing_country,
+                shipping_street = self.shipping_street,
+                shipping_zip = self.shipping_zip,
+                shipping_city = self.shipping_city,
+                shipping_country = self.shipping_country,
+                default_iban = self.default_iban,
+                default_bic = self.default_bic,
+                notes = self.notes,
+            ),
+        )
     }
 }
 

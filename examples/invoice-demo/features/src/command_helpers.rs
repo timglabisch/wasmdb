@@ -114,18 +114,6 @@ pub fn execute_stmt(db: &mut Database, stmt: SqlStmt) -> Result<ZSet, CommandErr
     execute_sql(db, &rendered.sql, params)
 }
 
-/// Run an iterator of statements, accumulating their `ZSet` deltas.
-pub fn execute_all<I>(db: &mut Database, stmts: I) -> Result<ZSet, CommandError>
-where
-    I: IntoIterator<Item = SqlStmt>,
-{
-    let mut acc = ZSet::new();
-    for stmt in stmts {
-        acc.extend(execute_stmt(db, stmt)?);
-    }
-    Ok(acc)
-}
-
 pub fn read_str_col(
     db: &mut Database,
     sql: &str,

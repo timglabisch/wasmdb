@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct UpdateSepaMandate {
@@ -23,18 +23,19 @@ impl Command for UpdateSepaMandate {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("mandate_ref", &self.mandate_ref),
-            p_str("iban", &self.iban),
-            p_str("bic", &self.bic),
-            p_str("holder_name", &self.holder_name),
-            p_str("signed_at", &self.signed_at),
-            p_str("status", &self.status),
-        ]);
-        execute_sql(db,
-            "UPDATE sepa_mandates SET mandate_ref = :mandate_ref, iban = :iban, bic = :bic, holder_name = :holder_name, signed_at = :signed_at, status = :status WHERE sepa_mandates.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE sepa_mandates SET mandate_ref = {mandate_ref}, iban = {iban}, bic = {bic}, holder_name = {holder_name}, signed_at = {signed_at}, status = {status} WHERE sepa_mandates.id = {id}",
+                id = self.id,
+                mandate_ref = self.mandate_ref,
+                iban = self.iban,
+                bic = self.bic,
+                holder_name = self.holder_name,
+                signed_at = self.signed_at,
+                status = self.status,
+            ),
+        )
     }
 }
 

@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_str, p_uuid, p_uuid_opt};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: assign (or remove) a customer from an invoice.
@@ -64,43 +64,26 @@ impl Command for AssignCustomer {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let detail = detail_for(&self.customer_name);
 
-        let mut acc = execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "UPDATE invoices SET \
-             customer_id = :customer_id, \
-             billing_street = :billing_street, billing_zip = :billing_zip, \
-             billing_city = :billing_city, billing_country = :billing_country, \
-             shipping_street = :shipping_street, shipping_zip = :shipping_zip, \
-             shipping_city = :shipping_city, shipping_country = :shipping_country, \
-             date_due = :date_due \
-             WHERE invoices.id = :id",
-            Params::from([
-                p_uuid_opt("customer_id", &self.customer_id),
-                p_str("billing_street", &self.billing_street),
-                p_str("billing_zip", &self.billing_zip),
-                p_str("billing_city", &self.billing_city),
-                p_str("billing_country", &self.billing_country),
-                p_str("shipping_street", &self.shipping_street),
-                p_str("shipping_zip", &self.shipping_zip),
-                p_str("shipping_city", &self.shipping_city),
-                p_str("shipping_country", &self.shipping_country),
-                p_str("date_due", &self.date_due),
-                p_uuid("id", &self.id),
-            ]),
+            sql!(
+                "UPDATE invoices SET \
+                 customer_id = {self.customer_id}, \
+                 billing_street = {self.billing_street}, billing_zip = {self.billing_zip}, \
+                 billing_city = {self.billing_city}, billing_country = {self.billing_country}, \
+                 shipping_street = {self.shipping_street}, shipping_zip = {self.shipping_zip}, \
+                 shipping_city = {self.shipping_city}, shipping_country = {self.shipping_country}, \
+                 date_due = {self.date_due} \
+                 WHERE invoices.id = {self.id}"
+            ),
         )?;
-
-        acc.extend(execute_sql(
+        acc.extend(execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :id, 'customer_assigned', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'customer_assigned', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

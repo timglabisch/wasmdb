@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct DeleteContact {
@@ -17,8 +17,7 @@ impl Command for DeleteContact {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([p_uuid("id", &self.id)]);
-        execute_sql(db, "DELETE FROM contacts WHERE contacts.id = :id", params)
+        execute_stmt(db, sql!("DELETE FROM contacts WHERE contacts.id = {id}", id = self.id))
     }
 }
 

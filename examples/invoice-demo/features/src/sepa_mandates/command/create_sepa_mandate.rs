@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -34,34 +34,21 @@ impl Command for CreateSepaMandate {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_uuid("customer_id", &self.customer_id),
-            p_str("mandate_ref", &self.mandate_ref),
-            p_str("iban", &self.iban),
-            p_str("bic", &self.bic),
-            p_str("holder_name", &self.holder_name),
-            p_str("signed_at", &self.signed_at),
-            p_str("status", "active"),
-        ]);
-        let mut acc = execute_sql(db,
-            "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
-             VALUES (:id, :customer_id, :mandate_ref, :iban, :bic, :holder_name, :signed_at, :status)",
-            params)?;
-
         let detail = detail_for(&self.mandate_ref);
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'sepa', :id, 'create', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO sepa_mandates (id, customer_id, mandate_ref, iban, bic, holder_name, signed_at, status) \
+                 VALUES ({self.id}, {self.customer_id}, {self.mandate_ref}, {self.iban}, {self.bic}, {self.holder_name}, {self.signed_at}, 'active')"
+            ),
+        )?;
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'sepa', {self.id}, 'create', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -49,46 +49,21 @@ impl Command for CreateCustomer {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("name", &self.name),
-            p_str("email", &self.email),
-            p_str("created_at", &self.created_at),
-            p_str("company_type", &self.company_type),
-            p_str("tax_id", &self.tax_id),
-            p_str("vat_id", &self.vat_id),
-            p_int("payment_terms_days", self.payment_terms_days),
-            p_int("default_discount_pct", self.default_discount_pct),
-            p_str("billing_street", &self.billing_street),
-            p_str("billing_zip", &self.billing_zip),
-            p_str("billing_city", &self.billing_city),
-            p_str("billing_country", &self.billing_country),
-            p_str("shipping_street", &self.shipping_street),
-            p_str("shipping_zip", &self.shipping_zip),
-            p_str("shipping_city", &self.shipping_city),
-            p_str("shipping_country", &self.shipping_country),
-            p_str("default_iban", &self.default_iban),
-            p_str("default_bic", &self.default_bic),
-            p_str("notes", &self.notes),
-        ]);
-        let mut acc = execute_sql(db,
-            "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
-             VALUES (:id, :name, :email, :created_at, :company_type, :tax_id, :vat_id, :payment_terms_days, :default_discount_pct, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country, :default_iban, :default_bic, :notes)",
-            params)?;
-
         let detail = detail_for(&self.name);
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'customer', :id, 'create', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO customers (id, name, email, created_at, company_type, tax_id, vat_id, payment_terms_days, default_discount_pct, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country, default_iban, default_bic, notes) \
+                 VALUES ({self.id}, {self.name}, {self.email}, {self.created_at}, {self.company_type}, {self.tax_id}, {self.vat_id}, {self.payment_terms_days}, {self.default_discount_pct}, {self.billing_street}, {self.billing_zip}, {self.billing_city}, {self.billing_country}, {self.shipping_street}, {self.shipping_zip}, {self.shipping_city}, {self.shipping_country}, {self.default_iban}, {self.default_bic}, {self.notes})"
+            ),
+        )?;
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'customer', {self.id}, 'create', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

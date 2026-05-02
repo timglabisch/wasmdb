@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -20,13 +20,14 @@ impl Command for MovePosition {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_int("position_nr", self.new_position_nr),
-        ]);
-        execute_sql(db,
-            "UPDATE positions SET position_nr = :position_nr WHERE positions.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE positions SET position_nr = {position_nr} WHERE positions.id = {id}",
+                id = self.id,
+                position_nr = self.new_position_nr,
+            ),
+        )
     }
 }
 

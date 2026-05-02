@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct UpdateContact {
@@ -23,17 +23,18 @@ impl Command for UpdateContact {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("name", &self.name),
-            p_str("email", &self.email),
-            p_str("phone", &self.phone),
-            p_str("role", &self.role),
-            p_int("is_primary", self.is_primary),
-        ]);
-        execute_sql(db,
-            "UPDATE contacts SET name = :name, email = :email, phone = :phone, role = :role, is_primary = :is_primary WHERE contacts.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE contacts SET name = {name}, email = {email}, phone = {phone}, role = {role}, is_primary = {is_primary} WHERE contacts.id = {id}",
+                id = self.id,
+                name = self.name,
+                email = self.email,
+                phone = self.phone,
+                role = self.role,
+                is_primary = self.is_primary,
+            ),
+        )
     }
 }
 

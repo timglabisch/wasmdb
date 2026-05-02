@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -23,19 +23,13 @@ pub struct CreatePayment {
 
 impl Command for CreatePayment {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        execute_sql(
+        let Self { id, invoice_id, amount, paid_at, method, reference, note } = self;
+        execute_stmt(
             db,
-            "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
-             VALUES (:id, :invoice_id, :amount, :paid_at, :method, :reference, :note)",
-            Params::from([
-                p_uuid("id", &self.id),
-                p_uuid("invoice_id", &self.invoice_id),
-                p_int("amount", self.amount),
-                p_str("paid_at", &self.paid_at),
-                p_str("method", &self.method),
-                p_str("reference", &self.reference),
-                p_str("note", &self.note),
-            ]),
+            sql!(
+                "INSERT INTO payments (id, invoice_id, amount, paid_at, method, reference, note) \
+                 VALUES ({id}, {invoice_id}, {amount}, {paid_at}, {method}, {reference}, {note})"
+            ),
         )
     }
 }

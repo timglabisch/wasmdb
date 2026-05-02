@@ -2,12 +2,12 @@ use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_i64_col, read_str_col, read_uuid_col};
+use crate::command_helpers::{execute_stmt, p_uuid, read_i64_col, read_str_col, read_uuid_col};
 use crate::shared::DEMO_TENANT_ID;
-use super::invoice_params::invoice_params;
 
 /// Intent-Command: create a credit-note (Gutschrift) referencing an existing
 /// invoice. Copies all positions with negated quantities, sets `doc_type =
@@ -106,21 +106,35 @@ impl Command for CreateCreditNote {
         // credit note: doc_type = 'credit_note', parent_id = source
         let parent_id: Option<Uuid> = Some(src);
 
-        let inv_params = invoice_params(
-            &new_id, Some(&customer_id),
-            &self.new_number, "draft", &self.date_issued, &self.date_due, &notes,
-            "credit_note", &parent_id, &service_date,
-            cash_pct, cash_days, discount_pct,
-            &payment_method, &sepa_mandate_id, &currency, &language,
-            &project_ref, &external_id,
-            &billing_street, &billing_zip, &billing_city, &billing_country,
-            &shipping_street, &shipping_zip, &shipping_city, &shipping_country,
-        );
-
-        let mut acc = execute_sql(db,
+        let mut acc = execute_stmt(db, sql!(
             "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES (:id, :customer_id, :number, :status, :date_issued, :date_due, :notes, :doc_type, :parent_id, :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, :billing_street, :billing_zip, :billing_city, :billing_country, :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
-            inv_params)?;
+             VALUES ({id}, {customer_id}, {number}, 'draft', {date_issued}, {date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_allowance_pct}, {cash_allowance_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
+            id = new_id,
+            customer_id = customer_id,
+            number = self.new_number,
+            date_issued = self.date_issued,
+            date_due = self.date_due,
+            notes = notes,
+            parent_id = parent_id,
+            service_date = service_date,
+            cash_allowance_pct = cash_pct,
+            cash_allowance_days = cash_days,
+            discount_pct = discount_pct,
+            payment_method = payment_method,
+            sepa_mandate_id = sepa_mandate_id,
+            currency = currency,
+            language = language,
+            project_ref = project_ref,
+            external_id = external_id,
+            billing_street = billing_street,
+            billing_zip = billing_zip,
+            billing_city = billing_city,
+            billing_country = billing_country,
+            shipping_street = shipping_street,
+            shipping_zip = shipping_zip,
+            shipping_city = shipping_city,
+            shipping_country = shipping_country,
+        ))?;
 
         // --- copy positions with negated quantities ---
         let descs     = read_str_col(db, "SELECT description FROM positions WHERE positions.invoice_id = :iid ORDER BY positions.position_nr", Params::from([p_uuid("iid", &src)]))?;
@@ -142,37 +156,46 @@ impl Command for CreateCreditNote {
         }
 
         for (i, pid) in self.new_position_ids.iter().enumerate() {
-            let params = Params::from([
-                p_uuid("id", pid),
-                p_uuid("invoice_id", &new_id),
-                p_int("position_nr", pos_nrs.get(i).copied().unwrap_or((i as i64 + 1) * 1000)),
-                p_str("description", &descs[i]),
-                p_int("quantity", -qtys[i]),      // negated for credit note
-                p_int("unit_price", prices[i]),
-                p_int("tax_rate", taxes[i]),
-                p_uuid_opt("product_id", &None),
-                p_str("item_number", items.get(i).map(|s| s.as_str()).unwrap_or("")),
-                p_str("unit", units.get(i).map(|s| s.as_str()).unwrap_or("")),
-                p_int("discount_pct", discounts.get(i).copied().unwrap_or(0)),
-                p_int("cost_price", costs.get(i).copied().unwrap_or(0)),
-                p_str("position_type", pos_types.get(i).map(|s| s.as_str()).unwrap_or("service")),
-            ]);
-            acc.extend(execute_sql(db,
+            let position_nr = pos_nrs.get(i).copied().unwrap_or((i as i64 + 1) * 1000);
+            let description = &descs[i];
+            let quantity = -qtys[i]; // negated for credit note
+            let unit_price = prices[i];
+            let tax_rate = taxes[i];
+            let product_id: Option<Uuid> = None;
+            let item_number = items.get(i).map(|s| s.as_str()).unwrap_or("");
+            let unit = units.get(i).map(|s| s.as_str()).unwrap_or("");
+            let discount_pct = discounts.get(i).copied().unwrap_or(0);
+            let cost_price = costs.get(i).copied().unwrap_or(0);
+            let position_type = pos_types.get(i).map(|s| s.as_str()).unwrap_or("service");
+
+            acc.extend(execute_stmt(db, sql!(
                 "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES (:id, :invoice_id, :position_nr, :description, :quantity, :unit_price, :tax_rate, :product_id, :item_number, :unit, :discount_pct, :cost_price, :position_type)",
-                params)?);
+                 VALUES ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})",
+                id = pid,
+                invoice_id = new_id,
+                position_nr = position_nr,
+                description = description,
+                quantity = quantity,
+                unit_price = unit_price,
+                tax_rate = tax_rate,
+                product_id = product_id,
+                item_number = item_number,
+                unit = unit,
+                discount_pct = discount_pct,
+                cost_price = cost_price,
+                position_type = position_type,
+            ))?);
         }
 
         // --- activity row ---
-        acc.extend(execute_sql(db,
+        acc.extend(execute_stmt(db, sql!(
             "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :eid, 'credit_note_created', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("eid", &new_id),
-                p_str("detail", &detail),
-            ]))?);
+             VALUES ({activity_id}, {timestamp}, 'invoice', {entity_id}, 'credit_note_created', 'demo', {detail})",
+            activity_id = self.activity_id,
+            timestamp = self.timestamp,
+            entity_id = new_id,
+            detail = detail,
+        ))?);
 
         Ok(acc)
     }

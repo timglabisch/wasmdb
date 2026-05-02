@@ -7,6 +7,7 @@ edition = "2021"
 sync = { path = "../../../crates/sync" }
 database = { path = "../../../crates/database", features = ["borsh"] }
 sql-engine = { path = "../../../crates/sql-engine", features = ["borsh"] }
+sqlbuilder = { path = "../../../crates/sqlbuilder", features = ["sql-engine"] }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 ts-rs = { version = "12", features = ["serde-compat"] }

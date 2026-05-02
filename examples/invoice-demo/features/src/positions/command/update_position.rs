@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid, p_uuid_opt};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -34,26 +34,27 @@ impl Command for UpdatePosition {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("description", &self.description),
-            p_int("quantity", self.quantity),
-            p_int("unit_price", self.unit_price),
-            p_int("tax_rate", self.tax_rate),
-            p_uuid_opt("product_id", &self.product_id),
-            p_str("item_number", &self.item_number),
-            p_str("unit", &self.unit),
-            p_int("discount_pct", self.discount_pct),
-            p_int("cost_price", self.cost_price),
-            p_str("position_type", &self.position_type),
-        ]);
-        execute_sql(db,
-            "UPDATE positions SET description = :description, quantity = :quantity, \
-             unit_price = :unit_price, tax_rate = :tax_rate, \
-             product_id = :product_id, item_number = :item_number, unit = :unit, \
-             discount_pct = :discount_pct, cost_price = :cost_price, position_type = :position_type \
-             WHERE positions.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE positions SET description = {description}, quantity = {quantity}, \
+                 unit_price = {unit_price}, tax_rate = {tax_rate}, \
+                 product_id = {product_id}, item_number = {item_number}, unit = {unit}, \
+                 discount_pct = {discount_pct}, cost_price = {cost_price}, position_type = {position_type} \
+                 WHERE positions.id = {id}",
+                id = self.id,
+                description = self.description,
+                quantity = self.quantity,
+                unit_price = self.unit_price,
+                tax_rate = self.tax_rate,
+                product_id = self.product_id,
+                item_number = self.item_number,
+                unit = self.unit,
+                discount_pct = self.discount_pct,
+                cost_price = self.cost_price,
+                position_type = self.position_type,
+            ),
+        )
     }
 }
 

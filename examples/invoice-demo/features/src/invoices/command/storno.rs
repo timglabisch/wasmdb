@@ -4,13 +4,12 @@ use rpc_command::rpc_command;
 use serde::{Deserialize, Serialize};
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use ts_rs::TS;
 
-use crate::command_helpers::{
-    execute_sql, p_int, p_str, p_uuid, p_uuid_opt, read_str_col,
-};
+use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
 use crate::shared::DEMO_TENANT_ID;
 
 /// A position embedded in the Storno credit note (pre-negated quantity,
@@ -104,10 +103,10 @@ fn detail_for(number: &str, credit_note_id: &Uuid) -> String {
 impl Command for Storno {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         // 1. Cancel the original invoice.
-        let mut acc = execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "UPDATE invoices SET status = 'cancelled' WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &self.id)]),
+            sql!("UPDATE invoices SET status = 'cancelled' WHERE invoices.id = {id}",
+                id = self.id),
         )?;
 
         // 2. Look up the original invoice number for the activity detail.
@@ -120,89 +119,93 @@ impl Command for Storno {
         let detail = detail_for(&number, &self.credit_note_id);
 
         // 3. Insert the credit note header.
-        acc.extend(execute_sql(
+        acc.extend(execute_stmt(
             db,
-            "INSERT INTO invoices \
-             (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, \
-              service_date, cash_allowance_pct, cash_allowance_days, discount_pct, \
-              payment_method, sepa_mandate_id, currency, language, project_ref, external_id, \
-              billing_street, billing_zip, billing_city, billing_country, \
-              shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES \
-             (:id, :customer_id, :number, 'draft', :date_issued, :date_due, :notes, 'credit_note', :parent_id, \
-              :service_date, :cash_allowance_pct, :cash_allowance_days, :discount_pct, \
-              :payment_method, :sepa_mandate_id, :currency, :language, :project_ref, :external_id, \
-              :billing_street, :billing_zip, :billing_city, :billing_country, \
-              :shipping_street, :shipping_zip, :shipping_city, :shipping_country)",
-            Params::from([
-                p_uuid("id", &self.credit_note_id),
-                p_uuid_opt("customer_id", &self.customer_id),
-                p_str("number", &self.credit_note_number),
-                p_str("date_issued", &self.date_issued),
-                p_str("date_due", &self.date_due),
-                p_str("notes", &self.notes),
-                p_uuid("parent_id", &self.id),
-                p_str("service_date", &self.service_date),
-                p_int("cash_allowance_pct", self.cash_allowance_pct),
-                p_int("cash_allowance_days", self.cash_allowance_days),
-                p_int("discount_pct", self.discount_pct),
-                p_str("payment_method", &self.payment_method),
-                p_uuid_opt("sepa_mandate_id", &self.sepa_mandate_id),
-                p_str("currency", &self.currency),
-                p_str("language", &self.language),
-                p_str("project_ref", &self.project_ref),
-                p_str("external_id", &self.external_id),
-                p_str("billing_street", &self.billing_street),
-                p_str("billing_zip", &self.billing_zip),
-                p_str("billing_city", &self.billing_city),
-                p_str("billing_country", &self.billing_country),
-                p_str("shipping_street", &self.shipping_street),
-                p_str("shipping_zip", &self.shipping_zip),
-                p_str("shipping_city", &self.shipping_city),
-                p_str("shipping_country", &self.shipping_country),
-            ]),
+            sql!(
+                "INSERT INTO invoices \
+                 (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, \
+                  service_date, cash_allowance_pct, cash_allowance_days, discount_pct, \
+                  payment_method, sepa_mandate_id, currency, language, project_ref, external_id, \
+                  billing_street, billing_zip, billing_city, billing_country, \
+                  shipping_street, shipping_zip, shipping_city, shipping_country) \
+                 VALUES \
+                 ({credit_note_id}, {customer_id}, {credit_note_number}, 'draft', {date_issued}, {date_due}, {notes}, 'credit_note', {parent_id}, \
+                  {service_date}, {cash_allowance_pct}, {cash_allowance_days}, {discount_pct}, \
+                  {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, \
+                  {billing_street}, {billing_zip}, {billing_city}, {billing_country}, \
+                  {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
+                credit_note_id = self.credit_note_id,
+                customer_id = self.customer_id,
+                credit_note_number = self.credit_note_number,
+                date_issued = self.date_issued,
+                date_due = self.date_due,
+                notes = self.notes,
+                parent_id = self.id,
+                service_date = self.service_date,
+                cash_allowance_pct = self.cash_allowance_pct,
+                cash_allowance_days = self.cash_allowance_days,
+                discount_pct = self.discount_pct,
+                payment_method = self.payment_method,
+                sepa_mandate_id = self.sepa_mandate_id,
+                currency = self.currency,
+                language = self.language,
+                project_ref = self.project_ref,
+                external_id = self.external_id,
+                billing_street = self.billing_street,
+                billing_zip = self.billing_zip,
+                billing_city = self.billing_city,
+                billing_country = self.billing_country,
+                shipping_street = self.shipping_street,
+                shipping_zip = self.shipping_zip,
+                shipping_city = self.shipping_city,
+                shipping_country = self.shipping_country,
+            ),
         )?);
 
         // 4. Insert credit-note positions.
         for pos in &self.positions {
-            acc.extend(execute_sql(
+            let StornoPosition {
+                id, position_nr, description, quantity, unit_price, tax_rate,
+                product_id, item_number, unit, discount_pct, cost_price, position_type,
+            } = pos;
+            acc.extend(execute_stmt(
                 db,
-                "INSERT INTO positions \
-                 (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, \
-                  product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                 VALUES \
-                 (:id, :invoice_id, :position_nr, :description, :quantity, :unit_price, :tax_rate, \
-                  :product_id, :item_number, :unit, :discount_pct, :cost_price, :position_type)",
-                Params::from([
-                    p_uuid("id", &pos.id),
-                    p_uuid("invoice_id", &self.credit_note_id),
-                    p_int("position_nr", pos.position_nr),
-                    p_str("description", &pos.description),
-                    p_int("quantity", pos.quantity),
-                    p_int("unit_price", pos.unit_price),
-                    p_int("tax_rate", pos.tax_rate),
-                    p_uuid_opt("product_id", &pos.product_id),
-                    p_str("item_number", &pos.item_number),
-                    p_str("unit", &pos.unit),
-                    p_int("discount_pct", pos.discount_pct),
-                    p_int("cost_price", pos.cost_price),
-                    p_str("position_type", &pos.position_type),
-                ]),
+                sql!(
+                    "INSERT INTO positions \
+                     (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, \
+                      product_id, item_number, unit, discount_pct, cost_price, position_type) \
+                     VALUES \
+                     ({id}, {invoice_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, \
+                      {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})",
+                    id = id,
+                    invoice_id = self.credit_note_id,
+                    position_nr = position_nr,
+                    description = description,
+                    quantity = quantity,
+                    unit_price = unit_price,
+                    tax_rate = tax_rate,
+                    product_id = product_id,
+                    item_number = item_number,
+                    unit = unit,
+                    discount_pct = discount_pct,
+                    cost_price = cost_price,
+                    position_type = position_type,
+                ),
             )?);
         }
 
         // 5. Activity log on the original invoice.
-        acc.extend(execute_sql(
+        acc.extend(execute_stmt(
             db,
-            "INSERT INTO activity_log \
-             (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :id, 'storno', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO activity_log \
+                 (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({activity_id}, {timestamp}, 'invoice', {id}, 'storno', 'demo', {detail})",
+                activity_id = self.activity_id,
+                timestamp = self.timestamp,
+                id = self.id,
+                detail = detail,
+            ),
         )?);
 
         Ok(acc)

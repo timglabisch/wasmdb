@@ -1,7 +1,7 @@
 //! End-to-end tests of the public API: macros + render pipeline.
 //! Only uses items exposed via `sqlbuilder::*` — no internals.
 
-use sqlbuilder::{sql, sql_batch, SqlStmt, Value};
+use sqlbuilder::{sql, SqlStmt, Value};
 
 fn binds(stmt: SqlStmt) -> (String, Vec<(String, Value)>) {
     let r = stmt.render().expect("render");
@@ -207,58 +207,6 @@ fn sibling_fragments_use_independent_prefixes() {
     assert_eq!(as_int(&params[0].1), 1);
     assert_eq!(as_int(&params[1].1), 2);
     assert_ne!(params[0].0, params[1].0);
-}
-
-// ── sql_batch! ───────────────────────────────────────────────────────────
-
-#[test]
-fn batch_destructures_subject_and_returns_array() {
-    struct S {
-        id: i64,
-        name: String,
-    }
-    let s = S { id: 5, name: "x".into() };
-    let stmts = sql_batch!(S { id, name } = s => [
-        sql!("UPDATE t SET name = {name} WHERE id = {id}"),
-        sql!("DELETE FROM t WHERE id = {id}"),
-    ]);
-    assert_eq!(stmts.len(), 2);
-    let (s1, p1) = binds(stmts[0].clone());
-    assert_eq!(s1, "UPDATE t SET name = :name WHERE id = :id");
-    assert_eq!(as_text(&p1[0].1), "x");
-    assert_eq!(as_int(&p1[1].1), 5);
-
-    let (_, p2) = binds(stmts[1].clone());
-    assert_eq!(as_int(&p2[0].1), 5);
-}
-
-#[test]
-fn batch_destructures_with_rest_pattern() {
-    struct S {
-        id: i64,
-        #[allow(dead_code)]
-        unused: String,
-    }
-    let s = S { id: 11, unused: "ignore".into() };
-    let stmts = sql_batch!(S { id, .. } = s => [
-        sql!("DELETE FROM t WHERE id = {id}"),
-    ]);
-    let (_, params) = binds(stmts.into_iter().next().unwrap());
-    assert_eq!(as_int(&params[0].1), 11);
-}
-
-#[test]
-fn batch_destructures_borrowed_subject() {
-    struct S {
-        id: i64,
-    }
-    let s = S { id: 3 };
-    let r = &s;
-    let stmts = sql_batch!(S { id } = r => [
-        sql!("DELETE FROM t WHERE id = {id}"),
-    ]);
-    let (_, params) = binds(stmts.into_iter().next().unwrap());
-    assert_eq!(as_int(&params[0].1), 3);
 }
 
 // ── Dotted-path capture (`{self.field}`) ─────────────────────────────────

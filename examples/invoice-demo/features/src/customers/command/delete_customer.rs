@@ -1,11 +1,11 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -19,8 +19,7 @@ impl Command for DeleteCustomer {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([p_uuid("id", &self.id)]);
-        execute_sql(db, "DELETE FROM customers WHERE customers.id = :id", params)
+        execute_stmt(db, sql!("DELETE FROM customers WHERE customers.id = {id}", id = self.id))
     }
 }
 

@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct UpdatePayment {
@@ -23,17 +23,18 @@ impl Command for UpdatePayment {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_int("amount", self.amount),
-            p_str("paid_at", &self.paid_at),
-            p_str("method", &self.method),
-            p_str("reference", &self.reference),
-            p_str("note", &self.note),
-        ]);
-        execute_sql(db,
-            "UPDATE payments SET amount = :amount, paid_at = :paid_at, method = :method, reference = :reference, note = :note WHERE payments.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE payments SET amount = {amount}, paid_at = {paid_at}, method = {method}, reference = {reference}, note = {note} WHERE payments.id = {id}",
+                id = self.id,
+                amount = self.amount,
+                paid_at = self.paid_at,
+                method = self.method,
+                reference = self.reference,
+                note = self.note,
+            ),
+        )
     }
 }
 

@@ -1,8 +1,8 @@
 //! Composable SQL fragments with named placeholders.
 //!
-//! Build statements with the [`sql!`] macro; assemble lists with [`sql_batch!`].
-//! Statements are pure data ([`SqlStmt`]) — composition splices fragments
-//! at render time, with placeholder collisions resolved automatically.
+//! Build statements with the [`sql!`] macro. Statements are pure data
+//! ([`SqlStmt`]) — composition splices fragments at render time, with
+//! placeholder collisions resolved automatically.
 //!
 //! Macro-level placeholders use **`{name}`** (format!-style). They are
 //! distinct from any `:name` placeholders the underlying engine may parse —
@@ -23,7 +23,7 @@
 //!
 //! Backends consume [`RenderedSql`]: a flat SQL string + flat bind list.
 
-pub use sqlbuilder_macros::{sql, sql_batch};
+pub use sqlbuilder_macros::sql;
 
 mod render;
 mod value;

@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Cascades recurring_positions + recurring_invoice atomically.
@@ -30,25 +30,21 @@ impl Command for DeleteRecurring {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let id = self.id;
         let detail = detail_for(&self.label_for_detail);
-        let mut acc = ZSet::new();
-        let p = Params::from([p_uuid("rid", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM recurring_positions WHERE recurring_id = :rid", p)?);
-        let p = Params::from([p_uuid("id", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM recurring_invoices WHERE id = :id", p)?);
-        acc.extend(execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'recurring', :id, 'delete', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!("DELETE FROM recurring_positions WHERE recurring_id = {self.id}"),
+        )?;
+        acc.extend(execute_stmt(
+            db,
+            sql!("DELETE FROM recurring_invoices WHERE id = {self.id}"),
+        )?);
+        acc.extend(execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'recurring', {self.id}, 'delete', 'demo', {detail})"
+            ),
         )?);
         Ok(acc)
     }

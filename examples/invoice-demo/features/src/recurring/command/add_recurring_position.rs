@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -33,22 +33,17 @@ impl Command for AddRecurringPosition {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_uuid("recurring_id", &self.recurring_id),
-            p_int("position_nr", self.position_nr),
-            p_str("description", &self.description),
-            p_int("quantity", self.quantity),
-            p_int("unit_price", self.unit_price),
-            p_int("tax_rate", self.tax_rate),
-            p_str("unit", &self.unit),
-            p_str("item_number", &self.item_number),
-            p_int("discount_pct", self.discount_pct),
-        ]);
-        execute_sql(db,
-            "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
-             VALUES (:id, :recurring_id, :position_nr, :description, :quantity, :unit_price, :tax_rate, :unit, :item_number, :discount_pct)",
-            params)
+        let Self {
+            id, recurring_id, position_nr, description, quantity, unit_price, tax_rate,
+            unit, item_number, discount_pct,
+        } = self;
+        execute_stmt(
+            db,
+            sql!(
+                "INSERT INTO recurring_positions (id, recurring_id, position_nr, description, quantity, unit_price, tax_rate, unit, item_number, discount_pct) \
+                 VALUES ({id}, {recurring_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {unit}, {item_number}, {discount_pct})"
+            ),
+        )
     }
 }
 

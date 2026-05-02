@@ -2,10 +2,11 @@ use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_int, p_str, p_uuid, read_str_col};
+use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
 
 /// Intent-Command: activate or deactivate a product. Replaces the old
 /// `updateProduct({...,active}) + logActivity(...)` pair. Activity is
@@ -39,13 +40,13 @@ fn action_for(active: i64) -> &'static str {
 
 impl Command for SetProductActive {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
-        let mut acc = execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "UPDATE products SET active = :active WHERE products.id = :id",
-            Params::from([
-                p_int("active", self.active),
-                p_uuid("id", &self.id),
-            ]),
+            sql!(
+                "UPDATE products SET active = {active} WHERE products.id = {id}",
+                active = self.active,
+                id = self.id,
+            ),
         )?;
 
         let names = read_str_col(
@@ -57,17 +58,17 @@ impl Command for SetProductActive {
         let detail = detail_for(&name, self.active);
         let action = action_for(self.active);
 
-        acc.extend(execute_sql(
+        acc.extend(execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'product', :id, :action, 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("action", action),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({aid}, {ts}, 'product', {id}, {action}, 'demo', {detail})",
+                aid = self.activity_id,
+                ts = self.timestamp,
+                id = self.id,
+                action = action,
+                detail = detail,
+            ),
         )?);
 
         Ok(acc)

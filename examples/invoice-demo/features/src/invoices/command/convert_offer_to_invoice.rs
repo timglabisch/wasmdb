@@ -2,10 +2,11 @@ use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_str, p_uuid, read_str_col};
+use crate::command_helpers::{execute_stmt, p_uuid, read_str_col};
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: convert an offer document into a draft invoice.
@@ -39,25 +40,20 @@ impl Command for ConvertOfferToInvoice {
         let number = numbers.into_iter().next().unwrap_or_default();
         let detail = detail_for(&number);
 
-        let mut acc = execute_sql(
+        let mut acc = execute_stmt(
             db,
-            "UPDATE invoices SET doc_type = 'invoice', status = 'draft' \
-             WHERE invoices.id = :id",
-            Params::from([p_uuid("id", &self.id)]),
+            sql!(
+                "UPDATE invoices SET doc_type = 'invoice', status = 'draft' \
+                 WHERE invoices.id = {self.id}"
+            ),
         )?;
-
-        acc.extend(execute_sql(
+        acc.extend(execute_stmt(
             db,
-            "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'invoice', :id, 'offer_converted', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
+            sql!(
+                "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
+                 VALUES ({self.activity_id}, {self.timestamp}, 'invoice', {self.id}, 'offer_converted', 'demo', {detail})"
+            ),
         )?);
-
         Ok(acc)
     }
 }

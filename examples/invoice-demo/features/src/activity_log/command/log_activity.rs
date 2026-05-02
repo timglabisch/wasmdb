@@ -1,10 +1,10 @@
 use sql_engine::storage::Uuid;
 use database::Database;
-use sql_engine::execute::Params;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::{execute_sql, p_str, p_uuid};
+use crate::command_helpers::execute_stmt;
 
 #[rpc_command]
 pub struct LogActivity {
@@ -26,19 +26,17 @@ impl Command for LogActivity {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = Params::from([
-            p_uuid("id", &self.id),
-            p_str("timestamp", &self.timestamp),
-            p_str("entity_type", &self.entity_type),
-            p_uuid("entity_id", &self.entity_id),
-            p_str("action", &self.action),
-            p_str("actor", &self.actor),
-            p_str("detail", &self.detail),
-        ]);
-        execute_sql(db,
+        execute_stmt(db, sql!(
             "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:id, :timestamp, :entity_type, :entity_id, :action, :actor, :detail)",
-            params)
+             VALUES ({id}, {timestamp}, {entity_type}, {entity_id}, {action}, {actor}, {detail})",
+            id = self.id,
+            timestamp = self.timestamp,
+            entity_type = self.entity_type,
+            entity_id = self.entity_id,
+            action = self.action,
+            actor = self.actor,
+            detail = self.detail,
+        ))
     }
 }
 

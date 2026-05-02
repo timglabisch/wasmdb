@@ -1,11 +1,11 @@
 use sql_engine::storage::Uuid;
 use database::Database;
 use rpc_command::rpc_command;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::execute_sql;
+use crate::command_helpers::execute_stmt;
 use crate::shared::DEMO_TENANT_ID;
-use super::invoice_params::invoice_params;
 
 #[rpc_command]
 pub struct UpdateInvoiceHeader {
@@ -48,28 +48,47 @@ impl Command for UpdateInvoiceHeader {
         &self,
         db: &mut Database,
     ) -> Result<ZSet, CommandError> {
-        let params = invoice_params(
-            &self.id, None,
-            &self.number, &self.status, &self.date_issued, &self.date_due, &self.notes,
-            &self.doc_type, &self.parent_id, &self.service_date,
-            self.cash_allowance_pct, self.cash_allowance_days, self.discount_pct,
-            &self.payment_method, &self.sepa_mandate_id, &self.currency, &self.language,
-            &self.project_ref, &self.external_id,
-            &self.billing_street, &self.billing_zip, &self.billing_city, &self.billing_country,
-            &self.shipping_street, &self.shipping_zip, &self.shipping_city, &self.shipping_country,
-        );
-        execute_sql(db,
-            "UPDATE invoices SET number = :number, status = :status, \
-             date_issued = :date_issued, date_due = :date_due, notes = :notes, \
-             doc_type = :doc_type, parent_id = :parent_id, service_date = :service_date, \
-             cash_allowance_pct = :cash_allowance_pct, cash_allowance_days = :cash_allowance_days, discount_pct = :discount_pct, \
-             payment_method = :payment_method, sepa_mandate_id = :sepa_mandate_id, \
-             currency = :currency, language = :language, \
-             project_ref = :project_ref, external_id = :external_id, \
-             billing_street = :billing_street, billing_zip = :billing_zip, billing_city = :billing_city, billing_country = :billing_country, \
-             shipping_street = :shipping_street, shipping_zip = :shipping_zip, shipping_city = :shipping_city, shipping_country = :shipping_country \
-             WHERE invoices.id = :id",
-            params)
+        execute_stmt(
+            db,
+            sql!(
+                "UPDATE invoices SET number = {number}, status = {status}, \
+                 date_issued = {date_issued}, date_due = {date_due}, notes = {notes}, \
+                 doc_type = {doc_type}, parent_id = {parent_id}, service_date = {service_date}, \
+                 cash_allowance_pct = {cash_allowance_pct}, cash_allowance_days = {cash_allowance_days}, discount_pct = {discount_pct}, \
+                 payment_method = {payment_method}, sepa_mandate_id = {sepa_mandate_id}, \
+                 currency = {currency}, language = {language}, \
+                 project_ref = {project_ref}, external_id = {external_id}, \
+                 billing_street = {billing_street}, billing_zip = {billing_zip}, billing_city = {billing_city}, billing_country = {billing_country}, \
+                 shipping_street = {shipping_street}, shipping_zip = {shipping_zip}, shipping_city = {shipping_city}, shipping_country = {shipping_country} \
+                 WHERE invoices.id = {id}",
+                id = self.id,
+                number = self.number,
+                status = self.status,
+                date_issued = self.date_issued,
+                date_due = self.date_due,
+                notes = self.notes,
+                doc_type = self.doc_type,
+                parent_id = self.parent_id,
+                service_date = self.service_date,
+                cash_allowance_pct = self.cash_allowance_pct,
+                cash_allowance_days = self.cash_allowance_days,
+                discount_pct = self.discount_pct,
+                payment_method = self.payment_method,
+                sepa_mandate_id = self.sepa_mandate_id,
+                currency = self.currency,
+                language = self.language,
+                project_ref = self.project_ref,
+                external_id = self.external_id,
+                billing_street = self.billing_street,
+                billing_zip = self.billing_zip,
+                billing_city = self.billing_city,
+                billing_country = self.billing_country,
+                shipping_street = self.shipping_street,
+                shipping_zip = self.shipping_zip,
+                shipping_city = self.shipping_city,
+                shipping_country = self.shipping_country,
+            ),
+        )
     }
 }
 

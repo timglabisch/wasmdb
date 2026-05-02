@@ -2373,6 +2373,7 @@ dependencies = [
  "database",
  "serde",
  "sql-engine",
+ "sqlbuilder",
  "sync",
  "ts-rs",
 ]

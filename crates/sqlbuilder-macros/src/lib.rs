@@ -3,7 +3,6 @@
 
 mod parse;
 mod sql;
-mod sql_batch;
 
 use proc_macro::TokenStream;
 
@@ -34,23 +33,4 @@ use proc_macro::TokenStream;
 #[proc_macro]
 pub fn sql(input: TokenStream) -> TokenStream {
     sql::expand(input.into()).unwrap_or_else(|e| e.to_compile_error()).into()
-}
-
-/// Destructure a struct + return a list of [`SqlStmt`] values.
-///
-/// The destructure pattern brings field bindings into scope for the
-/// `sql!` calls in the list.
-///
-/// # Example
-///
-/// ```ignore
-/// let stmts = sql_batch!(Self { id, activity_id, timestamp, .. } = self => [
-///     sql!("DELETE FROM payments WHERE invoice_id = {id}"),
-///     sql!("DELETE FROM positions WHERE invoice_id = {id}"),
-///     sql!("DELETE FROM invoices WHERE id = {id}"),
-/// ]);
-/// ```
-#[proc_macro]
-pub fn sql_batch(input: TokenStream) -> TokenStream {
-    sql_batch::expand(input.into()).unwrap_or_else(|e| e.to_compile_error()).into()
 }

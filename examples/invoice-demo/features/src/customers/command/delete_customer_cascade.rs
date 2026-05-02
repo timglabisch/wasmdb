@@ -1,11 +1,12 @@
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::execute::{Params, ParamValue};
+use sql_engine::execute::Params;
 use sql_engine::storage::Uuid;
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::{execute_sql, p_str, p_uuid, read_uuid_col};
+use crate::command_helpers::{execute_stmt, p_uuid, read_uuid_col};
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]
@@ -42,59 +43,54 @@ impl Command for DeleteCustomerCascade {
         let mut acc = ZSet::new();
 
         if !recurring_ids.is_empty() {
-            let bytes: Vec<[u8; 16]> = recurring_ids.iter().map(|u| u.0).collect();
-            let p = Params::from([
-                ("rids".into(), ParamValue::UuidList(bytes.clone())),
-            ]);
-            acc.extend(execute_sql(db,
-                "DELETE FROM recurring_positions WHERE recurring_id IN (:rids)", p)?);
-            let p = Params::from([
-                ("rids".into(), ParamValue::UuidList(bytes)),
-            ]);
-            acc.extend(execute_sql(db,
-                "DELETE FROM recurring_invoices WHERE id IN (:rids)", p)?);
+            let rids: Vec<[u8; 16]> = recurring_ids.iter().map(|u| u.0).collect();
+            acc.extend(execute_stmt(db, sql!(
+                "DELETE FROM recurring_positions WHERE recurring_id IN ({rids})",
+                rids = rids,
+            ))?);
+            acc.extend(execute_stmt(db, sql!(
+                "DELETE FROM recurring_invoices WHERE id IN ({rids})",
+                rids = rids,
+            ))?);
         }
 
         if !invoice_ids.is_empty() {
-            let bytes: Vec<[u8; 16]> = invoice_ids.iter().map(|u| u.0).collect();
-            let p = Params::from([
-                ("iids".into(), ParamValue::UuidList(bytes.clone())),
-            ]);
-            acc.extend(execute_sql(db,
-                "DELETE FROM payments WHERE invoice_id IN (:iids)", p)?);
-            let p = Params::from([
-                ("iids".into(), ParamValue::UuidList(bytes.clone())),
-            ]);
-            acc.extend(execute_sql(db,
-                "DELETE FROM positions WHERE invoice_id IN (:iids)", p)?);
-            let p = Params::from([
-                ("iids".into(), ParamValue::UuidList(bytes)),
-            ]);
-            acc.extend(execute_sql(db,
-                "DELETE FROM invoices WHERE id IN (:iids)", p)?);
+            let iids: Vec<[u8; 16]> = invoice_ids.iter().map(|u| u.0).collect();
+            acc.extend(execute_stmt(db, sql!(
+                "DELETE FROM payments WHERE invoice_id IN ({iids})",
+                iids = iids,
+            ))?);
+            acc.extend(execute_stmt(db, sql!(
+                "DELETE FROM positions WHERE invoice_id IN ({iids})",
+                iids = iids,
+            ))?);
+            acc.extend(execute_stmt(db, sql!(
+                "DELETE FROM invoices WHERE id IN ({iids})",
+                iids = iids,
+            ))?);
         }
 
-        let p = Params::from([p_uuid("cid", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM sepa_mandates WHERE customer_id = :cid", p)?);
-        let p = Params::from([p_uuid("cid", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM contacts WHERE customer_id = :cid", p)?);
-        let p = Params::from([p_uuid("id", &id)]);
-        acc.extend(execute_sql(db,
-            "DELETE FROM customers WHERE id = :id", p)?);
+        acc.extend(execute_stmt(db, sql!(
+            "DELETE FROM sepa_mandates WHERE customer_id = {id}",
+            id = id,
+        ))?);
+        acc.extend(execute_stmt(db, sql!(
+            "DELETE FROM contacts WHERE customer_id = {id}",
+            id = id,
+        ))?);
+        acc.extend(execute_stmt(db, sql!(
+            "DELETE FROM customers WHERE id = {id}",
+            id = id,
+        ))?);
 
-        acc.extend(execute_sql(
-            db,
+        acc.extend(execute_stmt(db, sql!(
             "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \
-             VALUES (:aid, :ts, 'customer', :id, 'delete', 'demo', :detail)",
-            Params::from([
-                p_uuid("aid", &self.activity_id),
-                p_str("ts", &self.timestamp),
-                p_uuid("id", &self.id),
-                p_str("detail", &detail),
-            ]),
-        )?);
+             VALUES ({aid}, {ts}, 'customer', {id}, 'delete', 'demo', {detail})",
+            aid = self.activity_id,
+            ts = self.timestamp,
+            id = self.id,
+            detail = detail,
+        ))?);
 
         Ok(acc)
     }
