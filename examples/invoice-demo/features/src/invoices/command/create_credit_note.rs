@@ -1,10 +1,12 @@
 use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::storage::Uuid;
-use sqlbuilder::{sql, FromRow};
+use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
+use crate::invoices::Invoice;
+use crate::positions::Position;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: create a credit-note (Gutschrift) referencing an existing
@@ -43,55 +45,17 @@ fn detail_for(source_number: &str, source_id: &Uuid, new_id: &Uuid) -> String {
     format!("Gutschrift zu \"{source_number}\" (#{source_id}) als #{new_id} angelegt")
 }
 
-/// Header columns we copy from the source invoice into the new credit-note
-/// row. SELECT order below MUST match field order.
-#[derive(FromRow)]
-struct InvoiceHdr {
-    number: String,
-    customer_id: Option<Uuid>,
-    notes: String,
-    service_date: String,
-    cash_allowance_pct: i64,
-    cash_allowance_days: i64,
-    discount_pct: i64,
-    payment_method: String,
-    sepa_mandate_id: Option<Uuid>,
-    currency: String,
-    language: String,
-    project_ref: String,
-    external_id: String,
-    billing_street: String,
-    billing_zip: String,
-    billing_city: String,
-    billing_country: String,
-    shipping_street: String,
-    shipping_zip: String,
-    shipping_city: String,
-    shipping_country: String,
-}
-
-/// Position columns we copy (with negated quantity) from the source.
-#[derive(FromRow)]
-struct PositionRow {
-    position_nr: i64,
-    description: String,
-    quantity: i64,
-    unit_price: i64,
-    tax_rate: i64,
-    item_number: String,
-    unit: String,
-    discount_pct: i64,
-    cost_price: i64,
-    position_type: String,
-}
-
 impl Command for CreateCreditNote {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let src = self.source_invoice_id;
         let new_id = self.new_invoice_id;
 
-        let hdr: InvoiceHdr = sql!(
-            "SELECT number, customer_id, notes, service_date, \
+        // Read the full source row. SELECT column order matches the field
+        // order in `Invoice` (the `#[row]` schema), which is what
+        // `#[derive(FromRow)]` consumes.
+        let hdr: Invoice = sql!(
+            "SELECT id, customer_id, number, status, date_issued, date_due, \
+                    notes, doc_type, parent_id, service_date, \
                     cash_allowance_pct, cash_allowance_days, discount_pct, \
                     payment_method, sepa_mandate_id, currency, language, \
                     project_ref, external_id, \
@@ -109,33 +73,14 @@ impl Command for CreateCreditNote {
 
         let mut acc = sql!(
             "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES ({new_id}, {customer_id}, {self.new_number}, 'draft', {self.date_issued}, {self.date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_pct}, {cash_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
-            customer_id      = hdr.customer_id,
-            notes            = hdr.notes,
-            service_date     = hdr.service_date,
-            cash_pct         = hdr.cash_allowance_pct,
-            cash_days        = hdr.cash_allowance_days,
-            discount_pct     = hdr.discount_pct,
-            payment_method   = hdr.payment_method,
-            sepa_mandate_id  = hdr.sepa_mandate_id,
-            currency         = hdr.currency,
-            language         = hdr.language,
-            project_ref      = hdr.project_ref,
-            external_id      = hdr.external_id,
-            billing_street   = hdr.billing_street,
-            billing_zip      = hdr.billing_zip,
-            billing_city     = hdr.billing_city,
-            billing_country  = hdr.billing_country,
-            shipping_street  = hdr.shipping_street,
-            shipping_zip     = hdr.shipping_zip,
-            shipping_city    = hdr.shipping_city,
-            shipping_country = hdr.shipping_country
+             VALUES ({new_id}, {hdr.customer_id}, {self.new_number}, 'draft', {self.date_issued}, {self.date_due}, {hdr.notes}, 'credit_note', {parent_id}, {hdr.service_date}, {hdr.cash_allowance_pct}, {hdr.cash_allowance_days}, {hdr.discount_pct}, {hdr.payment_method}, {hdr.sepa_mandate_id}, {hdr.currency}, {hdr.language}, {hdr.project_ref}, {hdr.external_id}, {hdr.billing_street}, {hdr.billing_zip}, {hdr.billing_city}, {hdr.billing_country}, {hdr.shipping_street}, {hdr.shipping_zip}, {hdr.shipping_city}, {hdr.shipping_country})"
         )
         .execute(db)?;
 
-        let positions: Vec<PositionRow> = sql!(
-            "SELECT position_nr, description, quantity, unit_price, tax_rate, \
-                    item_number, unit, discount_pct, cost_price, position_type \
+        let positions: Vec<Position> = sql!(
+            "SELECT id, invoice_id, position_nr, description, quantity, \
+                    unit_price, tax_rate, product_id, item_number, unit, \
+                    discount_pct, cost_price, position_type \
              FROM positions WHERE invoice_id = {src} ORDER BY position_nr"
         )
         .read_rows(db)?;
@@ -148,23 +93,14 @@ impl Command for CreateCreditNote {
             )));
         }
 
+        let product_id: Option<Uuid> = None;
         for (pid, pos) in self.new_position_ids.iter().zip(positions.iter()) {
-            let product_id: Option<Uuid> = None;
-            let position_nr = pos.position_nr;
-            let description = &pos.description;
             let quantity = -pos.quantity; // negated for credit note
-            let unit_price = pos.unit_price;
-            let tax_rate = pos.tax_rate;
-            let item_number = &pos.item_number;
-            let unit = &pos.unit;
-            let discount_pct = pos.discount_pct;
-            let cost_price = pos.cost_price;
-            let position_type = &pos.position_type;
 
             acc.extend(
                 sql!(
                     "INSERT INTO positions (id, invoice_id, position_nr, description, quantity, unit_price, tax_rate, product_id, item_number, unit, discount_pct, cost_price, position_type) \
-                     VALUES ({pid}, {new_id}, {position_nr}, {description}, {quantity}, {unit_price}, {tax_rate}, {product_id}, {item_number}, {unit}, {discount_pct}, {cost_price}, {position_type})"
+                     VALUES ({pid}, {new_id}, {pos.position_nr}, {pos.description}, {quantity}, {pos.unit_price}, {pos.tax_rate}, {product_id}, {pos.item_number}, {pos.unit}, {pos.discount_pct}, {pos.cost_price}, {pos.position_type})"
                 )
                 .execute(db)?,
             );

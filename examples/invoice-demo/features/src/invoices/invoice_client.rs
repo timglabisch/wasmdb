@@ -1,9 +1,11 @@
 use sql_engine::storage::Uuid;
+use sqlbuilder::FromRow;
 use tables_storage::row;
 
 #[row(table = "invoices")]
 #[export(name = "", groups = ["all"])]
 #[export(name = "WithoutPk", groups = ["non_pk"])]
+#[derive(FromRow)]
 pub struct Invoice {
     #[pk]
     pub id: Uuid,
