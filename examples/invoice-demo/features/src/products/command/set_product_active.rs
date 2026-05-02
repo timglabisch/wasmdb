@@ -5,7 +5,6 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::SqlStmtExt;
 
 /// Intent-Command: activate or deactivate a product. Replaces the old
 /// `updateProduct({...,active}) + logActivity(...)` pair. Activity is

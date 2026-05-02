@@ -1,6 +1,7 @@
 //! Proc-macros for the [`sqlbuilder`] crate. Users import these via the
 //! `sqlbuilder` re-exports — depending on this crate directly is unusual.
 
+mod from_row;
 mod parse;
 mod sql;
 
@@ -33,4 +34,14 @@ use proc_macro::TokenStream;
 #[proc_macro]
 pub fn sql(input: TokenStream) -> TokenStream {
     sql::expand(input.into()).unwrap_or_else(|e| e.to_compile_error()).into()
+}
+
+/// Derive `FromRow`: read columns positionally into named struct fields.
+/// Each field's type must implement `sqlbuilder::FromCell`.
+#[proc_macro_derive(FromRow)]
+pub fn derive_from_row(input: TokenStream) -> TokenStream {
+    let ast = syn::parse_macro_input!(input as syn::DeriveInput);
+    from_row::expand(ast)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
 }

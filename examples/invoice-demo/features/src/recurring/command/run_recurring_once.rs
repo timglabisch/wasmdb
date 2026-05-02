@@ -4,7 +4,6 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 fn activity_detail_for(template_name: &str, new_number: &str) -> String {

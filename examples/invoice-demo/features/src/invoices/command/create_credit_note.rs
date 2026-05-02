@@ -1,11 +1,10 @@
 use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::storage::Uuid;
-use sqlbuilder::sql;
+use sqlbuilder::{sql, FromRow};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: create a credit-note (Gutschrift) referencing an existing
@@ -44,116 +43,123 @@ fn detail_for(source_number: &str, source_id: &Uuid, new_id: &Uuid) -> String {
     format!("Gutschrift zu \"{source_number}\" (#{source_id}) als #{new_id} angelegt")
 }
 
+/// Header columns we copy from the source invoice into the new credit-note
+/// row. SELECT order below MUST match field order.
+#[derive(FromRow)]
+struct InvoiceHdr {
+    number: String,
+    customer_id: Option<Uuid>,
+    notes: String,
+    service_date: String,
+    cash_allowance_pct: i64,
+    cash_allowance_days: i64,
+    discount_pct: i64,
+    payment_method: String,
+    sepa_mandate_id: Option<Uuid>,
+    currency: String,
+    language: String,
+    project_ref: String,
+    external_id: String,
+    billing_street: String,
+    billing_zip: String,
+    billing_city: String,
+    billing_country: String,
+    shipping_street: String,
+    shipping_zip: String,
+    shipping_city: String,
+    shipping_country: String,
+}
+
+/// Position columns we copy (with negated quantity) from the source.
+#[derive(FromRow)]
+struct PositionRow {
+    position_nr: i64,
+    description: String,
+    quantity: i64,
+    unit_price: i64,
+    tax_rate: i64,
+    item_number: String,
+    unit: String,
+    discount_pct: i64,
+    cost_price: i64,
+    position_type: String,
+}
+
 impl Command for CreateCreditNote {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let src = self.source_invoice_id;
         let new_id = self.new_invoice_id;
 
-        // --- read source invoice header ---
-        let numbers = sql!("SELECT invoices.number FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?;
-        let src_number = numbers.into_iter().next().unwrap_or_default();
-        let detail = detail_for(&src_number, &src, &new_id);
+        let hdr: InvoiceHdr = sql!(
+            "SELECT number, customer_id, notes, service_date, \
+                    cash_allowance_pct, cash_allowance_days, discount_pct, \
+                    payment_method, sepa_mandate_id, currency, language, \
+                    project_ref, external_id, \
+                    billing_street, billing_zip, billing_city, billing_country, \
+                    shipping_street, shipping_zip, shipping_city, shipping_country \
+             FROM invoices WHERE id = {src}"
+        )
+        .read_row(db)?
+        .ok_or_else(|| {
+            CommandError::ExecutionFailed(format!("source invoice {src} not found"))
+        })?;
 
-        let customer_id: Option<Uuid> =
-            sql!("SELECT invoices.customer_id FROM invoices WHERE invoices.id = {src}")
-                .read_uuid_col(db)?
-                .into_iter()
-                .next();
-
-        let notes           = sql!("SELECT invoices.notes FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let service_date    = sql!("SELECT invoices.service_date FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let cash_pct        = sql!("SELECT invoices.cash_allowance_pct FROM invoices WHERE invoices.id = {src}")
-            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
-        let cash_days       = sql!("SELECT invoices.cash_allowance_days FROM invoices WHERE invoices.id = {src}")
-            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
-        let discount_pct    = sql!("SELECT invoices.discount_pct FROM invoices WHERE invoices.id = {src}")
-            .read_i64_col(db)?.into_iter().next().unwrap_or_default();
-        let payment_method  = sql!("SELECT invoices.payment_method FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let currency        = sql!("SELECT invoices.currency FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let language        = sql!("SELECT invoices.language FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let project_ref     = sql!("SELECT invoices.project_ref FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let external_id     = sql!("SELECT invoices.external_id FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let billing_street  = sql!("SELECT invoices.billing_street FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let billing_zip     = sql!("SELECT invoices.billing_zip FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let billing_city    = sql!("SELECT invoices.billing_city FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let billing_country = sql!("SELECT invoices.billing_country FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let shipping_street  = sql!("SELECT invoices.shipping_street FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let shipping_zip     = sql!("SELECT invoices.shipping_zip FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let shipping_city    = sql!("SELECT invoices.shipping_city FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-        let shipping_country = sql!("SELECT invoices.shipping_country FROM invoices WHERE invoices.id = {src}")
-            .read_str_col(db)?.into_iter().next().unwrap_or_default();
-
-        let sepa_mandate_id: Option<Uuid> =
-            sql!("SELECT invoices.sepa_mandate_id FROM invoices WHERE invoices.id = {src}")
-                .read_uuid_col(db)?
-                .into_iter()
-                .next();
-
-        // credit note: doc_type = 'credit_note', parent_id = source
+        let detail = detail_for(&hdr.number, &src, &new_id);
         let parent_id: Option<Uuid> = Some(src);
 
         let mut acc = sql!(
             "INSERT INTO invoices (id, customer_id, number, status, date_issued, date_due, notes, doc_type, parent_id, service_date, cash_allowance_pct, cash_allowance_days, discount_pct, payment_method, sepa_mandate_id, currency, language, project_ref, external_id, billing_street, billing_zip, billing_city, billing_country, shipping_street, shipping_zip, shipping_city, shipping_country) \
-             VALUES ({new_id}, {customer_id}, {self.new_number}, 'draft', {self.date_issued}, {self.date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_pct}, {cash_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})"
+             VALUES ({new_id}, {customer_id}, {self.new_number}, 'draft', {self.date_issued}, {self.date_due}, {notes}, 'credit_note', {parent_id}, {service_date}, {cash_pct}, {cash_days}, {discount_pct}, {payment_method}, {sepa_mandate_id}, {currency}, {language}, {project_ref}, {external_id}, {billing_street}, {billing_zip}, {billing_city}, {billing_country}, {shipping_street}, {shipping_zip}, {shipping_city}, {shipping_country})",
+            customer_id      = hdr.customer_id,
+            notes            = hdr.notes,
+            service_date     = hdr.service_date,
+            cash_pct         = hdr.cash_allowance_pct,
+            cash_days        = hdr.cash_allowance_days,
+            discount_pct     = hdr.discount_pct,
+            payment_method   = hdr.payment_method,
+            sepa_mandate_id  = hdr.sepa_mandate_id,
+            currency         = hdr.currency,
+            language         = hdr.language,
+            project_ref      = hdr.project_ref,
+            external_id      = hdr.external_id,
+            billing_street   = hdr.billing_street,
+            billing_zip      = hdr.billing_zip,
+            billing_city     = hdr.billing_city,
+            billing_country  = hdr.billing_country,
+            shipping_street  = hdr.shipping_street,
+            shipping_zip     = hdr.shipping_zip,
+            shipping_city    = hdr.shipping_city,
+            shipping_country = hdr.shipping_country
         )
         .execute(db)?;
 
-        // --- copy positions with negated quantities ---
-        let descs     = sql!("SELECT description FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_str_col(db)?;
-        let qtys      = sql!("SELECT quantity FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
-        let prices    = sql!("SELECT unit_price FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
-        let taxes     = sql!("SELECT tax_rate FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
-        let items     = sql!("SELECT item_number FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_str_col(db)?;
-        let units     = sql!("SELECT unit FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_str_col(db)?;
-        let discounts = sql!("SELECT discount_pct FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
-        let costs     = sql!("SELECT cost_price FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
-        let pos_types = sql!("SELECT position_type FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_str_col(db)?;
-        let pos_nrs   = sql!("SELECT position_nr FROM positions WHERE positions.invoice_id = {src} ORDER BY positions.position_nr")
-            .read_i64_col(db)?;
+        let positions: Vec<PositionRow> = sql!(
+            "SELECT position_nr, description, quantity, unit_price, tax_rate, \
+                    item_number, unit, discount_pct, cost_price, position_type \
+             FROM positions WHERE invoice_id = {src} ORDER BY position_nr"
+        )
+        .read_rows(db)?;
 
-        if descs.len() != self.new_position_ids.len() {
+        if positions.len() != self.new_position_ids.len() {
             return Err(CommandError::ExecutionFailed(format!(
                 "CreateCreditNote: source has {} positions but got {} ids",
-                descs.len(), self.new_position_ids.len(),
+                positions.len(),
+                self.new_position_ids.len(),
             )));
         }
 
-        for (i, pid) in self.new_position_ids.iter().enumerate() {
-            let position_nr = pos_nrs.get(i).copied().unwrap_or((i as i64 + 1) * 1000);
-            let description = &descs[i];
-            let quantity = -qtys[i]; // negated for credit note
-            let unit_price = prices[i];
-            let tax_rate = taxes[i];
+        for (pid, pos) in self.new_position_ids.iter().zip(positions.iter()) {
             let product_id: Option<Uuid> = None;
-            let item_number = items.get(i).map(|s| s.as_str()).unwrap_or("");
-            let unit = units.get(i).map(|s| s.as_str()).unwrap_or("");
-            let discount_pct = discounts.get(i).copied().unwrap_or(0);
-            let cost_price = costs.get(i).copied().unwrap_or(0);
-            let position_type = pos_types.get(i).map(|s| s.as_str()).unwrap_or("service");
+            let position_nr = pos.position_nr;
+            let description = &pos.description;
+            let quantity = -pos.quantity; // negated for credit note
+            let unit_price = pos.unit_price;
+            let tax_rate = pos.tax_rate;
+            let item_number = &pos.item_number;
+            let unit = &pos.unit;
+            let discount_pct = pos.discount_pct;
+            let cost_price = pos.cost_price;
+            let position_type = &pos.position_type;
 
             acc.extend(
                 sql!(
@@ -164,7 +170,6 @@ impl Command for CreateCreditNote {
             );
         }
 
-        // --- activity row ---
         acc.extend(
             sql!(
                 "INSERT INTO activity_log (id, timestamp, entity_type, entity_id, action, actor, detail) \

@@ -4,7 +4,6 @@ use rpc_command::rpc_command;
 use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
-use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 #[rpc_command]

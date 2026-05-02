@@ -5,7 +5,6 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// Intent-Command: assign (or remove) a customer from an invoice.

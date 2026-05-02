@@ -5,7 +5,6 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 
-use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct UpdateProduct {

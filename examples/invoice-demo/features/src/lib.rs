@@ -7,7 +7,6 @@
 //! Commands live in their own `command/` folder, one file per command.
 
 pub mod shared;
-pub mod command_helpers;
 #[cfg(feature = "server")]
 pub mod server_helpers;
 

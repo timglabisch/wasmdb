@@ -4,7 +4,6 @@ use sqlbuilder::sql;
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use rpc_command::rpc_command;
-use crate::command_helpers::SqlStmtExt;
 
 #[rpc_command]
 pub struct DeleteSepaMandate {

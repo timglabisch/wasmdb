@@ -8,7 +8,6 @@ use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use ts_rs::TS;
 
-use crate::command_helpers::SqlStmtExt;
 use crate::shared::DEMO_TENANT_ID;
 
 /// A position embedded in the Storno credit note (pre-negated quantity,

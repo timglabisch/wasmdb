@@ -25,11 +25,20 @@
 
 pub use sqlbuilder_macros::sql;
 
+#[cfg(feature = "sql-engine")]
+mod from_row;
 mod render;
+#[cfg(feature = "sql-engine")]
+mod run;
 mod value;
 
 pub use render::{RenderedSql, RenderError};
 pub use value::{IntoSqlPart, SqlPart, Value};
+
+#[cfg(feature = "sql-engine")]
+pub use from_row::{FromCell, FromRow};
+#[cfg(feature = "sql-engine")]
+pub use sqlbuilder_macros::FromRow;
 
 /// A SQL statement with named placeholders and the values (or sub-fragments)
 /// bound to those names. Construct via the [`sql!`] macro.

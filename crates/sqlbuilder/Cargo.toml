@@ -5,10 +5,13 @@ edition = "2021"
 
 [features]
 default = []
-# Bind impls for `sql_engine::storage::Uuid`. Enable this when driving the
-# in-repo SQL engine; pure consumers of the DSL leave it off.
-sql-engine = ["dep:sql-engine"]
+# Bind impls for `sql_engine::storage::Uuid` plus inherent runners on
+# `SqlStmt` that drive the in-repo `Database`. Pure consumers of the DSL
+# leave it off.
+sql-engine = ["dep:sql-engine", "dep:database", "dep:sync"]
 
 [dependencies]
 sqlbuilder-macros = { path = "../sqlbuilder-macros" }
 sql-engine = { path = "../sql-engine", optional = true }
+database = { path = "../database", optional = true }
+sync = { path = "../sync", optional = true }
