@@ -31,10 +31,10 @@ sync-dev: sync-types
 	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run dev
 
 invoice-types:
-	cargo test -p invoice-demo-commands -- --test-threads=1
+	cargo test -p invoice-demo-features -- --test-threads=1
 	mkdir -p examples/invoice-demo/frontend/src/generated
 	rm -f examples/invoice-demo/frontend/src/generated/*.ts
-	for f in examples/invoice-demo/commands/bindings/*.ts; do \
+	for f in examples/invoice-demo/features/bindings/*.ts; do \
 	  sed 's/: bigint/: number/g; s/Array<bigint>/Array<number>/g' "$$f" \
 	    > "examples/invoice-demo/frontend/src/generated/$$(basename $$f)"; \
 	done
