@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitStr, Token};
@@ -84,6 +84,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
     // access. Plain idents take the same path (Ident is a valid Expr).
     let mut seen = HashSet::new();
     let mut part_inits: Vec<TokenStream> = Vec::new();
+    let mut sidecar_exprs: Vec<TokenStream> = Vec::new();
     for name in &placeholders {
         if !seen.insert(name.clone()) {
             continue;
@@ -102,6 +103,7 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
             })?;
             quote! { #parsed }
         };
+        sidecar_exprs.push(value_expr.clone());
         part_inits.push(quote! {
             (
                 ::std::string::String::from(#name),
@@ -110,18 +112,32 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         });
     }
 
+    // Sidecar: dead code (the closure is never called) referencing each
+    // bound expression by borrow. Gives rust-analyzer a real syntactic site
+    // to resolve `self.id` / `o.inner.value` against — enabling Goto, Hover,
+    // Find Usages, and silencing spurious "field never read" warnings.
+    // `quote_spanned!` puts compile errors near the SQL string literal.
+    let sidecar = quote_spanned! { sql.span() =>
+        let _sqlbuilder_sidecar = || {
+            #( let _ = &(#sidecar_exprs); )*
+        };
+    };
+
     let count = part_inits.len();
     Ok(quote! {
-        ::sqlbuilder::SqlStmt {
-            sql: ::std::string::String::from(#sql_text),
-            parts: {
-                let mut __v: ::std::vec::Vec<(
-                    ::std::string::String,
-                    ::sqlbuilder::SqlPart,
-                )> = ::std::vec::Vec::with_capacity(#count);
-                #( __v.push(#part_inits); )*
-                __v
-            },
+        {
+            #sidecar
+            ::sqlbuilder::SqlStmt {
+                sql: ::std::string::String::from(#sql_text),
+                parts: {
+                    let mut __v: ::std::vec::Vec<(
+                        ::std::string::String,
+                        ::sqlbuilder::SqlPart,
+                    )> = ::std::vec::Vec::with_capacity(#count);
+                    #( __v.push(#part_inits); )*
+                    __v
+                },
+            }
         }
     })
 }
