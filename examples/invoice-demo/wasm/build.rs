@@ -1,6 +1,6 @@
 //! Generate client-side Row + Fetcher + call-wrapper + wasm bindings
-//! from the sibling `tables-storage` crate's `#[row]` / `#[query]`
-//! declarations. See `tables-codegen`.
+//! from the sibling `features` crate's `#[row]` / `#[query]` declarations.
+//! See `tables-codegen`.
 
 fn main() {
     tables_codegen::Builder::new()

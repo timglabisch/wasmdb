@@ -10,10 +10,23 @@ crate-type = ["cdylib"]
 # requirements, query/exec wasm-bindgen exports, debug toolbar) lives
 # in `sync-client::wasm`. The macro `define_wasm_api!` expands here and
 # only references `wasm_bindgen`, `js_sys`, `database`, and `sync_client`.
+# Client-side row/fetcher/wasm-binding code is generated in `build.rs`
+# from the sibling `features` crate's `#[row]` / `#[query]` declarations.
 [dependencies]
 sync-client = { workspace = true }
 database = { workspace = true, features = ["borsh", "serde"] }
 invoice-demo-features = { path = "../features" }
-invoice-demo-tables-client-generated = { path = "../tables-client-generated" }
+tables = { workspace = true }
+tables-client = { workspace = true }
+sql-engine = { workspace = true }
+sql-parser = { workspace = true }
+requirements = { workspace = true }
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+
+[build-dependencies]
+tables-codegen = { workspace = true }

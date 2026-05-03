@@ -7,7 +7,12 @@
 mod app {
     use database::Database;
     use invoice_demo_features::InvoiceCommand;
-    use invoice_demo_tables_client_generated::{
+
+    mod generated {
+        include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+    }
+
+    use generated::{
         activity_log::activity_log_client::ActivityLogEntry,
         contacts::contact_client::Contact,
         customers::customer_client::Customer,

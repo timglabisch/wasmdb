@@ -43,7 +43,6 @@ members = [
     "examples/sync-demo/wasm",
     "examples/invoice-demo/server",
     "examples/invoice-demo/wasm",
-    "examples/invoice-demo/tables-client-generated",
     "examples/invoice-demo/features",
 ]
 resolver = "2"

@@ -1012,32 +1012,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "invoice-demo-tables-client-generated"
+name = "invoice-demo-wasm"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "database",
+ "invoice-demo-features",
+ "js-sys",
  "requirements",
  "serde",
  "serde-wasm-bindgen",
  "sql-engine",
  "sql-parser",
+ "sync-client",
  "tables",
  "tables-client",
  "tables-codegen",
  "wasm-bindgen",
  "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "invoice-demo-wasm"
-version = "0.1.0"
-dependencies = [
- "database",
- "invoice-demo-features",
- "invoice-demo-tables-client-generated",
- "js-sys",
- "sync-client",
- "wasm-bindgen",
 ]
 
 [[package]]

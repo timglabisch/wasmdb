@@ -46,7 +46,7 @@ thread_local! {
 /// app's reactive database — typically `with_client::<C, _>(|c|
 /// c.db_mut().apply_zset(zset).map_err(|e| e.to_string()))`. The
 /// `register_fn` is the codegen-emitted `register_all_requirements`
-/// function from the app's tables-client-generated crate.
+/// function from the app's tables-codegen build.rs output.
 pub fn install_requirements<ApplyFn, RegisterFn>(
     apply_zset: ApplyFn,
     register_fn: RegisterFn,

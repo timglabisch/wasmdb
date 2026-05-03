@@ -34,10 +34,10 @@ invoice-types:
 	mkdir -p examples/invoice-demo/frontend/src/generated
 	rm -f examples/invoice-demo/frontend/src/generated/*.ts
 	cargo test -p invoice-demo-features -- --test-threads=1
-	# requirements.ts wird von der build.rs von invoice-demo-tables-client-generated emittiert.
+	# requirements.ts wird von der build.rs des wasm-Crates emittiert.
 	# Nach dem Wipe oben fehlt sie — touch zwingt cargo, das Build-Script beim
 	# nächsten wasm-pack-Lauf erneut auszuführen und die Datei neu zu schreiben.
-	touch examples/invoice-demo/tables-client-generated/build.rs
+	touch examples/invoice-demo/wasm/build.rs
 
 invoice: invoice-types kill-invoice
 	wasm-pack build examples/invoice-demo/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server
