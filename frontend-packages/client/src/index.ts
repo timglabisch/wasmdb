@@ -199,6 +199,50 @@ export function executeOnStream<C = unknown>(streamId: number, cmd: C): Executio
   return wasm().execute_on_stream(streamId, JSON.stringify(cmd));
 }
 
+// ── App factory ───────────────────────────────────────────────────
+
+/**
+ * Per-app wiring helper. Given the wasm-pack module's default export
+ * (`initWasm`, the bytes loader) and namespace import (`wasmMod`, the
+ * exported wasm-bindgen functions including `init()`), returns the typed
+ * wrappers an app actually uses.
+ *
+ * This replaces the per-app `wasm.ts` boilerplate: bootstrap, provideWasm,
+ * typed `execute`/`executeOnStream`, and one-shot `peekQuery` helpers
+ * collapse to one factory call. App-specific code (e.g. `setDebugWasm`)
+ * goes through `opts.onReady`.
+ */
+export function createWasmApp<TCommand>(
+  initWasm: () => Promise<unknown>,
+  wasmMod: WasmSyncApi & { init: () => void },
+  opts?: { onReady?: (mod: WasmSyncApi) => void },
+): {
+  useWasm: () => boolean;
+  execute: (cmd: TCommand) => Execution;
+  executeOnStream: (streamId: number, cmd: TCommand) => Execution;
+  peekQuery: (sql: string, params?: QueryParams) => any[][];
+  peekQueryAsync: (sql: string, params?: QueryParams) => Promise<any[][]>;
+} {
+  return {
+    useWasm: () =>
+      useWasm(async () => {
+        await initWasm();
+        wasmMod.init();
+        provideWasm(wasmMod);
+        opts?.onReady?.(wasmMod);
+      }),
+    execute: (cmd) => execute(cmd),
+    executeOnStream: (streamId, cmd) => executeOnStream(streamId, cmd),
+    peekQuery: (sql, params) => wasmMod.query(sql, params),
+    peekQueryAsync: (sql, params) => {
+      if (!wasmMod.query_async) {
+        throw new Error('@wasmdb/client: peekQueryAsync requires `query_async` on the wasm module');
+      }
+      return wasmMod.query_async(sql, params);
+    },
+  };
+}
+
 export function createStream(batchCount: number = 1, batchWaitMs: number = 0, retryCount: number = 0): number {
   return wasm().create_stream(batchCount, batchWaitMs, retryCount);
 }
