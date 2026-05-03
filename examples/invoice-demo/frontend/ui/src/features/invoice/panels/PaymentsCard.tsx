@@ -13,7 +13,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/sonner';
-import { execute, useQuery, nextId } from '@/wasm';
+import { useQuery, nextId } from '@wasmdb/client';
+import { execute } from '@/commands';
 import { createPayment, deletePayment } from '@/generated/InvoiceCommandFactories';
 import { formatEuro, formatDateISO } from '@/shared/lib/format';
 import { useInvoiceGrossCents } from '@/shared/lib/gross';

@@ -3,7 +3,9 @@ import { Link, useNavigate } from '@tanstack/react-router';
 import {
   MoreHorizontal, Play, Search, Trash2, ExternalLink, RefreshCw,
 } from 'lucide-react';
-import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { useQuery, useRequirements, createStream, flushStream } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
+import { requirements } from '@/generated/requirements';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { Button } from '@/components/ui/button';

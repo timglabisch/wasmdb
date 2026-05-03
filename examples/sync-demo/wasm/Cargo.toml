@@ -6,23 +6,14 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+# Surface is intentionally minimal: state, streams, query/exec/debug
+# wasm-bindgen exports all live in `sync-client::wasm`. The
+# `define_wasm_api!` macro expands here and references only
+# `wasm_bindgen`, `database`, and `sync_client`.
 [dependencies]
-sync = { workspace = true, features = ["serde"] }
 sync-client = { workspace = true }
 sync-demo-commands = { path = "../commands" }
 database = { workspace = true, features = ["borsh", "serde"] }
-database-reactive = { workspace = true, features = ["borsh", "serde"] }
-sql-engine = { workspace = true, features = ["borsh", "serde", "wasm-timing"] }
-sql-parser = { workspace = true }
-wasmdb-debug = { workspace = true }
-borsh = { version = "1", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde-wasm-bindgen = "0.6"
+sql-engine = { workspace = true, features = ["borsh", "serde"] }
 wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = [
-    "Request", "RequestInit", "Response", "Headers", "Window",
-    "console",
-] }

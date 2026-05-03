@@ -13,7 +13,7 @@ import {
   computePaymentStatus, isOverdue,
 } from '@/shared/lib/status';
 import { formatDateISO, formatEuro } from '@/shared/lib/format';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { computeGrossCents } from '@/shared/lib/gross';
 import { duplicateInvoice } from '@/features/invoice/actions/duplicateInvoice';
 import { deleteInvoiceWithConfirm } from '@/features/invoice/actions/deleteInvoiceWithConfirm';

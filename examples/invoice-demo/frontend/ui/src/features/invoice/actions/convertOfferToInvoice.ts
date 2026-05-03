@@ -1,4 +1,5 @@
-import { executeOnStream, createStream, flushStream } from '../../../wasm.ts';
+import { createStream, flushStream } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { toast } from '@/components/ui/sonner';
 import { convertOfferToInvoice as convertCmd } from '../../../generated/InvoiceCommandFactories.ts';
 

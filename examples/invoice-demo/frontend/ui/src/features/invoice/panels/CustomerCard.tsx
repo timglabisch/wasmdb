@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/components/ui/sonner';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { assignCustomer } from '@/features/invoice/actions/assignCustomer';
 
 interface InvoiceFk { customer_id: string | null }

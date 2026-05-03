@@ -1,4 +1,5 @@
-import { executeOnStream, createStream, flushStream, nextId, peekQuery } from '../../../wasm.ts';
+import { createStream, flushStream, nextId, peekQuery } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { createCreditNote as createCreditNoteCmd } from '../../../generated/InvoiceCommandFactories.ts';
 import { isoDate } from './isoDate.ts';
 

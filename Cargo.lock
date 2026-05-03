@@ -2389,22 +2389,12 @@ dependencies = [
 name = "sync-demo-wasm"
 version = "0.1.0"
 dependencies = [
- "borsh",
  "database",
- "database-reactive",
  "js-sys",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
  "sql-engine",
- "sql-parser",
- "sync",
  "sync-client",
  "sync-demo-commands",
  "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasmdb-debug",
- "web-sys",
 ]
 
 [[package]]

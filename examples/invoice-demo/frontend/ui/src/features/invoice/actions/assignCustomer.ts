@@ -1,4 +1,5 @@
-import { executeOnStream, createStream, flushStream, peekQuery } from '../../../wasm.ts';
+import { createStream, flushStream, peekQuery } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { assignCustomer as assignCustomerCmd } from '../../../generated/InvoiceCommandFactories.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
 import { isoDate } from './isoDate.ts';

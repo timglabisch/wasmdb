@@ -19,7 +19,7 @@ import {
   Trash2,
   User,
 } from 'lucide-react';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { Badge } from '@/components/ui/badge';
 import type { BadgeProps } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';

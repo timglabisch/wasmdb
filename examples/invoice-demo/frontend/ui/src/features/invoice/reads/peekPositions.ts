@@ -1,5 +1,4 @@
-import { peekQuery } from '../../../wasm.ts';
-
+import { peekQuery } from '@wasmdb/client';
 export interface ActionPosition {
   position_nr: number;
   description: string;

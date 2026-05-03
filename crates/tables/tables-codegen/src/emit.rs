@@ -722,15 +722,6 @@ fn emit_arg_bindings(
         .collect()
 }
 
-fn wrap_in_mods(path: &[String], prelude: TokenStream, content: TokenStream) -> TokenStream {
-    let mut ts = quote! { #prelude #content };
-    for name in path.iter().rev() {
-        let ident = format_ident!("{name}");
-        ts = quote! { pub mod #ident { #ts } };
-    }
-    ts
-}
-
 /// Path to a generated module, relative to the `include!` root.
 fn module_path_tokens(path: &[String]) -> TokenStream {
     let idents: Vec<_> = path.iter().map(|s| format_ident!("{s}")).collect();

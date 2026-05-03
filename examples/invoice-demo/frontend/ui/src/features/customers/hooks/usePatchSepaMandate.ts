@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { execute } from '@/wasm';
+import { execute } from '@/commands';
 import { updateSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { peekSepaMandate } from '../reads/peekCustomer';
 import type { SepaMandateWithoutPk } from '@/generated/tables/SepaMandate';

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Link } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';

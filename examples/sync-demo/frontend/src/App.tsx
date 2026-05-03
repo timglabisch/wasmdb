@@ -1,4 +1,4 @@
-import { useWasm } from './sync.ts';
+import { useWasm } from '@wasmdb/client';
 import StatsBar from './StatsBar.tsx';
 import UsersPanel from './UsersPanel.tsx';
 import OrdersPanel from './OrdersPanel.tsx';

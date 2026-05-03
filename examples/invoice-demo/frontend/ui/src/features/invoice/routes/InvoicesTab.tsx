@@ -9,7 +9,8 @@ import {
 import {
   Table, TableBody, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { useQuery, requirements } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
+import { requirements } from '@/generated/requirements';
 import { DOC_TYPE_LABEL, STATUS_LABEL } from '@/shared/lib/status';
 import { InvoiceListRow } from '@/features/invoice/components/InvoiceListRow';
 import { NewInvoiceDialog } from '@/features/invoice/components/NewInvoiceDialog';

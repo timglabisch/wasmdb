@@ -8,7 +8,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { toast } from '@/components/ui/sonner';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { markSent } from '@/features/invoice/actions/markSent';
 import { markPaid } from '@/features/invoice/actions/markPaid';
 import { convertOfferToInvoice } from '@/features/invoice/actions/convertOfferToInvoice';

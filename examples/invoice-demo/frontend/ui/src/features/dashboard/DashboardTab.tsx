@@ -7,7 +7,8 @@ import {
   Wallet,
   Coins,
 } from 'lucide-react';
-import { useQuery, useRequirements, requirements } from '@/wasm';
+import { useQuery, useRequirements } from '@wasmdb/client';
+import { requirements } from '@/generated/requirements';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { formatEuro } from '@/shared/lib/format';

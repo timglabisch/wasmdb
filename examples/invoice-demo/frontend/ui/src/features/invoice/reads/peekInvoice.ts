@@ -1,4 +1,4 @@
-import { peekQuery } from '../../../wasm.ts';
+import { peekQuery } from '@wasmdb/client';
 import type { InvoiceWithoutPk } from '@/generated/tables/Invoice';
 
 const rowToInvoice = (r: any[]): InvoiceWithoutPk => ({

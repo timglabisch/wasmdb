@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { execute } from '@/wasm';
+import { execute } from '@/commands';
 import { updateProduct } from '@/generated/InvoiceCommandFactories';
 import { peekProduct } from '../reads/peekProduct';
 import type { ProductWithoutPk } from '@/generated/tables/Product';

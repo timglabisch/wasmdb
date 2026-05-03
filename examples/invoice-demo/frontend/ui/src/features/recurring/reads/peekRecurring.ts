@@ -1,4 +1,4 @@
-import { peekQuery } from '@/wasm';
+import { peekQuery } from '@wasmdb/client';
 import type { RecurringInvoiceWithoutPk } from '@/generated/tables/RecurringInvoice';
 
 const rowToRecurring = (r: any[]): RecurringInvoiceWithoutPk => ({

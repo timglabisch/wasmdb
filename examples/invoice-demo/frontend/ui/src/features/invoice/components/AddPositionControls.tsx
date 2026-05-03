@@ -6,7 +6,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { execute, useQuery, nextId } from '@/wasm';
+import { useQuery, nextId } from '@wasmdb/client';
+import { execute } from '@/commands';
 import { addPosition } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';
 

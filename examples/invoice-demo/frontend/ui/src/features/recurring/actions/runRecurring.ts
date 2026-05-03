@@ -1,6 +1,5 @@
-import {
-  executeOnStream, createStream, flushStream, nextId, peekQuery,
-} from '@/wasm';
+import { createStream, flushStream, nextId, peekQuery } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { runRecurringOnce } from '@/generated/InvoiceCommandFactories';
 import { advanceDate } from '../lib/interval';
 

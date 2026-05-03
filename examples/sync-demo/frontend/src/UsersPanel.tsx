@@ -1,6 +1,6 @@
 import { useState, useCallback, memo, type FormEvent } from 'react';
-import { useQuery, useQueryConfirmed, execute, nextId } from './sync.ts';
-
+import { useQuery, useQueryConfirmed } from '@wasmdb/client';
+import { execute, nextId } from './commands.ts';
 interface UserRow {
   id: number;
   name: string;

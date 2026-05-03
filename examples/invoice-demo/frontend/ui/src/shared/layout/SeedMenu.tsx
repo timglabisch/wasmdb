@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
+import { createStream, flushStream, nextId } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import {
   createProduct,
   createCustomer,

@@ -1,5 +1,4 @@
-import { useQuery } from './sync.ts';
-
+import { useQuery } from '@wasmdb/client';
 export default function StatsBar() {
   const userCount = useQuery(
     "SELECT reactive(users.id), COUNT(users.id) FROM users",

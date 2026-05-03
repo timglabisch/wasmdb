@@ -1,4 +1,4 @@
-import { peekQuery } from '@/wasm';
+import { peekQuery } from '@wasmdb/client';
 import type { CustomerWithoutPk } from '@/generated/tables/Customer';
 import type { ContactWithoutPk } from '@/generated/tables/Contact';
 import type { SepaMandateWithoutPk } from '@/generated/tables/SepaMandate';

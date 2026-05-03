@@ -1,5 +1,4 @@
-import { useQuery } from '@/wasm';
-
+import { useQuery } from '@wasmdb/client';
 /**
  * Reactive existence check. Using a single-column subscription instead of the
  * full-row subscription means the detail shell only re-renders when the row

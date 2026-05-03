@@ -6,7 +6,8 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { BlurInput, BlurNumberInput } from '@/components/form';
-import { execute, useQuery, nextId } from '@/wasm';
+import { useQuery, nextId } from '@wasmdb/client';
+import { execute } from '@/commands';
 import { addPosition, updatePosition, deletePosition } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';
 import {

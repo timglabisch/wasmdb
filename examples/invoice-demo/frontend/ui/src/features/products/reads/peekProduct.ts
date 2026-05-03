@@ -1,4 +1,4 @@
-import { peekQuery } from '@/wasm';
+import { peekQuery } from '@wasmdb/client';
 import type { ProductWithoutPk } from '@/generated/tables/Product';
 
 const rowToProduct = (r: any[]): ProductWithoutPk => ({

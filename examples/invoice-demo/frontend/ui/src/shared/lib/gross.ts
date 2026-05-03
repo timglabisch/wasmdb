@@ -1,5 +1,4 @@
-import { useQuery } from '../../wasm.ts';
-
+import { useQuery } from '@wasmdb/client';
 export interface GrossPosition {
   quantity: number;
   unit_price: number;

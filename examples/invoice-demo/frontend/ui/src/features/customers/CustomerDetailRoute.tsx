@@ -20,9 +20,9 @@ import { PageBody, PageHeader } from '@/shared/layout/AppShell';
 import {
   BlurInput, BlurNumberInput, BlurSelect, BlurTextarea, Field,
 } from '@/components/form';
-import {
-  createStream, execute, executeOnStream, flushStream, useQuery, useRequirements, requirements,
-} from '@/wasm';
+import { createStream, flushStream, useQuery, useRequirements } from '@wasmdb/client';
+import { execute, executeOnStream } from '@/commands';
+import { requirements } from '@/generated/requirements';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade, deleteContact, deleteSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { formatDateISO, formatEuro } from '@/shared/lib/format';

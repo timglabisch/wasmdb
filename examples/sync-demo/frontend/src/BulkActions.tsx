@@ -1,5 +1,5 @@
-import { useQuery, execute, executeOnStream, createStream, flushStream, nextId } from './sync.ts';
-
+import { useQuery, createStream, flushStream } from '@wasmdb/client';
+import { execute, executeOnStream, nextId } from './commands.ts';
 export default function BulkActions() {
   const userIds = useQuery("SELECT reactive(users.id), users.id FROM users", ([_r, id]) => id as number);
   const orderIds = useQuery("SELECT reactive(orders.id), orders.id FROM orders", ([_r, id]) => id as number);

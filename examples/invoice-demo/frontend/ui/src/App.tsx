@@ -1,5 +1,5 @@
 import { RouterProvider } from '@tanstack/react-router';
-import { useWasm } from '@/wasm';
+import { useWasm } from '@wasmdb/client';
 import { router } from '@/router';
 import { Skeleton } from '@/components/ui/skeleton';
 

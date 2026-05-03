@@ -14,7 +14,7 @@ pub use api::{columns_to_rows, js_to_param_value, js_to_params, make_manual_prom
 pub use exec::{
     create_stream_for, execute_for, execute_on_stream_for, flush_stream_for, init_for,
 };
-pub use req_bindings::install_requirements;
+pub use req_bindings::{install_requirements, no_register_requirements};
 pub use state::{install_client, with_client, with_client_dyn, DynClient};
 
 /// Generate the `#[wasm_bindgen]` exports that depend on the app's
@@ -48,6 +48,16 @@ pub use state::{install_client, with_client, with_client_dyn, DynClient};
 /// ```
 #[macro_export]
 macro_rules! define_wasm_api {
+    (
+        command = $cmd:ty,
+        setup_db = $setup_db:path $(,)?
+    ) => {
+        $crate::define_wasm_api!(
+            command = $cmd,
+            setup_db = $setup_db,
+            register_requirements = $crate::wasm::no_register_requirements,
+        );
+    };
     (
         command = $cmd:ty,
         setup_db = $setup_db:path,

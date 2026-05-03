@@ -2,8 +2,7 @@ import {
   FilePlus, Send, CheckCircle2, Copy, FileMinus2, Ban, Trash2, Pencil, CircleDot,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useQuery } from '@/wasm';
-
+import { useQuery } from '@wasmdb/client';
 interface Entry {
   id: string;
   timestamp: string;

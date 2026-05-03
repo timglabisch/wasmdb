@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Field, BlurInput, BlurDateInput, BlurSelect } from '@/components/form';
 import { usePatchInvoice } from '@/features/invoice/hooks/usePatchInvoice';
-import { useQuery } from '@/wasm';
+import { useQuery } from '@wasmdb/client';
 import { DOC_TYPE_LABEL, STATUS_LABEL, isOverdue } from '@/shared/lib/status';
 
 const DOC_TYPE_OPTIONS = Object.entries(DOC_TYPE_LABEL).map(([value, label]) => ({ value, label }));

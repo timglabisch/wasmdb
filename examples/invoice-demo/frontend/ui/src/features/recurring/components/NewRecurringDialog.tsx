@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/select';
 import { Field } from '@/components/form';
 import { cn } from '@/lib/cn';
-import { useQuery, createStream, executeOnStream, flushStream, nextId } from '@/wasm';
+import { useQuery, createStream, flushStream, nextId } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { createRecurring } from '@/generated/InvoiceCommandFactories';
 import { INTERVAL_UNIT_OPTIONS } from '../lib/interval';
 

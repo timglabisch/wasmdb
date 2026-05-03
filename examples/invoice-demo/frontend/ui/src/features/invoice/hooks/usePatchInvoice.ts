@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { execute } from '../../../wasm.ts';
+import { execute } from '@/commands';
 import { updateInvoiceHeader } from '../../../generated/InvoiceCommandFactories.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
 import type { InvoiceWithoutPk } from '@/generated/tables/Invoice';

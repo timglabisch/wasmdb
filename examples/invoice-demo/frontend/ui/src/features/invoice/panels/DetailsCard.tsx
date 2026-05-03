@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import {
   Field, BlurInput, BlurNumberInput, BlurSelect, BlurTextarea,
 } from '@/components/form';
-import { useQuery, peekQuery } from '@/wasm';
+import { useQuery, peekQuery } from '@wasmdb/client';
 import { usePatchInvoice } from '@/features/invoice/hooks/usePatchInvoice';
 
 const METHOD_OPTIONS = [

@@ -1,4 +1,5 @@
-import { executeOnStream, createStream, flushStream, nextId } from '../../../wasm.ts';
+import { createStream, flushStream, nextId } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { storno } from '../../../generated/InvoiceCommandFactories.ts';
 import { peekInvoice } from '../reads/peekInvoice.ts';
 import { peekPositions } from '../reads/peekPositions.ts';

@@ -7,7 +7,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Field } from '@/components/form';
-import { createStream, executeOnStream, flushStream, nextId } from '@/wasm';
+import { createStream, flushStream, nextId } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
 import { createSepaMandate } from '@/generated/InvoiceCommandFactories';
 import { todayISO } from '../lib/util';
 

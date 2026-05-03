@@ -107,7 +107,6 @@ export interface UseQueryResult<T> {
 let wasmRef: WasmSyncApi | null = null;
 let wasmReady = false;
 const readyListeners = new Set<() => void>();
-let bootstrapping = false;
 
 /** Inject the wasm module. Call once after the bootstrap (wasm init) resolves. */
 export function provideWasm(wasm: WasmSyncApi): void {
@@ -199,48 +198,24 @@ export function executeOnStream<C = unknown>(streamId: number, cmd: C): Executio
   return wasm().execute_on_stream(streamId, JSON.stringify(cmd));
 }
 
-// ── App factory ───────────────────────────────────────────────────
+/**
+ * One-shot non-reactive read. Synchronous; throws if the SQL contains
+ * `schema.fn(...)` sources (use `peekQueryAsync` for those).
+ */
+export function peekQuery(sql: string, params?: QueryParams): any[][] {
+  return wasm().query(sql, params ?? null);
+}
 
 /**
- * Per-app wiring helper. Given the wasm-pack module's default export
- * (`initWasm`, the bytes loader) and namespace import (`wasmMod`, the
- * exported wasm-bindgen functions including `init()`), returns the typed
- * wrappers an app actually uses.
- *
- * This replaces the per-app `wasm.ts` boilerplate: bootstrap, provideWasm,
- * typed `execute`/`executeOnStream`, and one-shot `peekQuery` helpers
- * collapse to one factory call. App-specific code (e.g. `setDebugWasm`)
- * goes through `opts.onReady`.
+ * Async one-shot read — required when the SQL contains a `schema.fn(args)`
+ * source whose fetcher needs an HTTP roundtrip.
  */
-export function createWasmApp<TCommand>(
-  initWasm: () => Promise<unknown>,
-  wasmMod: WasmSyncApi & { init: () => void },
-  opts?: { onReady?: (mod: WasmSyncApi) => void },
-): {
-  useWasm: () => boolean;
-  execute: (cmd: TCommand) => Execution;
-  executeOnStream: (streamId: number, cmd: TCommand) => Execution;
-  peekQuery: (sql: string, params?: QueryParams) => any[][];
-  peekQueryAsync: (sql: string, params?: QueryParams) => Promise<any[][]>;
-} {
-  return {
-    useWasm: () =>
-      useWasm(async () => {
-        await initWasm();
-        wasmMod.init();
-        provideWasm(wasmMod);
-        opts?.onReady?.(wasmMod);
-      }),
-    execute: (cmd) => execute(cmd),
-    executeOnStream: (streamId, cmd) => executeOnStream(streamId, cmd),
-    peekQuery: (sql, params) => wasmMod.query(sql, params),
-    peekQueryAsync: (sql, params) => {
-      if (!wasmMod.query_async) {
-        throw new Error('@wasmdb/client: peekQueryAsync requires `query_async` on the wasm module');
-      }
-      return wasmMod.query_async(sql, params);
-    },
-  };
+export function peekQueryAsync(sql: string, params?: QueryParams): Promise<any[][]> {
+  const w = wasm();
+  if (!w.query_async) {
+    throw new Error('@wasmdb/client: peekQueryAsync requires `query_async` on the wasm module');
+  }
+  return w.query_async(sql, params ?? null);
 }
 
 export function createStream(batchCount: number = 1, batchWaitMs: number = 0, retryCount: number = 0): number {
@@ -266,11 +241,11 @@ export function nextId(): string {
 // ── React hooks ───────────────────────────────────────────────────
 
 /**
- * Boot wasm once per process. Pass an async `bootstrap` that: loads the wasm
- * module, runs its `init()`, and calls `provideWasm(...)`. On the first mount
- * this runs the bootstrap; subsequent mounts short-circuit.
+ * React hook returning the wasm-ready boolean. The boot itself is the
+ * app's responsibility — typically a tiny `await initWasm(); wasm.init();
+ * provideWasm(wasm); markReady();` block in `main.tsx`.
  */
-export function useWasm(bootstrap: () => Promise<void>): boolean {
+export function useWasm(): boolean {
   const [ready, setReady] = useState(wasmReady);
 
   useEffect(() => {
@@ -280,12 +255,6 @@ export function useWasm(bootstrap: () => Promise<void>): boolean {
     }
     const listener = () => setReady(true);
     readyListeners.add(listener);
-
-    if (!bootstrapping) {
-      bootstrapping = true;
-      bootstrap().then(markReady);
-    }
-
     return () => { readyListeners.delete(listener); };
   }, []);
 

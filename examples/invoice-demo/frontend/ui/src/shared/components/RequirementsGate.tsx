@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import type { RequirementState } from '@/wasm';
-
+import type { RequirementState } from '@wasmdb/client';
 interface Props {
   status: RequirementState;
   error?: string;

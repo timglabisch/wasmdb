@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Search, Activity as ActivityIcon, Inbox } from 'lucide-react';
-import { useQuery, useRequirements, requirements } from '@/wasm';
+import { useQuery, useRequirements } from '@wasmdb/client';
+import { requirements } from '@/generated/requirements';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { Card, CardContent } from '@/components/ui/card';

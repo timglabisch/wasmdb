@@ -18,7 +18,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { PageBody, PageHeader } from '@/shared/layout/AppShell';
-import { useQuery, useRequirements, createStream, executeOnStream, flushStream, requirements } from '@/wasm';
+import { useQuery, useRequirements, createStream, flushStream } from '@wasmdb/client';
+import { executeOnStream } from '@/commands';
+import { requirements } from '@/generated/requirements';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { deleteCustomerCascade } from '@/generated/InvoiceCommandFactories';
 import { formatEuro } from '@/shared/lib/format';

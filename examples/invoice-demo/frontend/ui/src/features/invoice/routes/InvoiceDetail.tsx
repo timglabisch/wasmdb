@@ -1,7 +1,8 @@
 import { memo } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { PageHeader, PageBody } from '@/shared/layout/AppShell';
-import { useQuery, useRequirements, requirements } from '@/wasm';
+import { useQuery, useRequirements } from '@wasmdb/client';
+import { requirements } from '@/generated/requirements';
 import { RequirementsGate } from '@/shared/components/RequirementsGate';
 import { InvoiceStatusBadge, DocTypeBadge } from '@/shared/lib/status';
 import { HeaderActions } from '@/features/invoice/components/HeaderActions';

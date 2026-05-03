@@ -11,11 +11,28 @@ use sync::zset::ZSet;
 #[serde(tag = "type")]
 #[ts(export)]
 pub enum UserCommand {
-    InsertUser { id: i64, name: String, age: i64 },
-    UpdateUser { id: i64, name: String, age: i64 },
-    DeleteUsers { ids: Vec<i64> },
-    InsertOrder { id: i64, user_id: i64, amount: i64, status: String },
-    DeleteOrders { ids: Vec<i64> },
+    InsertUser {
+        #[ts(type = "number")] id: i64,
+        name: String,
+        #[ts(type = "number")] age: i64,
+    },
+    UpdateUser {
+        #[ts(type = "number")] id: i64,
+        name: String,
+        #[ts(type = "number")] age: i64,
+    },
+    DeleteUsers {
+        #[ts(type = "number[]")] ids: Vec<i64>,
+    },
+    InsertOrder {
+        #[ts(type = "number")] id: i64,
+        #[ts(type = "number")] user_id: i64,
+        #[ts(type = "number")] amount: i64,
+        status: String,
+    },
+    DeleteOrders {
+        #[ts(type = "number[]")] ids: Vec<i64>,
+    },
 }
 
 fn to_param_value(v: Value) -> ParamValue {

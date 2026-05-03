@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { execute } from '@/wasm';
+import { execute } from '@/commands';
 import { updateRecurring } from '@/generated/InvoiceCommandFactories';
 import { peekRecurring } from '../reads/peekRecurring';
 import type { RecurringInvoiceWithoutPk } from '@/generated/tables/RecurringInvoice';

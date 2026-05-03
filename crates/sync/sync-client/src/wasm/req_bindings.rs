@@ -41,6 +41,14 @@ thread_local! {
     static REQ: RefCell<Option<ReqState>> = const { RefCell::new(None) };
 }
 
+/// No-op `register_fn` for apps that don't use the requirements
+/// pipeline. Pass this as `register_requirements = ...` in
+/// [`define_wasm_api!`], or omit `register_requirements` entirely.
+pub fn no_register_requirements(
+    _apply: Rc<dyn Fn(&ZSet) -> Result<(), String>>,
+    _registry: &mut RequirementRegistry,
+) {}
+
 /// Build the requirements runtime. The `apply_zset` callback takes a
 /// `ZSet` produced by the requirements pipeline and applies it to the
 /// app's reactive database — typically `with_client::<C, _>(|c|
