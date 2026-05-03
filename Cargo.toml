@@ -1,7 +1,7 @@
 [workspace]
 # Explicit member list — tried `crates/*/*` globs but they also match
-# non-crate subdirs (e.g. `crates/frontend/src`, `examples/*/sql`,
-# `examples/*/frontend`) which Cargo then errors on. Explicit is bulletproof.
+# non-crate subdirs (e.g. `crates/frontend/src`, `examples/*/server/sql`,
+# `examples/*/frontend/ui`) which Cargo then errors on. Explicit is bulletproof.
 members = [
     # Core query layer
     "crates/core/sql-parser",
@@ -42,8 +42,8 @@ members = [
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",
     "examples/invoice-demo/server",
-    "examples/invoice-demo/wasm",
-    "examples/invoice-demo/features",
+    "examples/invoice-demo/frontend/wasm",
+    "examples/invoice-demo/shared/domain",
 ]
 resolver = "2"
 

@@ -1,7 +1,7 @@
 .PHONY: clean sync sync-types sync-install sync-dev invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-sync kill-invoice
 
 INVOICE_COMPOSE := examples/invoice-demo/docker-compose.yml
-INVOICE_SCHEMA  := examples/invoice-demo/sql/001_init.sql
+INVOICE_SCHEMA  := examples/invoice-demo/server/sql/001_init.sql
 
 kill-sync:
 	@lsof -ti:3123 | xargs kill -9 2>/dev/null || true
@@ -13,8 +13,8 @@ clean:
 	cargo clean
 	rm -rf examples/sync-demo/frontend/dist
 	rm -rf examples/sync-demo/wasm/pkg
-	rm -rf examples/invoice-demo/frontend/dist
-	rm -rf examples/invoice-demo/wasm/pkg
+	rm -rf examples/invoice-demo/frontend/ui/dist
+	rm -rf examples/invoice-demo/frontend/wasm/pkg
 
 sync-types:
 	cargo test -p sync-demo-commands -- --test-threads=1
@@ -31,19 +31,19 @@ sync-dev: sync-types
 	wasm-pack build examples/sync-demo/wasm --target web --out-dir pkg && cd examples/sync-demo/frontend && npm run dev
 
 invoice-types:
-	mkdir -p examples/invoice-demo/frontend/src/generated
-	rm -f examples/invoice-demo/frontend/src/generated/*.ts
-	cargo test -p invoice-demo-features -- --test-threads=1
+	mkdir -p examples/invoice-demo/frontend/ui/src/generated
+	rm -f examples/invoice-demo/frontend/ui/src/generated/*.ts
+	cargo test -p invoice-demo-domain -- --test-threads=1
 	# requirements.ts wird von der build.rs des wasm-Crates emittiert.
 	# Nach dem Wipe oben fehlt sie — touch zwingt cargo, das Build-Script beim
 	# nächsten wasm-pack-Lauf erneut auszuführen und die Datei neu zu schreiben.
-	touch examples/invoice-demo/wasm/build.rs
+	touch examples/invoice-demo/frontend/wasm/build.rs
 
 invoice: invoice-types kill-invoice
-	wasm-pack build examples/invoice-demo/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server
+	wasm-pack build examples/invoice-demo/frontend/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend/ui && npm run build && cd ../../../.. && cargo run -p invoice-demo-server --bin server
 
 invoice-dev: invoice-types
-	wasm-pack build examples/invoice-demo/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend && npm run dev
+	wasm-pack build examples/invoice-demo/frontend/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend/ui && npm run dev
 
 invoice-dev-server: kill-invoice invoice-db
 	cargo run -p invoice-demo-server --bin server

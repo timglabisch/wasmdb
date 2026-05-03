@@ -3,7 +3,7 @@
 //!
 //! Marked `#[ignore]` because they require a running TiDB on
 //! `mysql://root:@127.0.0.1:4000/invoice_demo` with the schema from
-//! `examples/invoice-demo/sql/001_init.sql` applied.
+//! `examples/invoice-demo/server/sql/001_init.sql` applied.
 //!
 //! Run locally:  cargo test -p invoice-demo-server -- --ignored
 

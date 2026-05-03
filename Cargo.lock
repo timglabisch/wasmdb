@@ -969,7 +969,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "invoice-demo-features"
+name = "invoice-demo-domain"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -999,7 +999,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "borsh",
- "invoice-demo-features",
+ "invoice-demo-domain",
  "sea-orm",
  "sql-engine",
  "sqlx",
@@ -1017,7 +1017,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
- "invoice-demo-features",
+ "invoice-demo-domain",
  "js-sys",
  "requirements",
  "serde",

@@ -1,5 +1,5 @@
 [package]
-name = "invoice-demo-features"
+name = "invoice-demo-domain"
 version = "0.1.0"
 edition = "2021"
 

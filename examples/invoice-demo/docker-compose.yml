@@ -2,7 +2,7 @@
 #
 # Bring up:  docker compose -f examples/invoice-demo/docker-compose.yml up -d
 # Connect:   mysql -h 127.0.0.1 -P 4000 -u root
-# Init:      mysql -h 127.0.0.1 -P 4000 -u root < examples/invoice-demo/sql/001_init.sql
+# Init:      mysql -h 127.0.0.1 -P 4000 -u root < examples/invoice-demo/server/sql/001_init.sql
 # Tear down: docker compose -f examples/invoice-demo/docker-compose.yml down -v
 
 services:

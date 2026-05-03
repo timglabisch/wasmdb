@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 sync = { workspace = true }
 sync-server-mysql = { workspace = true }
-invoice-demo-features = { path = "../features", features = ["server"] }
+invoice-demo-domain = { path = "../shared/domain", features = ["server"] }
 tables = { workspace = true }
 tables-storage = { workspace = true }
 sql-engine = { workspace = true, features = ["borsh"] }

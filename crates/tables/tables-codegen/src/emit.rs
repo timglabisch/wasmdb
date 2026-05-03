@@ -102,11 +102,39 @@ pub fn emit_client(
         quote! {}
     };
     let register_all = emit_register_all_requirements(model, url, &row_index)?;
+    let register_tables = emit_register_all_tables(model);
     Ok(quote! {
         #modules
         #wasm
         #register_all
+        #register_tables
     })
+}
+
+/// Emit a single top-level `register_all_tables` fn that registers every
+/// codegen-emitted Row with a `database::Database`. Saves the embedder
+/// from listing each row by hand in a `setup_db` function.
+fn emit_register_all_tables(model: &Model) -> TokenStream {
+    let mut blocks = Vec::new();
+    for module in &model.modules {
+        let mod_path = module_path_tokens(&module.path);
+        for row in &module.rows {
+            let row_ty = format_ident!("{}", row.name);
+            blocks.push(quote! {
+                db.register_table::<#mod_path::#row_ty>()
+                    .expect(concat!(
+                        "register_table failed for ",
+                        stringify!(#mod_path::#row_ty),
+                    ));
+            });
+        }
+    }
+    quote! {
+        #[cfg(target_arch = "wasm32")]
+        pub fn register_all_tables(db: &mut ::database::Database) {
+            #(#blocks)*
+        }
+    }
 }
 
 pub fn emit_server(model: &Model, ctx_ty_str: &str) -> Result<TokenStream, CodegenError> {

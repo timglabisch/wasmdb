@@ -6,7 +6,7 @@
     "frontend-packages/*",
     "examples/sync-demo/frontend",
     "examples/sync-demo/wasm/pkg",
-    "examples/invoice-demo/frontend",
-    "examples/invoice-demo/wasm/pkg"
+    "examples/invoice-demo/frontend/ui",
+    "examples/invoice-demo/frontend/wasm/pkg"
   ]
 }

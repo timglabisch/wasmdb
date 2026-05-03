@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::routing::post;
-use invoice_demo_features::{register_all, AppCtx};
+use invoice_demo_domain::{register_all, AppCtx};
 use tables_storage::Registry;
 use tower_http::services::ServeDir;
 
@@ -32,7 +32,8 @@ pub async fn run() {
         ctx: AppCtx { pool, db },
     });
 
-    let static_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/dist");
+    let static_dir =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/ui/dist");
 
     let app = axum::Router::new()
         .route("/command", post(handler::handle_command))

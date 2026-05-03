@@ -9,7 +9,7 @@
 -- All queries against this schema MUST set `tenant_id` explicitly — the
 -- column has NO DEFAULT. The hardcoded value for the demo is `0`.
 --
--- Apply:   mysql -h 127.0.0.1 -P 4000 -u root < examples/invoice-demo/sql/001_init.sql
+-- Apply:   mysql -h 127.0.0.1 -P 4000 -u root < examples/invoice-demo/server/sql/001_init.sql
 
 CREATE DATABASE IF NOT EXISTS invoice_demo;
 USE invoice_demo;
