@@ -1,4 +1,4 @@
-import initWasm, * as wasm from '../wasm-pkg/invoice_demo_wasm';
+import initWasm, * as wasm from 'invoice-demo-wasm';
 import {
   useWasm as useWasmGeneric,
   provideWasm,

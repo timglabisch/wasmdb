@@ -12,9 +12,9 @@ kill-invoice:
 clean:
 	cargo clean
 	rm -rf examples/sync-demo/frontend/dist
-	rm -rf examples/sync-demo/frontend/wasm-pkg
+	rm -rf examples/sync-demo/wasm/pkg
 	rm -rf examples/invoice-demo/frontend/dist
-	rm -rf examples/invoice-demo/frontend/wasm-pkg
+	rm -rf examples/invoice-demo/wasm/pkg
 
 sync-types:
 	cargo test -p sync-demo-commands -- --test-threads=1
@@ -22,13 +22,13 @@ sync-types:
 	cp examples/sync-demo/commands/bindings/UserCommand.ts examples/sync-demo/frontend/src/generated/
 
 sync: sync-types kill-sync
-	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run build && cd ../../.. && cargo run -p sync-demo-server --bin server
+	wasm-pack build examples/sync-demo/wasm --target web --out-dir pkg && cd examples/sync-demo/frontend && npm run build && cd ../../.. && cargo run -p sync-demo-server --bin server
 
 sync-install:
 	npm install
 
 sync-dev: sync-types
-	wasm-pack build examples/sync-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/sync-demo/frontend && npm run dev
+	wasm-pack build examples/sync-demo/wasm --target web --out-dir pkg && cd examples/sync-demo/frontend && npm run dev
 
 invoice-types:
 	mkdir -p examples/invoice-demo/frontend/src/generated
@@ -40,10 +40,10 @@ invoice-types:
 	touch examples/invoice-demo/tables-client-generated/build.rs
 
 invoice: invoice-types kill-invoice
-	wasm-pack build examples/invoice-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server
+	wasm-pack build examples/invoice-demo/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend && npm run build && cd ../../.. && cargo run -p invoice-demo-server --bin server
 
 invoice-dev: invoice-types
-	wasm-pack build examples/invoice-demo/wasm --target web --out-dir ../frontend/wasm-pkg && cd examples/invoice-demo/frontend && npm run dev
+	wasm-pack build examples/invoice-demo/wasm --target web --out-dir pkg && cd examples/invoice-demo/frontend && npm run dev
 
 invoice-dev-server: kill-invoice invoice-db
 	cargo run -p invoice-demo-server --bin server

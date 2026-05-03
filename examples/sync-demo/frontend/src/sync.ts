@@ -1,4 +1,4 @@
-import initWasm, * as wasm from '../wasm-pkg/sync_demo_wasm';
+import initWasm, * as wasm from 'sync-demo-wasm';
 import {
   useWasm as useWasmGeneric,
   provideWasm,

@@ -1,0 +1,15 @@
+{
+  "name": "invoice-demo-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "invoice_demo_wasm_bg.wasm",
+    "invoice_demo_wasm.js",
+    "invoice_demo_wasm.d.ts"
+  ],
+  "main": "invoice_demo_wasm.js",
+  "types": "invoice_demo_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

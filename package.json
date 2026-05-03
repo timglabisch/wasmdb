@@ -5,6 +5,8 @@
   "workspaces": [
     "frontend-packages/*",
     "examples/sync-demo/frontend",
-    "examples/invoice-demo/frontend"
+    "examples/sync-demo/wasm/pkg",
+    "examples/invoice-demo/frontend",
+    "examples/invoice-demo/wasm/pkg"
   ]
 }

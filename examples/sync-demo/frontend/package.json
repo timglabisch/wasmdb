@@ -9,6 +9,7 @@
   "dependencies": {
     "@wasmdb/client": "*",
     "@wasmdb/debug-toolbar": "*",
+    "sync-demo-wasm": "*",
     "react": "^19",
     "react-dom": "^19"
   },

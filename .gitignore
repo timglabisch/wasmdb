@@ -2,3 +2,13 @@ target/
 node_modules/
 .idea/
 *.iml
+
+# Vite build output
+examples/*/frontend/dist/
+
+# wasm-pack output: keep package.json (workspace anchor), ignore artifacts.
+# wasm-pack also writes an inner pkg/.gitignore with `*` that takes precedence
+# over this rule, so package.json is force-added to the index (`git add -f`)
+# once. Subsequent rebuilds overwrite it with identical content (no diff).
+examples/*/wasm/pkg/*
+!examples/*/wasm/pkg/package.json
