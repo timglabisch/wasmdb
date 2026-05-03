@@ -5,22 +5,25 @@
 //! `RequirementKey` (the Derived created from `(sql, requires)`) and
 //! one JS callback; `on_changed` from the dispatcher fans state changes
 //! out to those callbacks.
+//!
+//! These four exports are non-generic over the app command type — the
+//! requirements store is only keyed by SQL+args and doesn't see `C` —
+//! so they live as direct `#[wasm_bindgen]` items in this library crate
+//! and are picked up automatically by the downstream cdylib build.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use invoice_demo_tables_client_generated::register_all_requirements;
 use requirements::{
     FetchError, RequirementKey, RequirementRegistry, RequirementStore, SlotState, SubscriberId,
 };
+use serde::{Deserialize, Serialize};
 use sql_engine::storage::ZSet;
 use sql_parser::ast::Value;
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use crate::req_dispatcher::WasmDispatcher;
-use crate::state::with_client;
+use crate::wasm::req_dispatcher::WasmDispatcher;
 
 struct ReqState {
     store: Rc<RefCell<RequirementStore>>,
@@ -38,17 +41,22 @@ thread_local! {
     static REQ: RefCell<Option<ReqState>> = const { RefCell::new(None) };
 }
 
-pub fn install_requirements() {
+/// Build the requirements runtime. The `apply_zset` callback takes a
+/// `ZSet` produced by the requirements pipeline and applies it to the
+/// app's reactive database — typically `with_client::<C, _>(|c|
+/// c.db_mut().apply_zset(zset).map_err(|e| e.to_string()))`. The
+/// `register_fn` is the codegen-emitted `register_all_requirements`
+/// function from the app's tables-client-generated crate.
+pub fn install_requirements<ApplyFn, RegisterFn>(
+    apply_zset: ApplyFn,
+    register_fn: RegisterFn,
+) where
+    ApplyFn: Fn(&ZSet) -> Result<(), String> + 'static,
+    RegisterFn: FnOnce(Rc<dyn Fn(&ZSet) -> Result<(), String>>, &mut RequirementRegistry),
+{
     let mut registry = RequirementRegistry::new();
-    let apply: Rc<dyn Fn(&ZSet) -> Result<(), String>> = Rc::new(|zset: &ZSet| {
-        with_client(|client| {
-            client
-                .db_mut()
-                .apply_zset(zset)
-                .map_err(|e| e.to_string())
-        })
-    });
-    register_all_requirements(apply, &mut registry);
+    let apply: Rc<dyn Fn(&ZSet) -> Result<(), String>> = Rc::new(apply_zset);
+    register_fn(apply, &mut registry);
 
     let store = Rc::new(RefCell::new(RequirementStore::new()));
     let subscribers: Rc<RefCell<HashMap<u64, SubscriberEntry>>> =
@@ -60,11 +68,8 @@ pub fn install_requirements() {
         let subscribers = subscribers.clone();
         let key_index = key_index.clone();
         Rc::new(move |key: &RequirementKey| {
-            let sub_ids: Vec<SubscriberId> = key_index
-                .borrow()
-                .get(key)
-                .cloned()
-                .unwrap_or_default();
+            let sub_ids: Vec<SubscriberId> =
+                key_index.borrow().get(key).cloned().unwrap_or_default();
             for sid in sub_ids {
                 let cb = subscribers
                     .borrow()
@@ -250,6 +255,9 @@ pub fn requirements_invalidate(key: String) {
     with_state(|state| {
         let mut dispatcher = state.dispatcher.borrow_mut();
         let req_key = RequirementKey::new(key);
-        state.store.borrow_mut().invalidate(&req_key, &mut *dispatcher);
+        state
+            .store
+            .borrow_mut()
+            .invalidate(&req_key, &mut *dispatcher);
     });
 }

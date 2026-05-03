@@ -1,3 +1,8 @@
+//! Per-stream batching/queue/flush/retry — generic over the app's command
+//! type. The thread-local `STREAM_HANDLES` is type-erased so non-generic
+//! callers can release/check stream state without naming `C`.
+
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -6,29 +11,29 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
-use invoice_demo_features::InvoiceCommand;
+use sync::command::Command;
 use sync::protocol::{BatchCommandRequest, BatchCommandResponse, CommandRequest, Verdict};
+use wasmdb_debug::DebugEvent;
 
-use crate::debug::{log_event, now_ms, DebugEvent};
-use crate::state::with_client;
+use crate::wasm::state::with_client;
 
-pub(crate) struct PendingFetch {
-    pub request: CommandRequest<InvoiceCommand>,
+pub struct PendingFetch<C: Command> {
+    pub request: CommandRequest<C>,
     pub resolve: js_sys::Function,
     pub reject: js_sys::Function,
 }
 
-pub(crate) struct StreamHandle {
+pub struct StreamHandle<C: Command> {
     pub batch_count: usize,
     pub batch_wait_ms: u32,
     pub retry_count: u32,
-    pub queue: Vec<PendingFetch>,
+    pub queue: Vec<PendingFetch<C>>,
     pub in_flight: bool,
     pub flush_waiters: Vec<js_sys::Function>,
     pub microtask_scheduled: bool,
 }
 
-impl StreamHandle {
+impl<C: Command> StreamHandle<C> {
     pub fn new(batch_count: usize, batch_wait_ms: u32, retry_count: u32) -> Self {
         Self {
             batch_count: batch_count.max(1),
@@ -43,7 +48,75 @@ impl StreamHandle {
 }
 
 thread_local! {
-    pub(crate) static STREAM_HANDLES: RefCell<HashMap<u64, StreamHandle>> = RefCell::new(HashMap::new());
+    /// Holds `RefCell<HashMap<u64, StreamHandle<C>>>` for the app's chosen
+    /// command type. Wrapped in `Box<dyn Any>` so the outer slot is non-
+    /// generic; downcast on each access. The inner `RefCell` lets nested
+    /// access patterns (drain → flush → finish_flush → drain again) borrow
+    /// independently, matching the original demo's behavior.
+    static STREAM_HANDLES: RefCell<Option<Box<dyn Any>>> = const { RefCell::new(None) };
+}
+
+pub fn install_streams<C: Command + 'static>() {
+    let map: HashMap<u64, StreamHandle<C>> = HashMap::new();
+    STREAM_HANDLES.with(|s| *s.borrow_mut() = Some(Box::new(RefCell::new(map))));
+}
+
+fn with_streams<C: Command + 'static, R>(
+    f: impl FnOnce(&mut HashMap<u64, StreamHandle<C>>) -> R,
+) -> R {
+    STREAM_HANDLES.with(|s| {
+        let borrow = s.borrow();
+        let any_box = borrow
+            .as_ref()
+            .expect("sync-client wasm: streams not installed — call init() first");
+        let cell: &RefCell<HashMap<u64, StreamHandle<C>>> = any_box
+            .downcast_ref()
+            .expect("sync-client wasm: stream type mismatch");
+        let mut map = cell.borrow_mut();
+        f(&mut *map)
+    })
+}
+
+pub fn install_handle<C: Command + 'static>(
+    stream_id: u64,
+    batch_count: usize,
+    batch_wait_ms: u32,
+    retry_count: u32,
+) {
+    with_streams::<C, _>(|map| {
+        map.insert(
+            stream_id,
+            StreamHandle::new(batch_count, batch_wait_ms, retry_count),
+        );
+    });
+}
+
+pub fn queue_fetch<C: Command + 'static>(stream_id: u64, item: PendingFetch<C>) {
+    with_streams::<C, _>(|map| {
+        let handle = map
+            .get_mut(&stream_id)
+            .expect("unknown stream — call create_stream() first");
+        handle.queue.push(item);
+    });
+}
+
+pub fn is_done<C: Command + 'static>(stream_id: u64) -> bool {
+    with_streams::<C, _>(|map| {
+        map.get(&stream_id)
+            .map_or(true, |h| h.queue.is_empty() && !h.in_flight)
+    })
+}
+
+pub fn push_flush_waiter<C: Command + 'static>(stream_id: u64, resolve: js_sys::Function) {
+    with_streams::<C, _>(|map| {
+        if let Some(h) = map.get_mut(&stream_id) {
+            h.flush_waiters.push(resolve);
+        }
+    });
+}
+
+pub fn not_in_flight<C: Command + 'static>(stream_id: u64) -> bool {
+    with_streams::<C, _>(|map| map.get(&stream_id).map_or(true, |h| !h.in_flight))
 }
 
 enum DrainAction {
@@ -51,11 +124,9 @@ enum DrainAction {
     Schedule,
 }
 
-pub(crate) fn try_drain_queue(stream_id_val: u64) {
-    let action = STREAM_HANDLES.with(|sh| {
-        let sh = sh.borrow();
-        let handle = sh.get(&stream_id_val)?;
-
+pub fn try_drain_queue<C: Command + 'static>(stream_id_val: u64) {
+    let action = with_streams::<C, _>(|map| {
+        let handle = map.get(&stream_id_val)?;
         if handle.in_flight || handle.queue.is_empty() {
             return None;
         }
@@ -69,27 +140,28 @@ pub(crate) fn try_drain_queue(stream_id_val: u64) {
     });
 
     match action {
-        Some(DrainAction::FlushNow) => do_flush_stream(stream_id_val, false),
-        Some(DrainAction::Schedule) => schedule_flush(stream_id_val),
+        Some(DrainAction::FlushNow) => do_flush_stream::<C>(stream_id_val, false),
+        Some(DrainAction::Schedule) => schedule_flush::<C>(stream_id_val),
         None => {}
     }
 }
 
-fn schedule_flush(stream_id_val: u64) {
-    let wait_ms = STREAM_HANDLES.with(|sh| {
-        let mut sh = sh.borrow_mut();
-        let Some(h) = sh.get_mut(&stream_id_val) else { return 0 };
+fn schedule_flush<C: Command + 'static>(stream_id_val: u64) {
+    let wait_ms = with_streams::<C, _>(|map| {
+        let Some(h) = map.get_mut(&stream_id_val) else {
+            return 0;
+        };
         h.microtask_scheduled = true;
         h.batch_wait_ms
     });
 
     let run = move || {
-        STREAM_HANDLES.with(|sh| {
-            if let Some(h) = sh.borrow_mut().get_mut(&stream_id_val) {
+        with_streams::<C, _>(|map| {
+            if let Some(h) = map.get_mut(&stream_id_val) {
                 h.microtask_scheduled = false;
             }
         });
-        do_flush_stream(stream_id_val, false);
+        do_flush_stream::<C>(stream_id_val, false);
     };
 
     if wait_ms > 0 {
@@ -105,10 +177,9 @@ fn schedule_flush(stream_id_val: u64) {
     }
 }
 
-pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
-    let (items, retry_count) = STREAM_HANDLES.with(|sh| {
-        let mut sh = sh.borrow_mut();
-        let Some(handle) = sh.get_mut(&stream_id_val) else {
+pub fn do_flush_stream<C: Command + 'static>(stream_id_val: u64, take_all: bool) {
+    let (items, retry_count) = with_streams::<C, _>(|map| {
+        let Some(handle) = map.get_mut(&stream_id_val) else {
             return (Vec::new(), 0);
         };
         let count = if take_all {
@@ -116,13 +187,13 @@ pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
         } else {
             handle.batch_count.min(handle.queue.len())
         };
-        let items: Vec<PendingFetch> = handle.queue.drain(..count).collect();
+        let items: Vec<PendingFetch<C>> = handle.queue.drain(..count).collect();
         handle.in_flight = true;
         (items, handle.retry_count)
     });
 
     if items.is_empty() {
-        finish_flush(stream_id_val);
+        finish_flush::<C>(stream_id_val);
         return;
     }
 
@@ -136,12 +207,12 @@ pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
             for item in &items {
                 let _ = item.reject.call1(&JsValue::NULL, &err);
             }
-            finish_flush(stream_id_val);
+            finish_flush::<C>(stream_id_val);
             return;
         }
     };
 
-    log_event(DebugEvent::FetchStart {
+    wasmdb_debug::log_event(DebugEvent::FetchStart {
         timestamp_ms: now_ms(),
         stream_id: stream_id_val,
         request_bytes: batch_bytes.len(),
@@ -163,7 +234,7 @@ pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
         }
 
         let fetch_end = now_ms();
-        log_event(DebugEvent::FetchEnd {
+        wasmdb_debug::log_event(DebugEvent::FetchEnd {
             timestamp_ms: fetch_end,
             stream_id: stream_id_val,
             response_bytes: response_bytes.as_ref().map_or(0, |b| b.len()),
@@ -171,7 +242,7 @@ pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
         });
 
         match response_bytes {
-            Some(bytes) => process_batch_response(stream_id_val, bytes, &items),
+            Some(bytes) => process_batch_response::<C>(stream_id_val, bytes, &items),
             None => {
                 let err = last_err.unwrap_or_else(|| JsValue::from_str("fetch failed"));
                 for item in &items {
@@ -180,11 +251,15 @@ pub(crate) fn do_flush_stream(stream_id_val: u64, take_all: bool) {
             }
         }
 
-        finish_flush(stream_id_val);
+        finish_flush::<C>(stream_id_val);
     });
 }
 
-fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFetch]) {
+fn process_batch_response<C: Command + 'static>(
+    stream_id_val: u64,
+    bytes: Vec<u8>,
+    items: &[PendingFetch<C>],
+) {
     let batch_response: BatchCommandResponse = match borsh::from_slice(&bytes) {
         Ok(r) => r,
         Err(e) => {
@@ -196,7 +271,7 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
         }
     };
 
-    let first_reject = with_client(|client| {
+    let first_reject = with_client::<C, _>(|client| {
         let mut first_reject: Option<String> = None;
         for response in batch_response.responses {
             if let Verdict::Rejected { ref reason } = response.verdict {
@@ -212,7 +287,7 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
     let result = js_sys::Object::new();
     match &first_reject {
         Some(reason) => {
-            log_event(DebugEvent::Rejected {
+            wasmdb_debug::log_event(DebugEvent::Rejected {
                 timestamp_ms: now_ms(),
                 stream_id: stream_id_val,
                 reason: reason.clone(),
@@ -221,7 +296,7 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
             let _ = js_sys::Reflect::set(&result, &"reason".into(), &reason.clone().into());
         }
         None => {
-            log_event(DebugEvent::Confirmed {
+            wasmdb_debug::log_event(DebugEvent::Confirmed {
                 timestamp_ms: now_ms(),
                 stream_id: stream_id_val,
             });
@@ -234,10 +309,11 @@ fn process_batch_response(stream_id_val: u64, bytes: Vec<u8>, items: &[PendingFe
     }
 }
 
-fn finish_flush(stream_id_val: u64) {
-    let waiters = STREAM_HANDLES.with(|sh| {
-        let mut sh = sh.borrow_mut();
-        let Some(handle) = sh.get_mut(&stream_id_val) else { return Vec::new() };
+fn finish_flush<C: Command + 'static>(stream_id_val: u64) {
+    let waiters = with_streams::<C, _>(|map| {
+        let Some(handle) = map.get_mut(&stream_id_val) else {
+            return Vec::new();
+        };
         handle.in_flight = false;
         if handle.queue.is_empty() {
             handle.flush_waiters.drain(..).collect()
@@ -248,7 +324,7 @@ fn finish_flush(stream_id_val: u64) {
     for waiter in waiters {
         let _ = waiter.call0(&JsValue::NULL);
     }
-    try_drain_queue(stream_id_val);
+    try_drain_queue::<C>(stream_id_val);
 }
 
 async fn do_fetch(body: &[u8]) -> Result<Vec<u8>, JsValue> {
@@ -276,4 +352,8 @@ async fn do_fetch(body: &[u8]) -> Result<Vec<u8>, JsValue> {
     let buf = JsFuture::from(resp.array_buffer()?).await?;
     let uint8 = Uint8Array::new(&buf);
     Ok(uint8.to_vec())
+}
+
+pub fn now_ms() -> f64 {
+    js_sys::Date::now()
 }

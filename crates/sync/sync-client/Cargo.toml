@@ -4,8 +4,26 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sync = { workspace = true }
+sync = { workspace = true, features = ["serde"] }
 database = { workspace = true, features = ["borsh"] }
 database-reactive = { workspace = true, features = ["borsh"] }
 sql-engine = { workspace = true, features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }
+
+# Wasm-side surface lives behind cfg(target_arch = "wasm32"); these deps
+# only resolve for that target so non-wasm consumers stay slim.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+requirements = { workspace = true }
+wasmdb-debug = { workspace = true }
+sql-parser = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Request", "RequestInit", "Response", "Headers", "Window",
+    "console",
+] }
+futures = "0.3"

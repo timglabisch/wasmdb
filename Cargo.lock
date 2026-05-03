@@ -1032,25 +1032,12 @@ dependencies = [
 name = "invoice-demo-wasm"
 version = "0.1.0"
 dependencies = [
- "borsh",
  "database",
- "database-reactive",
- "futures",
  "invoice-demo-features",
  "invoice-demo-tables-client-generated",
  "js-sys",
- "requirements",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "sql-engine",
- "sql-parser",
- "sync",
  "sync-client",
  "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasmdb-debug",
- "web-sys",
 ]
 
 [[package]]
@@ -2363,8 +2350,19 @@ dependencies = [
  "borsh",
  "database",
  "database-reactive",
+ "futures",
+ "js-sys",
+ "requirements",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
  "sql-engine",
+ "sql-parser",
  "sync",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasmdb-debug",
+ "web-sys",
 ]
 
 [[package]]
