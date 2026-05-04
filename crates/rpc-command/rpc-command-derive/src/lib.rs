@@ -255,7 +255,7 @@ pub fn rpc_command_enum(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Convention: per-command + enum bindings land next to the
 /// `<EnumName>Factories.ts` bundle. Honors `RPC_COMMAND_TS_ROOT` (typically
 /// set via `cargo:rustc-env=` from the consuming crate's build script);
-/// otherwise falls back to `<CARGO_MANIFEST_DIR>/../../frontend/ui/src/generated/`.
+/// otherwise falls back to `<CARGO_MANIFEST_DIR>/../../frontend/packages/generated/src/`.
 /// Mirrors `rpc_command::ts_root()`. Path is computed at proc-macro expansion
 /// time and baked into each `#[ts(export_to = ...)]` attribute.
 fn ts_export_path_lit() -> LitStr {
@@ -264,7 +264,7 @@ fn ts_export_path_lit() -> LitStr {
     } else {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
             .expect("CARGO_MANIFEST_DIR — proc-macro runs under cargo");
-        format!("{manifest_dir}/../../frontend/ui/src/generated/")
+        format!("{manifest_dir}/../../frontend/packages/generated/src/")
     };
     LitStr::new(&path, proc_macro2::Span::call_site())
 }

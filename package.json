@@ -7,9 +7,16 @@
     "frontend-packages/*",
     "examples/sync-demo/frontend",
     "examples/sync-demo/wasm/pkg",
-    "examples/invoice-demo/frontend",
     "examples/invoice-demo/frontend/apps/ui",
     "examples/invoice-demo/frontend/apps/wasm/pkg",
     "examples/invoice-demo/frontend/packages/generated"
-  ]
+  ],
+  "devDependencies": {
+    "turbo": "^2"
+  },
+  "scripts": {
+    "build:invoice": "turbo run build --filter=invoice-demo-ui",
+    "dev:invoice": "turbo run dev --filter=invoice-demo-ui",
+    "typecheck:invoice": "turbo run typecheck --filter=invoice-demo-ui"
+  }
 }

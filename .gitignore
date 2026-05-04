@@ -9,6 +9,7 @@ examples/*/frontend/*/dist/
 examples/*/frontend/apps/*/dist/
 
 # turbo cache
+.turbo/
 examples/*/frontend/.turbo/
 examples/*/frontend/apps/*/.turbo/
 examples/*/frontend/packages/*/.turbo/

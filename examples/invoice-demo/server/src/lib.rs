@@ -33,7 +33,7 @@ pub async fn run() {
     });
 
     let static_dir =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/ui/dist");
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../frontend/apps/ui/dist");
 
     let app = axum::Router::new()
         .route("/command", post(handler::handle_command))

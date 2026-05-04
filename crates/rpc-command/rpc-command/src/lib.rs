@@ -98,9 +98,10 @@ fn write_factory(out: &mut String, enum_name: &str, spec: &StructSpec<'_>) {
 }
 
 /// Write the bundle file. Resolution of the output directory:
-/// 1. `RPC_COMMAND_TS_ROOT` env var (used by tests).
-/// 2. `<CARGO_MANIFEST_DIR>/../../frontend/ui/src/generated/` (demo convention,
-///    matching the `shared/domain` → `frontend/ui` relative depth).
+/// 1. `RPC_COMMAND_TS_ROOT` env var (set by the consuming crate's build.rs;
+///    invoice-demo points at `frontend/packages/generated/src`).
+/// 2. `<CARGO_MANIFEST_DIR>/../../frontend/packages/generated/src/` (legacy
+///    fallback if no env var is set).
 ///
 /// `bundle_name` is the filename (sans `.ts`); `enum_name` is the wire-format
 /// enum referenced inside the file (`import type { EnumName }` + `Extract<...>`).
@@ -123,5 +124,5 @@ fn ts_root() -> String {
     }
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR — rpc-command runs under cargo");
-    format!("{manifest_dir}/../../frontend/ui/src/generated")
+    format!("{manifest_dir}/../../frontend/packages/generated/src")
 }
