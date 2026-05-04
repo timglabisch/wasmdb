@@ -13,7 +13,7 @@ use crate::shared::DEMO_TENANT_ID;
 /// A position embedded in the Storno credit note (pre-negated quantity,
 /// pre-assigned ID). Idempotent: re-applying the command inserts the same rows.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Serialize, Deserialize, TS)]
-#[ts(export_to = "../../../frontend/ui/src/generated/")]
+#[ts(export_to = "../../../frontend/packages/generated/src/")]
 pub struct StornoPosition {
     #[ts(type = "string")]
     pub id: Uuid,

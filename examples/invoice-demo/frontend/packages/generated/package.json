@@ -1,0 +1,12 @@
+{
+  "name": "invoice-demo-generated",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "peerDependencies": {
+    "@wasmdb/client": "*"
+  }
+}

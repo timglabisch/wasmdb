@@ -3,16 +3,24 @@ node_modules/
 .idea/
 *.iml
 
-# Vite build output (sync-demo: frontend/dist; invoice-demo: frontend/ui/dist).
+# Vite build output (sync-demo: frontend/dist; invoice-demo: frontend/apps/ui/dist).
 examples/*/frontend/dist/
 examples/*/frontend/*/dist/
+examples/*/frontend/apps/*/dist/
+
+# turbo cache
+examples/*/frontend/.turbo/
+examples/*/frontend/apps/*/.turbo/
+examples/*/frontend/packages/*/.turbo/
 
 # wasm-pack output: keep package.json (workspace anchor), ignore artifacts.
 # wasm-pack also writes an inner pkg/.gitignore with `*` that takes precedence
 # over this rule, so package.json is force-added to the index (`git add -f`)
 # once. Subsequent rebuilds overwrite it with identical content (no diff).
-# sync-demo lives at wasm/pkg, invoice-demo at frontend/wasm/pkg.
+# sync-demo lives at wasm/pkg, invoice-demo at frontend/apps/wasm/pkg.
 examples/*/wasm/pkg/*
 !examples/*/wasm/pkg/package.json
 examples/*/frontend/wasm/pkg/*
 !examples/*/frontend/wasm/pkg/package.json
+examples/*/frontend/apps/wasm/pkg/*
+!examples/*/frontend/apps/wasm/pkg/package.json

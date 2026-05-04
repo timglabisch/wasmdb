@@ -1,0 +1,5 @@
+frontend/packages/generated/src/**
+!frontend/packages/generated/src/.gitkeep
+!frontend/packages/generated/src/tables
+frontend/packages/generated/src/tables/**
+!frontend/packages/generated/src/tables/.gitkeep

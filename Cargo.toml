@@ -42,7 +42,7 @@ members = [
     "examples/sync-demo/commands",
     "examples/sync-demo/wasm",
     "examples/invoice-demo/server",
-    "examples/invoice-demo/frontend/wasm",
+    "examples/invoice-demo/frontend/apps/wasm",
     "examples/invoice-demo/shared/domain",
 ]
 resolver = "2"

@@ -2,11 +2,14 @@
   "name": "wasmdb-root",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "npm@11.4.2",
   "workspaces": [
     "frontend-packages/*",
     "examples/sync-demo/frontend",
     "examples/sync-demo/wasm/pkg",
-    "examples/invoice-demo/frontend/ui",
-    "examples/invoice-demo/frontend/wasm/pkg"
+    "examples/invoice-demo/frontend",
+    "examples/invoice-demo/frontend/apps/ui",
+    "examples/invoice-demo/frontend/apps/wasm/pkg",
+    "examples/invoice-demo/frontend/packages/generated"
   ]
 }
