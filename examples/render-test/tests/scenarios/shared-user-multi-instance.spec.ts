@@ -15,7 +15,7 @@ const CAROL = '00000000-0000-0000-0000-0000000000cc';
  * of M1 (`@msg:M1`).
  */
 test('UpdateUserName(A) re-renders every UserBadge:A instance', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-multi-instance');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

@@ -12,7 +12,7 @@ const R3 = '00000000-0000-0000-0000-000000000033';
  * the row whose data changed — re-renders. R2/R3 stay quiet.
  */
 test('RenameRoom(R1, "Aaa…") re-orders list, only R1 row renders', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/room-reorder');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

@@ -9,7 +9,7 @@ const C1 = '00000000-0000-0000-0000-0000000000c1';
  * may re-render. Verifies cross-table reactivity isolation.
  */
 test('SetCounterValue(C1) leaves all unrelated components quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/counter-isolation');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

@@ -12,7 +12,7 @@ const R3 = '00000000-0000-0000-0000-000000000033';
  * changed" — the transfer-room spec covers the latter.
  */
 test('RenameRoom(R2) re-renders only RoomRow:R2, all UserBadges quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/room-rename');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

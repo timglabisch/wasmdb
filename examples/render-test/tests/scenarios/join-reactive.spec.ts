@@ -18,7 +18,7 @@ const R3 = '00000000-0000-0000-0000-000000000033';
  *     REACTIVE filters this assertion can tighten.
  */
 test('RenameRoom(R2) renders only join:R2', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/join-reactive');
   await waitForAppReady(page);
 
   await resetRenderLog(page);
@@ -34,7 +34,7 @@ test('RenameRoom(R2) renders only join:R2', async ({ page }) => {
 });
 
 test('UpdateUserName(A) re-fires all joins (users is table-wide reactive)', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/join-reactive');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

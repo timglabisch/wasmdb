@@ -12,7 +12,7 @@ const M2 = '00000000-0000-0000-0000-000000000fa2';
  * `<MessageList:R1>` itself re-renders (membership change).
  */
 test('AddMessage(R1, early) leaves seed MessageItems quiet, list renders', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-insert-middle');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

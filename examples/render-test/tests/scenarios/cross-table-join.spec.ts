@@ -11,7 +11,7 @@ const CAROL = '00000000-0000-0000-0000-0000000000cc';
  * NOT subscribe to `users`, so it must stay quiet.
  */
 test('UpdateUserName(A) re-renders all UserBadge:A instances, not RoomRow', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/room-cross-table');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

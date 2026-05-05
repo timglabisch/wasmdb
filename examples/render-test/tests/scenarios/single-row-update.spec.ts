@@ -13,7 +13,7 @@ const C4 = '00000000-0000-0000-0000-0000000000c4';
  * many times. Other counters must stay strictly at 0.
  */
 test('SetCounterValue(C1) re-renders only Counter:C1', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/counter-single-row');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

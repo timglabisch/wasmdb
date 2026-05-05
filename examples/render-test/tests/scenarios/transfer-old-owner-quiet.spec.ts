@@ -16,7 +16,7 @@ const R1 = '00000000-0000-0000-0000-000000000011';
  * quiet — they didn't change.
  */
 test('TransferRoom(R1, B) mounts UserBadge:B@room:R1 fresh, leaves A elsewhere quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/room-transfer-quiet');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

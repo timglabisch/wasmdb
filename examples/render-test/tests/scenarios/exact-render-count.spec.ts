@@ -11,7 +11,7 @@ const C1 = '00000000-0000-0000-0000-0000000000c1';
  * climbs to 3+ the reactivity pump or echo-apply changed.
  */
 test('SetCounterValue(C1) renders Counter:C1 exactly twice', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/counter-exact-count');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

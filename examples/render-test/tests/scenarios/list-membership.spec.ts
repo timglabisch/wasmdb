@@ -6,7 +6,7 @@ const R2 = '00000000-0000-0000-0000-000000000022';
 const R3 = '00000000-0000-0000-0000-000000000033';
 
 test('AddMessage(R1) re-renders MessageList:R1, leaves R2/R3 quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-list-membership');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

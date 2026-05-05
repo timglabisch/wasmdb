@@ -11,7 +11,7 @@ const R3 = '00000000-0000-0000-0000-000000000033';
  * re-renders `MessageCount:R1`, leaves `R2`/`R3` counts untouched.
  */
 test('AddMessage(R1) re-renders MessageCount:R1, leaves R2/R3 quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-count');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

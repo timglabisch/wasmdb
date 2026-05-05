@@ -13,7 +13,7 @@ import { readRenderLog, resetRenderLog, settleReactivity, waitForAppReady } from
  * test only fences that the *teardown* didn't leave dangling listeners.
  */
 test('Unmounting a subscriber before a write does not crash and does not render', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-unmount-inflight');
   await waitForAppReady(page);
 
   // Hide the probe first → underlying MessageList unmounts.

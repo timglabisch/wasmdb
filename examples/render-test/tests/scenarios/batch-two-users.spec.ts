@@ -12,7 +12,7 @@ const CAROL = '00000000-0000-0000-0000-0000000000cc';
  * two rows must fan out to exactly those two subscriber sets, not more.
  */
 test('Rename A + B in one tick re-renders both, leaves Carol quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-batch');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

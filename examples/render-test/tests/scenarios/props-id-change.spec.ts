@@ -8,7 +8,7 @@ import { diffLogs, readRenderLog, resetRenderLog, settleReactivity, waitForAppRe
  *   • `UpdateUserName(B)` MUST render Inner (B subscription registered).
  */
 test('Swapping id A→B re-binds subscription cleanly', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/hook-id-swap');
   await waitForAppReady(page);
 
   // Swap probe to track Bob.

@@ -13,7 +13,7 @@ const M3 = '00000000-0000-0000-0000-000000000fa3';
  * surviving `<MessageItem>`s must stay quiet — their rows didn't change.
  */
 test('DeleteMessage(M1) re-renders MessageList:R1, leaves siblings quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-delete');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

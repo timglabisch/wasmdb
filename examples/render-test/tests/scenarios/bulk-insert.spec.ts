@@ -15,7 +15,7 @@ const M2 = '00000000-0000-0000-0000-000000000fa2';
  * existing messages must NOT re-render — their rows are untouched.
  */
 test('Bulk-insert 20 messages: list renders bounded, siblings + existing rows quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-bulk-insert');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

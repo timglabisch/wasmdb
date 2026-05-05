@@ -7,7 +7,7 @@ import { diffLogs, readRenderLog, resetRenderLog, settleReactivity, waitForAppRe
  * runs but no per-row predicate matches, so no `<UserBadge>` re-renders.
  */
 test('UpdateUserName(unknown UUID) leaves all UserBadges quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-unknown-id');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

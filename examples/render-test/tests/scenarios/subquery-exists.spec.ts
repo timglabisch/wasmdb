@@ -7,7 +7,7 @@ import { diffLogs, readRenderLog, resetRenderLog, settleReactivity, waitForAppRe
  * removes R2 from the result set → list re-renders.
  */
 test('DeleteMessage(M3) re-renders RoomsWithMessages', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/join-subquery-exists');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

@@ -6,7 +6,7 @@ const BOB = '00000000-0000-0000-0000-0000000000bb';
 const CAROL = '00000000-0000-0000-0000-0000000000cc';
 
 test('UpdateUserStatus(A) only re-renders Alice badges, leaves Bob/Carol quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-status-change');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

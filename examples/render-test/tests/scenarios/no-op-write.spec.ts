@@ -12,7 +12,7 @@ const ALICE = '00000000-0000-0000-0000-0000000000aa';
  * If the engine ever adds value-equality checks, flip this assertion.
  */
 test('UpdateUserName(A, "Alice") with same value still re-renders Alice badges', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-no-op-write');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

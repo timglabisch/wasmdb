@@ -13,7 +13,7 @@ const M2 = '00000000-0000-0000-0000-000000000fa2';
  * any of the noise. Existing seed messages stayed quiet throughout.
  */
 test('Bulk insert → bulk delete: lists settle, siblings + seed quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-bulk-delete');
   await waitForAppReady(page);
 
   await page.click('[data-testid=btn-bulk-add-20-r1]');

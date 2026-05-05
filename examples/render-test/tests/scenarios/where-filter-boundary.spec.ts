@@ -12,7 +12,7 @@ import { diffLogs, readRenderLog, resetRenderLog, settleReactivity, waitForAppRe
  *     (membership grew back).
  */
 test('Online filter: status changes that cross the predicate re-render the list', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/user-online-filter');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

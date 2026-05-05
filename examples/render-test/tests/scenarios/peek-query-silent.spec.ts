@@ -8,7 +8,7 @@ import { diffLogs, readRenderLog, resetRenderLog, settleReactivity, waitForAppRe
  * (state-bump). `UpdateUserName(A)` must not tick `PeekProbe`.
  */
 test('peekQuery does not subscribe — UpdateUserName(A) leaves PeekProbe quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/hook-peek-query');
   await waitForAppReady(page);
 
   await resetRenderLog(page);

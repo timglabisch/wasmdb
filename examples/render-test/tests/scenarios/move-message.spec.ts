@@ -11,7 +11,7 @@ const R3 = '00000000-0000-0000-0000-000000000033';
  * `<MessageItem:M1>` itself re-renders (its `room_id` row changed).
  */
 test('MoveMessage(M1, R1→R2) re-renders both lists, R3 quiet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/#/msg-move');
   await waitForAppReady(page);
 
   await resetRenderLog(page);
