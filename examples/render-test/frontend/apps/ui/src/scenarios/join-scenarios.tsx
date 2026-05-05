@@ -14,10 +14,25 @@ export const joinScenarios: Scenario[] = [
     category: 'joins',
     title: 'JOIN reactivity: rooms (per-row) ⨝ users (table-wide)',
     summary:
-      'Reactive JOIN — each <RoomWithOwnerName> reads from BOTH `rooms` (per-row REACTIVE on `rooms.id`) and `users` (table-wide REACTIVE on `users.id` — the join side cannot be predicate-narrowed at query binding time without knowing the FK in advance). Two complementary tests: rename a room → only that row\'s join ticks; rename a user → ALL three joins re-fire (documented engine behavior, this assertion can tighten if correlated REACTIVE filters are added).',
+      'Reactive JOIN. Each <RoomWithOwnerName> reads from BOTH `rooms` (per-row REACTIVE on rooms.id) and `users` (table-wide REACTIVE on users.id — the join side cannot be predicate-narrowed at query binding time without knowing the FK in advance). Two complementary buttons: rename a room → only that row\'s join ticks; rename a user → ALL three joins re-fire (documented engine behavior, this assertion can tighten if correlated REACTIVE filters are added).',
     expectations: [
       'Click "Rename Engineering (R2)" → join:R2 ticks; join:R1 and join:R3 stay quiet.',
       'Click "Rename Alice" → all three joins re-fire (users side is table-wide reactive).',
+    ],
+    shouldRender: [`RoomWithOwnerName:${SEED.rooms.R2}`],
+    shouldStayQuiet: [
+      `RoomWithOwnerName:${SEED.rooms.R1}`,
+      `RoomWithOwnerName:${SEED.rooms.R3}`,
+    ],
+    subscriptions: [
+      {
+        component: 'RoomWithOwnerName:*',
+        sql: `SELECT REACTIVE(users.id), rooms.name, users.name
+FROM rooms
+JOIN users ON users.id = rooms.owner_user_id
+WHERE REACTIVE(rooms.id = UUID '<room-id>')`,
+        note: 'Predicate `rooms.id = …` is per-row → narrow. The join side `REACTIVE(users.id)` (table-wide) cannot be narrowed without knowing the FK at binding time.',
+      },
     ],
     Body: () => (
       <>
@@ -44,6 +59,17 @@ export const joinScenarios: Scenario[] = [
     expectations: [
       'Initial: list shows R1 + R2 (R3 has no messages).',
       'Click "Delete only R2 message (M3)" → RoomsWithMessages re-renders; R2 drops out.',
+    ],
+    shouldRender: ['RoomsWithMessages'],
+    subscriptions: [
+      {
+        component: 'RoomsWithMessages',
+        sql: `SELECT REACTIVE(messages.room_id), rooms.id
+FROM rooms
+JOIN messages ON messages.room_id = rooms.id
+ORDER BY rooms.id`,
+        note: 'Membership of `messages` directly changes which rooms appear. Table-wide REACTIVE on messages.room_id covers any messages mutation.',
+      },
     ],
     Body: () => (
       <>

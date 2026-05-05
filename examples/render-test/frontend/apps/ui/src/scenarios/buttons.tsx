@@ -1,6 +1,7 @@
 import { execute, peekQuery, nextId } from '@wasmdb/client';
 import type { RenderTestCommand } from 'render-test-generated/RenderTestCommand';
 import { SEED } from '../seed';
+import { useAction } from './ActionTracker';
 
 const fire = (cmd: RenderTestCommand) => execute(cmd);
 
@@ -17,129 +18,146 @@ declare global {
 
 const UNKNOWN_USER = '00000000-0000-0000-0000-0000000000ff';
 
+interface BtnProps {
+  id: string;
+  label: string;
+  action: () => void;
+  variant?: 'default' | 'danger' | 'positive';
+}
+
+/**
+ * Tracked button. Wraps the user-supplied action in a snapshot/diff
+ * roundtrip so the live diff panel updates after every click.
+ */
+function Btn({ id, label, action, variant = 'default' }: BtnProps) {
+  const { track } = useAction();
+  return (
+    <button
+      data-testid={id}
+      className={`tracked-btn variant-${variant}`}
+      onClick={() => track(label, action)}
+    >
+      {label}
+    </button>
+  );
+}
+
 export const BtnIncrementC1 = () => (
-  <button
-    data-testid="btn-increment-counter-1"
-    onClick={() => fire({
+  <Btn
+    id="btn-increment-counter-1"
+    label="+1 Counter 1"
+    variant="positive"
+    action={() => fire({
       type: 'SetCounterValue',
       id: SEED.counters.C1,
       value: readCounter(SEED.counters.C1) + 1,
     })}
-  >
-    +1 Counter 1
-  </button>
+  />
 );
 
 export const BtnIncrementC2 = () => (
-  <button
-    data-testid="btn-increment-counter-2"
-    onClick={() => fire({
+  <Btn
+    id="btn-increment-counter-2"
+    label="+1 Counter 2"
+    variant="positive"
+    action={() => fire({
       type: 'SetCounterValue',
       id: SEED.counters.C2,
       value: readCounter(SEED.counters.C2) + 1,
     })}
-  >
-    +1 Counter 2
-  </button>
+  />
 );
 
 export const BtnRenameUserA = () => (
-  <button
-    data-testid="btn-rename-user-a"
-    onClick={() => fire({ type: 'UpdateUserName', id: SEED.users.A, name: 'Alice (renamed)' })}
-  >
-    Rename Alice
-  </button>
+  <Btn
+    id="btn-rename-user-a"
+    label="Rename Alice"
+    action={() => fire({ type: 'UpdateUserName', id: SEED.users.A, name: 'Alice (renamed)' })}
+  />
 );
 
 export const BtnRenameUserASame = () => (
-  <button
-    data-testid="btn-rename-user-a-same"
-    onClick={() => fire({ type: 'UpdateUserName', id: SEED.users.A, name: 'Alice' })}
-  >
-    Rename Alice → "Alice" (no-op same-value)
-  </button>
+  <Btn
+    id="btn-rename-user-a-same"
+    label='Rename Alice → "Alice" (no-op same value)'
+    action={() => fire({ type: 'UpdateUserName', id: SEED.users.A, name: 'Alice' })}
+  />
 );
 
 export const BtnRenameUserB = () => (
-  <button
-    data-testid="btn-rename-user-b"
-    onClick={() => fire({ type: 'UpdateUserName', id: SEED.users.B, name: 'Bob (renamed)' })}
-  >
-    Rename Bob
-  </button>
+  <Btn
+    id="btn-rename-user-b"
+    label="Rename Bob"
+    action={() => fire({ type: 'UpdateUserName', id: SEED.users.B, name: 'Bob (renamed)' })}
+  />
 );
 
 export const BtnStatusUserABusy = () => (
-  <button
-    data-testid="btn-status-user-a-busy"
-    onClick={() => fire({ type: 'UpdateUserStatus', id: SEED.users.A, status: 'busy' })}
-  >
-    Alice → busy
-  </button>
+  <Btn
+    id="btn-status-user-a-busy"
+    label="Alice → busy"
+    action={() => fire({ type: 'UpdateUserStatus', id: SEED.users.A, status: 'busy' })}
+  />
 );
 
 export const BtnStatusUserCOnline = () => (
-  <button
-    data-testid="btn-status-user-c-online"
-    onClick={() => fire({ type: 'UpdateUserStatus', id: SEED.users.C, status: 'online' })}
-  >
-    Carol → online
-  </button>
+  <Btn
+    id="btn-status-user-c-online"
+    label="Carol → online"
+    variant="positive"
+    action={() => fire({ type: 'UpdateUserStatus', id: SEED.users.C, status: 'online' })}
+  />
 );
 
 export const BtnRenameUsersAAndB = () => (
-  <button
-    data-testid="btn-rename-users-a-and-b"
-    onClick={() => {
+  <Btn
+    id="btn-rename-users-a-and-b"
+    label="Rename Alice + Bob (one tick)"
+    action={() => {
       fire({ type: 'UpdateUserName', id: SEED.users.A, name: 'Alice (batch)' });
       fire({ type: 'UpdateUserName', id: SEED.users.B, name: 'Bob (batch)' });
     }}
-  >
-    Rename Alice + Bob (one tick)
-  </button>
+  />
 );
 
 export const BtnRenameUnknownUser = () => (
-  <button
-    data-testid="btn-rename-unknown-user"
-    onClick={() => fire({ type: 'UpdateUserName', id: UNKNOWN_USER, name: 'Ghost' })}
-  >
-    Rename unknown user (id not in db)
-  </button>
+  <Btn
+    id="btn-rename-unknown-user"
+    label="Rename unknown user (id not in db)"
+    action={() => fire({ type: 'UpdateUserName', id: UNKNOWN_USER, name: 'Ghost' })}
+  />
 );
 
 export const BtnTransferRoom1ToB = () => (
-  <button
-    data-testid="btn-transfer-room-1-to-b"
-    onClick={() => fire({ type: 'TransferRoom', id: SEED.rooms.R1, owner_user_id: SEED.users.B })}
-  >
-    Transfer Lobby (R1) → Bob
-  </button>
+  <Btn
+    id="btn-transfer-room-1-to-b"
+    label="Transfer Lobby (R1) → Bob"
+    action={() => fire({ type: 'TransferRoom', id: SEED.rooms.R1, owner_user_id: SEED.users.B })}
+  />
 );
 
 export const BtnRenameRoom2 = () => (
-  <button
-    data-testid="btn-rename-room-2"
-    onClick={() => fire({ type: 'RenameRoom', id: SEED.rooms.R2, name: 'Engineering (renamed)' })}
-  >
-    Rename Engineering (R2)
-  </button>
+  <Btn
+    id="btn-rename-room-2"
+    label="Rename Engineering (R2)"
+    action={() => fire({ type: 'RenameRoom', id: SEED.rooms.R2, name: 'Engineering (renamed)' })}
+  />
 );
 
 export const BtnRenameRoom1ToAaa = () => (
-  <button
-    data-testid="btn-rename-room-1-to-aaa"
-    onClick={() => fire({ type: 'RenameRoom', id: SEED.rooms.R1, name: 'Aaa Lobby' })}
-  >
-    Rename R1 → "Aaa Lobby" (forces reorder)
-  </button>
+  <Btn
+    id="btn-rename-room-1-to-aaa"
+    label='Rename R1 → "Aaa Lobby" (forces reorder)'
+    action={() => fire({ type: 'RenameRoom', id: SEED.rooms.R1, name: 'Aaa Lobby' })}
+  />
 );
 
 export const BtnAddMessageR1 = () => (
-  <button
-    data-testid="btn-add-message-room-1"
-    onClick={() => fire({
+  <Btn
+    id="btn-add-message-room-1"
+    label="+ Message in Lobby (R1)"
+    variant="positive"
+    action={() => fire({
       type: 'AddMessage',
       id: nextId(),
       room_id: SEED.rooms.R1,
@@ -147,15 +165,15 @@ export const BtnAddMessageR1 = () => (
       body: 'New message',
       created_at: new Date().toISOString(),
     })}
-  >
-    + Message in Lobby (R1)
-  </button>
+  />
 );
 
 export const BtnAddMessageR1Early = () => (
-  <button
-    data-testid="btn-add-message-r1-early"
-    onClick={() => fire({
+  <Btn
+    id="btn-add-message-r1-early"
+    label="+ Early message (R1, sorts first)"
+    variant="positive"
+    action={() => fire({
       type: 'AddMessage',
       id: nextId(),
       room_id: SEED.rooms.R1,
@@ -163,42 +181,41 @@ export const BtnAddMessageR1Early = () => (
       body: 'Early message',
       created_at: '2025-01-01T00:00:00Z',
     })}
-  >
-    + Early message (R1, sorts first)
-  </button>
+  />
 );
 
 export const BtnDeleteMessage1 = () => (
-  <button
-    data-testid="btn-delete-message-1"
-    onClick={() => fire({ type: 'DeleteMessage', id: SEED.messages.M1 })}
-  >
-    Delete first Lobby message (M1)
-  </button>
+  <Btn
+    id="btn-delete-message-1"
+    label="Delete first Lobby message (M1)"
+    variant="danger"
+    action={() => fire({ type: 'DeleteMessage', id: SEED.messages.M1 })}
+  />
 );
 
 export const BtnDeleteMessage3 = () => (
-  <button
-    data-testid="btn-delete-message-3"
-    onClick={() => fire({ type: 'DeleteMessage', id: SEED.messages.M3 })}
-  >
-    Delete only R2 message (M3)
-  </button>
+  <Btn
+    id="btn-delete-message-3"
+    label="Delete only R2 message (M3)"
+    variant="danger"
+    action={() => fire({ type: 'DeleteMessage', id: SEED.messages.M3 })}
+  />
 );
 
 export const BtnMoveMessage1ToR2 = () => (
-  <button
-    data-testid="btn-move-message-1-to-r2"
-    onClick={() => fire({ type: 'MoveMessage', id: SEED.messages.M1, room_id: SEED.rooms.R2 })}
-  >
-    Move M1: R1 → R2
-  </button>
+  <Btn
+    id="btn-move-message-1-to-r2"
+    label="Move M1: R1 → R2"
+    action={() => fire({ type: 'MoveMessage', id: SEED.messages.M1, room_id: SEED.rooms.R2 })}
+  />
 );
 
 export const BtnBulkAdd20R1 = () => (
-  <button
-    data-testid="btn-bulk-add-20-r1"
-    onClick={() => {
+  <Btn
+    id="btn-bulk-add-20-r1"
+    label="+ 20 messages (R1)"
+    variant="positive"
+    action={() => {
       const ids: string[] = [];
       for (let i = 0; i < 20; i++) {
         const id = nextId();
@@ -214,22 +231,20 @@ export const BtnBulkAdd20R1 = () => (
       }
       window.__bulkMessageIds = (window.__bulkMessageIds ?? []).concat(ids);
     }}
-  >
-    + 20 messages (R1)
-  </button>
+  />
 );
 
 export const BtnBulkDeleteR1 = () => (
-  <button
-    data-testid="btn-bulk-delete-r1"
-    onClick={() => {
+  <Btn
+    id="btn-bulk-delete-r1"
+    label="Delete bulk-added messages"
+    variant="danger"
+    action={() => {
       const ids = window.__bulkMessageIds ?? [];
       for (const id of ids) {
         fire({ type: 'DeleteMessage', id });
       }
       window.__bulkMessageIds = [];
     }}
-  >
-    Delete bulk-added messages
-  </button>
+  />
 );

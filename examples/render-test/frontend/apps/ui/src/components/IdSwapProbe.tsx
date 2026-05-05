@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
+import { useRenderFlash } from '../test-utils/useRenderFlash';
 import { SEED } from '../seed';
 
 interface Props {
@@ -9,12 +10,13 @@ interface Props {
 
 const Inner = memo(function Inner({ id }: Props) {
   const renders = useRenderCount(`IdSwapProbe:inner`);
+  const flashRef = useRenderFlash<HTMLSpanElement>();
   const rows = useQuery<{ name: string }>(
     `SELECT users.name FROM users WHERE REACTIVE(users.id = UUID '${id}')`,
     ([name]) => ({ name: name as string }),
   );
   return (
-    <span data-testid="id-swap-probe-inner">
+    <span ref={flashRef} data-testid="id-swap-probe-inner">
       <span>{rows[0]?.name ?? '?'}</span>
       <span className="renders">r:{renders}</span>
     </span>

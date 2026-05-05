@@ -9,6 +9,14 @@ import {
 } from './buttons';
 import type { Scenario } from './types';
 
+const ROOM_ROW_SQL = `SELECT rooms.id, rooms.name, rooms.owner_user_id
+FROM rooms
+WHERE REACTIVE(rooms.id = UUID '<room-id>')`;
+
+const ROOM_LIST_SQL = `SELECT REACTIVE(rooms.id), rooms.id
+FROM rooms
+ORDER BY rooms.name`;
+
 export const roomScenarios: Scenario[] = [
   {
     id: 'room-rename',
@@ -20,6 +28,16 @@ export const roomScenarios: Scenario[] = [
       'Click "Rename Engineering (R2)" → RoomRow:R2 ticks.',
       'RoomRow:R1, RoomRow:R3 stay quiet.',
       'No UserBadge ticks anywhere.',
+    ],
+    shouldRender: [`RoomRow:${SEED.rooms.R2}`],
+    shouldStayQuiet: [
+      `RoomRow:${SEED.rooms.R1}`,
+      `RoomRow:${SEED.rooms.R3}`,
+      'UserBadge:*',
+    ],
+    subscriptions: [
+      { component: 'RoomRow:*', sql: ROOM_ROW_SQL },
+      { component: 'RoomList', sql: ROOM_LIST_SQL, note: 'Table-wide REACTIVE in SELECT → fires on any rooms change.' },
     ],
     Body: () => (
       <>
@@ -40,6 +58,11 @@ export const roomScenarios: Scenario[] = [
     expectations: [
       'Click "Transfer Lobby (R1) → Bob" → RoomRow:R1 ticks; the owner badge inside it now shows Bob.',
       'RoomRow:R2, RoomRow:R3 stay quiet.',
+    ],
+    shouldRender: [`RoomRow:${SEED.rooms.R1}`],
+    shouldStayQuiet: [`RoomRow:${SEED.rooms.R2}`, `RoomRow:${SEED.rooms.R3}`],
+    subscriptions: [
+      { component: 'RoomRow:*', sql: ROOM_ROW_SQL },
     ],
     Body: () => (
       <>
@@ -63,6 +86,20 @@ export const roomScenarios: Scenario[] = [
       'UserBadge:Alice@room:R3 stays quiet.',
       'UserBadge:Alice@msg:M1 stays quiet.',
     ],
+    shouldRender: [`UserBadge:${SEED.users.B}@room:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `UserBadge:${SEED.users.A}@room:${SEED.rooms.R3}`,
+      `UserBadge:${SEED.users.A}@msg:${SEED.messages.M1}`,
+    ],
+    subscriptions: [
+      {
+        component: 'UserBadge:* (per-instance)',
+        sql: `SELECT users.id, users.name, users.status
+FROM users
+WHERE REACTIVE(users.id = UUID '<user-id>')`,
+        note: 'When the parent passes a different user-id prop, the badge unmounts and remounts. Alice\'s row was never touched, so her remaining badges stay quiet.',
+      },
+    ],
     Body: () => (
       <>
         <RoomList />
@@ -82,11 +119,17 @@ export const roomScenarios: Scenario[] = [
     category: 'rooms',
     title: 'Reorder via ORDER BY: list ticks, only the renamed row ticks',
     summary:
-      'Renaming Lobby ("Lobby" → "Aaa Lobby") changes its position in `<RoomList>`\'s `ORDER BY rooms.name`. The list itself re-renders (membership in ordering changed); only RoomRow:R1 — the row whose data changed — ticks. R2/R3 rows stay quiet.',
+      'Renaming Lobby ("Lobby" → "Aaa Lobby") changes its position in <RoomList>\'s `ORDER BY rooms.name`. The list itself re-renders (membership in ordering changed); only RoomRow:R1 — the row whose data changed — ticks. R2/R3 rows stay quiet.',
     expectations: [
       'Click "Rename R1 → Aaa Lobby" → list reorders, "Aaa Lobby" sits first.',
       'RoomList ticks.',
       'RoomRow:R1 ticks; R2, R3 stay quiet.',
+    ],
+    shouldRender: [`RoomRow:${SEED.rooms.R1}`, 'RoomList'],
+    shouldStayQuiet: [`RoomRow:${SEED.rooms.R2}`, `RoomRow:${SEED.rooms.R3}`],
+    subscriptions: [
+      { component: 'RoomList', sql: ROOM_LIST_SQL },
+      { component: 'RoomRow:*', sql: ROOM_ROW_SQL },
     ],
     Body: () => (
       <>
@@ -108,6 +151,17 @@ export const roomScenarios: Scenario[] = [
       'Click "Rename Alice".',
       'UserBadge:Alice instances tick (badge text updates).',
       'RoomRow:R1, RoomRow:R3 stay quiet.',
+    ],
+    shouldRender: [`*UserBadge:${SEED.users.A}*`],
+    shouldStayQuiet: ['RoomRow:*'],
+    subscriptions: [
+      { component: 'RoomRow:*', sql: ROOM_ROW_SQL, note: 'No JOIN to users — independent reactive scope.' },
+      {
+        component: 'UserBadge:* (inside RoomRow)',
+        sql: `SELECT users.id, users.name, users.status
+FROM users
+WHERE REACTIVE(users.id = UUID '<owner-user-id>')`,
+      },
     ],
     Body: () => (
       <>

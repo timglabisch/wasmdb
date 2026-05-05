@@ -14,6 +14,14 @@ export const hookScenarios: Scenario[] = [
       'Click "Rename Alice" → PeekProbe r:0 (no subscription registered).',
       'Click "Force re-render" → PeekProbe ticks once; the displayed name now reflects the latest value.',
     ],
+    shouldStayQuiet: ['PeekProbe'],
+    subscriptions: [
+      {
+        component: 'PeekProbe',
+        sql: `SELECT users.name FROM users WHERE users.id = :id   /* peekQuery */`,
+        note: '`peekQuery` is non-reactive: it pulls a snapshot, no subscription is registered. Re-evaluation only happens when the component renders for some other reason.',
+      },
+    ],
     Body: () => (
       <>
         <section className="panel">
@@ -37,6 +45,15 @@ export const hookScenarios: Scenario[] = [
       'Click "Swap to Bob" → inner probe re-renders, now displaying Bob.',
       'Click "Rename Alice" → inner probe stays quiet (A subscription gone).',
       'Click "Rename Bob" → inner probe ticks (B subscription registered).',
+    ],
+    subscriptions: [
+      {
+        component: 'IdSwapProbe:inner',
+        sql: `SELECT users.name
+FROM users
+WHERE REACTIVE(users.id = UUID '<currently-tracked-id>')`,
+        note: 'When the parent passes a different id, the SQL string itself changes → useQuery tears the old sub down and registers a fresh one.',
+      },
     ],
     Body: () => (
       <>

@@ -14,11 +14,12 @@ export function ScenarioIndex() {
       <header>
         <h1>render-test scenarios</h1>
         <p>
-          Each link opens a self-contained page that mirrors exactly one
-          Playwright spec. The page shows the relevant components, the
-          buttons that drive the scenario, and a description of what to
-          observe — a living reference for the engine's reactivity
-          guarantees.
+          Each link opens a self-contained page mirroring one Playwright
+          spec. Components flash <span className="hint-flash">yellow</span>
+          when they re-render, and a <strong>live diff panel</strong> shows
+          what ticked after each click — marked ✓ if expected, ✗ if it
+          broke isolation. Try predicting first, click, watch, then reveal
+          the answer.
         </p>
       </header>
       {ORDER.map((cat) => (

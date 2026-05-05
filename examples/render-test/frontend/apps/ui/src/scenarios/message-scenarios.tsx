@@ -12,6 +12,19 @@ import {
 } from './buttons';
 import type { Scenario } from './types';
 
+const MSG_LIST_SQL = `SELECT messages.id
+FROM messages
+WHERE REACTIVE(messages.room_id = UUID '<room-id>')
+ORDER BY messages.created_at`;
+
+const MSG_ITEM_SQL = `SELECT messages.id, messages.body, messages.author_user_id, messages.created_at
+FROM messages
+WHERE REACTIVE(messages.id = UUID '<msg-id>')`;
+
+const MSG_COUNT_SQL = `SELECT COUNT(messages.id)
+FROM messages
+WHERE REACTIVE(messages.room_id = UUID '<room-id>')`;
+
 const ThreeLists = () => (
   <section className="panel">
     <h2>Messages by room</h2>
@@ -29,11 +42,23 @@ export const messageScenarios: Scenario[] = [
     category: 'messages',
     title: 'AddMessage(R1): only R1 list ticks; existing items stay quiet',
     summary:
-      'List-add reactivity: a new row matching the per-room predicate appears. Only MessageList:R1 re-renders. Sibling lists for R2/R3 stay quiet. Existing M1/M2/M3 items did not change → their MessageItem components stay quiet (the new message has its own freshly-mounted item).',
+      'List-add reactivity. A new row matches the per-room predicate. Only MessageList:R1 re-renders. Sibling lists for R2/R3 stay quiet. Existing M1/M2/M3 items did not change → their MessageItem components stay quiet (the new message has its own freshly-mounted item).',
     expectations: [
       'Click "+ Message in Lobby (R1)" → MessageList:R1 ticks; a new item appears.',
       'MessageList:R2, MessageList:R3 stay quiet.',
       'MessageItem:M1, MessageItem:M2, MessageItem:M3 stay quiet.',
+    ],
+    shouldRender: [`MessageList:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `MessageList:${SEED.rooms.R2}`,
+      `MessageList:${SEED.rooms.R3}`,
+      `MessageItem:${SEED.messages.M1}`,
+      `MessageItem:${SEED.messages.M2}`,
+      `MessageItem:${SEED.messages.M3}`,
+    ],
+    subscriptions: [
+      { component: 'MessageList:*', sql: MSG_LIST_SQL },
+      { component: 'MessageItem:*', sql: MSG_ITEM_SQL, note: 'Per-row predicate — only re-fires when its own row changes.' },
     ],
     Body: () => (
       <>
@@ -50,11 +75,22 @@ export const messageScenarios: Scenario[] = [
     category: 'messages',
     title: 'DeleteMessage(M1): R1 list ticks; surviving items quiet',
     summary:
-      'List-shrink reactivity: a row leaves the per-room set. Only MessageList:R1 re-renders. Sibling lists stay quiet. Surviving M2/M3 items did not change → their MessageItem components stay quiet.',
+      'List-shrink reactivity. A row leaves the per-room set. Only MessageList:R1 re-renders. Sibling lists stay quiet. Surviving M2/M3 items did not change → their MessageItem components stay quiet.',
     expectations: [
       'Click "Delete first Lobby message (M1)" → MessageList:R1 ticks; M1 disappears.',
       'MessageList:R2, MessageList:R3 stay quiet.',
       'MessageItem:M2, MessageItem:M3 stay quiet.',
+    ],
+    shouldRender: [`MessageList:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `MessageList:${SEED.rooms.R2}`,
+      `MessageList:${SEED.rooms.R3}`,
+      `MessageItem:${SEED.messages.M2}`,
+      `MessageItem:${SEED.messages.M3}`,
+    ],
+    subscriptions: [
+      { component: 'MessageList:*', sql: MSG_LIST_SQL },
+      { component: 'MessageItem:*', sql: MSG_ITEM_SQL },
     ],
     Body: () => (
       <>
@@ -75,6 +111,15 @@ export const messageScenarios: Scenario[] = [
     expectations: [
       'Click "+ Early message (R1)" → MessageList:R1 ticks; a new item appears at the top.',
       'MessageItem:M1, MessageItem:M2 stay quiet.',
+    ],
+    shouldRender: [`MessageList:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `MessageItem:${SEED.messages.M1}`,
+      `MessageItem:${SEED.messages.M2}`,
+    ],
+    subscriptions: [
+      { component: 'MessageList:R1', sql: MSG_LIST_SQL, note: 'ORDER BY created_at means new rows can land anywhere. Existing rows are untouched, so their per-row subscriptions never fire.' },
+      { component: 'MessageItem:*', sql: MSG_ITEM_SQL },
     ],
     Body: () => (
       <>
@@ -100,6 +145,14 @@ export const messageScenarios: Scenario[] = [
       'MessageList:R2 ticks (gains M1).',
       'MessageList:R3 stays quiet.',
     ],
+    shouldRender: [
+      `MessageList:${SEED.rooms.R1}`,
+      `MessageList:${SEED.rooms.R2}`,
+    ],
+    shouldStayQuiet: [`MessageList:${SEED.rooms.R3}`],
+    subscriptions: [
+      { component: 'MessageList:*', sql: MSG_LIST_SQL, note: 'Each room\'s list independently observes membership changes via REACTIVE(room_id = …).' },
+    ],
     Body: () => (
       <>
         <ThreeLists />
@@ -115,11 +168,21 @@ export const messageScenarios: Scenario[] = [
     category: 'messages',
     title: 'Bulk-insert 20: list renders bounded; siblings + existing rows quiet',
     summary:
-      '20 inserts in one tick (synchronous burst from a single click handler). Each command produces optimistic + confirmed dirty cycles → up to ~40 list renders for the affected room. The fence guards against worse-than-linear blow-up. Sibling lists must stay quiet, and existing rows must NOT re-render.',
+      '20 inserts in one tick (synchronous burst from a single click handler). Each command produces optimistic + confirmed dirty cycles → up to ~40 list renders for the affected room. The fence guards against worse-than-linear blow-up.',
     expectations: [
       'Click "+ 20 messages (R1)" → MessageList:R1 ticks at most ~40 times.',
       'MessageList:R2, MessageList:R3 stay quiet.',
       'MessageItem:M1, MessageItem:M2 stay quiet.',
+    ],
+    shouldRender: [`MessageList:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `MessageList:${SEED.rooms.R2}`,
+      `MessageList:${SEED.rooms.R3}`,
+      `MessageItem:${SEED.messages.M1}`,
+      `MessageItem:${SEED.messages.M2}`,
+    ],
+    subscriptions: [
+      { component: 'MessageList:R1', sql: MSG_LIST_SQL, note: 'Each command = optimistic + confirmed = up to 2 renders. 20 commands → ≤40 renders.' },
     ],
     Body: () => (
       <>
@@ -136,13 +199,21 @@ export const messageScenarios: Scenario[] = [
     category: 'messages',
     title: 'Bulk-insert → bulk-delete: round-trip settles cleanly',
     summary:
-      'Insert 20 then delete the same 20. After settling, the list returns to its original state. Sibling rooms never observed any of the noise. Existing seed rows stayed quiet throughout. Test runs the *delete* phase under measurement.',
+      'Insert 20 then delete the same 20. After settling, the list returns to its original state. Sibling rooms never observed any of the noise. Existing seed rows stayed quiet throughout. Reset render counts between phases for a clean read.',
     expectations: [
       'Click "+ 20 messages (R1)" then reset render counts.',
       'Click "Delete bulk-added messages" → MessageList:R1 ticks.',
       'MessageList:R2, MessageList:R3 stay quiet.',
       'MessageItem:M1, MessageItem:M2 stay quiet.',
     ],
+    shouldRender: [`MessageList:${SEED.rooms.R1}`],
+    shouldStayQuiet: [
+      `MessageList:${SEED.rooms.R2}`,
+      `MessageList:${SEED.rooms.R3}`,
+      `MessageItem:${SEED.messages.M1}`,
+      `MessageItem:${SEED.messages.M2}`,
+    ],
+    subscriptions: [{ component: 'MessageList:R1', sql: MSG_LIST_SQL }],
     Body: () => (
       <>
         <ThreeLists />
@@ -164,6 +235,10 @@ export const messageScenarios: Scenario[] = [
       'Click "Hide R1 (probe)" → the inner list disappears.',
       'Reset render counts.',
       'Click "+ Message in Lobby (R1)" → no crash. The torn-down list stays at zero renders.',
+    ],
+    shouldStayQuiet: [`MessageList:${SEED.rooms.R1}`],
+    subscriptions: [
+      { component: 'MessageList:R1 (inside probe)', sql: MSG_LIST_SQL, note: 'On unmount, useQuery tears down its subscription via React\'s effect cleanup. Subsequent dirty-cycles never reach the dead component.' },
     ],
     Body: () => (
       <>
@@ -187,6 +262,11 @@ export const messageScenarios: Scenario[] = [
     expectations: [
       'Click "+ Message in Lobby (R1)" → MessageCount:R1 ticks; the displayed count grows by 1.',
       'MessageCount:R2, MessageCount:R3 stay quiet.',
+    ],
+    shouldRender: [`MessageCount:${SEED.rooms.R1}`],
+    shouldStayQuiet: [`MessageCount:${SEED.rooms.R2}`, `MessageCount:${SEED.rooms.R3}`],
+    subscriptions: [
+      { component: 'MessageCount:*', sql: MSG_COUNT_SQL, note: 'Aggregate over the room\'s message slice. Only re-fires when membership of that slice changes.' },
     ],
     Body: () => (
       <>

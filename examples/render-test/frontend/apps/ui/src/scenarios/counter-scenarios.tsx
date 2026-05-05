@@ -22,7 +22,22 @@ export const counterScenarios: Scenario[] = [
     expectations: [
       'Click "+1 Counter 1" → Counter:C1 ticks (typically r:+2: optimistic + confirmed echo).',
       'Counter:C2/C3/C4 stay at r:0.',
-      'The counter\'s displayed value increments by 1.',
+      'The displayed value increments by 1.',
+    ],
+    shouldRender: [`Counter:${SEED.counters.C1}`],
+    shouldStayQuiet: [
+      `Counter:${SEED.counters.C2}`,
+      `Counter:${SEED.counters.C3}`,
+      `Counter:${SEED.counters.C4}`,
+    ],
+    subscriptions: [
+      {
+        component: 'Counter:C{n}',
+        sql: `SELECT counters.id, counters.label, counters.value
+FROM counters
+WHERE REACTIVE(counters.id = UUID '<row-id>')`,
+        note: 'Per-row REACTIVE predicate. Each Counter only fires when its own row changes.',
+      },
     ],
     Body: () => (
       <>
@@ -43,6 +58,16 @@ export const counterScenarios: Scenario[] = [
     expectations: [
       'Click "+1 Counter 1" → Counter:C1 increments by exactly r:+2.',
     ],
+    shouldRender: [`Counter:${SEED.counters.C1}`],
+    subscriptions: [
+      {
+        component: 'Counter:C1',
+        sql: `SELECT counters.id, counters.label, counters.value
+FROM counters
+WHERE REACTIVE(counters.id = UUID '<C1>')`,
+        note: 'Echo-server semantics: each command produces an optimistic apply + confirmed apply. The delta is identical, so React renders twice with the same value.',
+      },
+    ],
     Body: () => (
       <>
         <CounterPanel ids={[SEED.counters.C1]} />
@@ -62,6 +87,23 @@ export const counterScenarios: Scenario[] = [
     expectations: [
       'Click "+1 Counter 1" → Counter:C1 ticks.',
       'No RoomRow, no UserBadge, no MessageList, no MessageItem ticks.',
+    ],
+    shouldRender: [`Counter:${SEED.counters.C1}`],
+    shouldStayQuiet: ['RoomRow:*', 'UserBadge:*', 'MessageList:*', 'MessageItem:*'],
+    subscriptions: [
+      {
+        component: 'Counter:*',
+        sql: `SELECT … FROM counters WHERE REACTIVE(counters.id = …)`,
+      },
+      {
+        component: 'RoomRow:*',
+        sql: `SELECT … FROM rooms WHERE REACTIVE(rooms.id = …)`,
+        note: 'rooms ≠ counters → no shared reactive scope.',
+      },
+      {
+        component: 'MessageList:*',
+        sql: `SELECT messages.id FROM messages WHERE REACTIVE(messages.room_id = …)`,
+      },
     ],
     Body: () => (
       <>

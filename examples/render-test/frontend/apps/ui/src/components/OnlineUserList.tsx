@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
+import { useRenderFlash } from '../test-utils/useRenderFlash';
 
 interface UserRow {
   id: string;
@@ -16,12 +17,13 @@ interface UserRow {
  */
 export const OnlineUserList = memo(function OnlineUserList() {
   const renders = useRenderCount('OnlineUserList');
+  const flashRef = useRenderFlash<HTMLElement>();
   const rows = useQuery<UserRow>(
     `SELECT users.id, users.name FROM users WHERE REACTIVE(users.status = 'online') ORDER BY users.name`,
     ([uid, name]) => ({ id: uid as string, name: name as string }),
   );
   return (
-    <section className="panel">
+    <section ref={flashRef} className="panel">
       <h2>Online users <small>(r:{renders})</small></h2>
       <ul data-testid="online-user-list">
         {rows.map((u) => (

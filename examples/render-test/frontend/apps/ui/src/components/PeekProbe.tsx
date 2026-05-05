@@ -1,6 +1,7 @@
 import { memo, useState } from 'react';
 import { peekQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
+import { useRenderFlash } from '../test-utils/useRenderFlash';
 import { SEED } from '../seed';
 
 /**
@@ -11,6 +12,7 @@ import { SEED } from '../seed';
  */
 export const PeekProbe = memo(function PeekProbe() {
   const renders = useRenderCount('PeekProbe');
+  const flashRef = useRenderFlash<HTMLDivElement>();
   const [tick, setTick] = useState(0);
   // Re-evaluated on every render (which only happens via setTick).
   const rows = peekQuery(
@@ -19,7 +21,7 @@ export const PeekProbe = memo(function PeekProbe() {
   );
   const name = rows?.[0]?.[0] as string ?? '';
   return (
-    <div data-testid="peek-probe" className="peek-probe">
+    <div ref={flashRef} data-testid="peek-probe" className="peek-probe">
       <span>Alice (peeked): {name}</span>
       <span className="renders">r:{renders}</span>
       <button

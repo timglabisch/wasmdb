@@ -25,6 +25,10 @@ const StandaloneBadges = () => (
   </section>
 );
 
+const USER_BADGE_SQL = `SELECT users.id, users.name, users.status
+FROM users
+WHERE REACTIVE(users.id = UUID '<user-id>')`;
+
 export const userScenarios: Scenario[] = [
   {
     id: 'user-no-op-write',
@@ -34,8 +38,11 @@ export const userScenarios: Scenario[] = [
       'Pin the no-op invariant: writing the same value still triggers a dirty-cycle. This is the *current* behavior — the test fences it so a future "skip identical writes" optimization is a deliberate, observable change.',
     expectations: [
       'Click "Rename Alice → Alice" → at least one UserBadge:Alice instance still ticks.',
-      'If the engine adds equality-skip in the future, this test must flip its assertion.',
+      'If the engine adds equality-skip in the future, this assertion must flip.',
     ],
+    shouldRender: [`*UserBadge:${SEED.users.A}*`],
+    shouldStayQuiet: [`*UserBadge:${SEED.users.B}*`, `*UserBadge:${SEED.users.C}*`],
+    subscriptions: [{ component: 'UserBadge:*', sql: USER_BADGE_SQL }],
     Body: () => (
       <>
         <StandaloneBadges />
@@ -55,6 +62,14 @@ export const userScenarios: Scenario[] = [
     expectations: [
       'Click "Rename unknown user" → no UserBadge ticks.',
       'No RoomRow ticks (the unknown user is not an owner anywhere).',
+    ],
+    shouldStayQuiet: ['UserBadge:*', 'RoomRow:*'],
+    subscriptions: [
+      {
+        component: 'UserBadge:*',
+        sql: USER_BADGE_SQL,
+        note: 'Predicate fixes user-id at mount; an UPDATE on a different id never matches.',
+      },
     ],
     Body: () => (
       <>
@@ -77,6 +92,9 @@ export const userScenarios: Scenario[] = [
       'Click "Rename Alice + Bob" → Alice badges and Bob badges tick.',
       'Carol badges stay quiet.',
     ],
+    shouldRender: [`*UserBadge:${SEED.users.A}*`, `*UserBadge:${SEED.users.B}*`],
+    shouldStayQuiet: [`*UserBadge:${SEED.users.C}*`],
+    subscriptions: [{ component: 'UserBadge:*', sql: USER_BADGE_SQL }],
     Body: () => (
       <>
         <StandaloneBadges />
@@ -100,6 +118,15 @@ export const userScenarios: Scenario[] = [
       '— UserBadge:Alice@msg:M1 (author)',
       'Bob/Carol badges stay quiet.',
     ],
+    shouldRender: [`*UserBadge:${SEED.users.A}*`],
+    shouldStayQuiet: [`*UserBadge:${SEED.users.B}*`, `*UserBadge:${SEED.users.C}*`],
+    subscriptions: [
+      {
+        component: 'UserBadge:* (× many instances)',
+        sql: USER_BADGE_SQL,
+        note: 'Each <UserBadge> instance subscribes independently — the engine fans out to all instances bound to the same user-id.',
+      },
+    ],
     Body: () => (
       <>
         <RoomList />
@@ -119,11 +146,14 @@ export const userScenarios: Scenario[] = [
     category: 'users',
     title: 'UpdateUserStatus: only the affected user\'s badges tick',
     summary:
-      'Status is just another column in `users`. Changing it propagates to all UserBadge instances of that user (badge subscribes to whole row), and not to other users\' badges.',
+      'Status is just another column in `users`. Changing it propagates to all UserBadge instances of that user (badge subscribes to the whole row), and not to other users\' badges.',
     expectations: [
       'Click "Alice → busy" → Alice badges tick (status pill turns "busy").',
       'Bob/Carol badges stay quiet.',
     ],
+    shouldRender: [`*UserBadge:${SEED.users.A}*`],
+    shouldStayQuiet: [`*UserBadge:${SEED.users.B}*`, `*UserBadge:${SEED.users.C}*`],
+    subscriptions: [{ component: 'UserBadge:*', sql: USER_BADGE_SQL }],
     Body: () => (
       <>
         <StandaloneBadges />
@@ -144,6 +174,17 @@ export const userScenarios: Scenario[] = [
       'Initial seed: Alice + Bob online, Carol away → list shows two names.',
       'Click "Alice → busy" → OnlineUserList re-renders, Alice drops out.',
       'Click "Carol → online" → OnlineUserList re-renders, Carol joins.',
+    ],
+    shouldRender: ['OnlineUserList'],
+    subscriptions: [
+      {
+        component: 'OnlineUserList',
+        sql: `SELECT users.id, users.name
+FROM users
+WHERE REACTIVE(users.status = 'online')
+ORDER BY users.name`,
+        note: 'Predicate-based REACTIVE: any change that affects whether a row matches `status=online` must re-fire.',
+      },
     ],
     Body: () => (
       <>

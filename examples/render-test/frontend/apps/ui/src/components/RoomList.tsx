@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
+import { useRenderFlash } from '../test-utils/useRenderFlash';
 import { UserBadge } from './UserBadge';
 
 interface RoomRowData {
@@ -23,6 +24,7 @@ interface RowProps {
  */
 export const RoomRow = memo(function RoomRow({ id }: RowProps) {
   const renders = useRenderCount(`RoomRow:${id}`);
+  const flashRef = useRenderFlash<HTMLLIElement>();
   const rows = useQuery<RoomRowData>(
     `SELECT rooms.id, rooms.name, rooms.owner_user_id FROM rooms WHERE REACTIVE(rooms.id = UUID '${id}')`,
     ([rid, name, owner_user_id]) => ({
@@ -34,7 +36,7 @@ export const RoomRow = memo(function RoomRow({ id }: RowProps) {
   const row = rows[0];
   if (!row) return null;
   return (
-    <li data-testid={`room-row-${id}`} className="room-row">
+    <li ref={flashRef} data-testid={`room-row-${id}`} className="room-row">
       <span className="room-name">{row.name}</span>
       <span className="room-owner">owner: <UserBadge id={row.owner_user_id} ctx={`room:${id}`} /></span>
       <span className="renders" data-testid={`room-renders-${id}`}>r:{renders}</span>
@@ -44,6 +46,7 @@ export const RoomRow = memo(function RoomRow({ id }: RowProps) {
 
 export function RoomList() {
   const renders = useRenderCount('RoomList');
+  const flashRef = useRenderFlash<HTMLElement>();
   const rooms = useQuery<{ id: string }>(
     'SELECT REACTIVE(rooms.id), rooms.id FROM rooms ORDER BY rooms.name',
     ([_r, rid]) => ({ id: rid as string }),
@@ -51,7 +54,7 @@ export function RoomList() {
   // ↑ REACTIVE(col) in SELECT is *table-wide* — fires on any rooms change.
   // That's exactly what we want for the list (insert/delete/rename order).
   return (
-    <section className="panel">
+    <section ref={flashRef} className="panel">
       <h2>Rooms <small>(parent renders: {renders})</small></h2>
       <ul className="room-list">
         {rooms.map((r) => <RoomRow key={r.id} id={r.id} />)}

@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
+import { useRenderFlash } from '../test-utils/useRenderFlash';
 
 interface CounterRow {
   id: string;
@@ -21,6 +22,7 @@ interface Props {
  */
 export const Counter = memo(function Counter({ id }: Props) {
   const renders = useRenderCount(`Counter:${id}`);
+  const flashRef = useRenderFlash<HTMLDivElement>();
   const rows = useQuery<CounterRow>(
     `SELECT counters.id, counters.label, counters.value FROM counters WHERE REACTIVE(counters.id = UUID '${id}')`,
     ([cid, label, value]) => ({ id: cid as string, label: label as string, value: value as number }),
@@ -28,7 +30,7 @@ export const Counter = memo(function Counter({ id }: Props) {
   const row = rows[0];
   if (!row) return null;
   return (
-    <div data-testid={`counter-${id}`} className="counter">
+    <div ref={flashRef} data-testid={`counter-${id}`} className="counter">
       <span className="label">{row.label}</span>
       <span className="value" data-testid={`counter-value-${id}`}>{row.value}</span>
       <span className="renders" data-testid={`counter-renders-${id}`}>renders: {renders}</span>
