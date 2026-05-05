@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useWasm } from '@wasmdb/client';
+import { Explorer } from './explorer/Explorer';
 import { ScenarioIndex } from './scenarios/Index';
 import { ScenarioLayout } from './scenarios/Layout';
 import { SCENARIOS_BY_ID } from './scenarios/registry';
@@ -41,6 +42,14 @@ export default function App() {
     return (
       <main data-testid="app-ready" className="app">
         <ScenarioIndex />
+      </main>
+    );
+  }
+
+  if (route === 'playground') {
+    return (
+      <main data-testid="app-ready" className="app" data-route="playground">
+        <Explorer />
       </main>
     );
   }

@@ -1,0 +1,167 @@
+import { execute, nextId } from '@wasmdb/client';
+import type { TableSpec } from './types';
+
+const STATUS_OPTIONS = [
+  { value: 'online', label: 'online' },
+  { value: 'busy', label: 'busy' },
+  { value: 'away', label: 'away' },
+];
+
+export const USERS_SPEC: TableSpec = {
+  table: 'users',
+  label: 'users',
+  orderBy: 'users.name',
+  columns: [
+    { key: 'id', header: 'id', kind: 'id' },
+    {
+      key: 'name', header: 'name', kind: 'text',
+      onSave: (id, name) => { execute({ type: 'UpdateUserName', id, name }); },
+    },
+    {
+      key: 'status', header: 'status', kind: 'enum', options: STATUS_OPTIONS,
+      onSave: (id, status) => { execute({ type: 'UpdateUserStatus', id, status }); },
+    },
+  ],
+  rowAction: {
+    label: '×',
+    tooltip: 'DeleteUser',
+    fire: (id) => execute({ type: 'DeleteUser', id }),
+  },
+  create: {
+    label: 'CreateUser',
+    fields: [
+      { key: 'name', kind: 'text', placeholder: 'name' },
+      { key: 'status', kind: 'enum', options: STATUS_OPTIONS },
+    ],
+    fire: (v) => execute({
+      type: 'CreateUser',
+      id: nextId(),
+      name: String(v.name).trim(),
+      status: String(v.status),
+    }),
+  },
+};
+
+export const ROOMS_SPEC: TableSpec = {
+  table: 'rooms',
+  label: 'rooms',
+  orderBy: 'rooms.name',
+  columns: [
+    { key: 'id', header: 'id', kind: 'id' },
+    {
+      key: 'name', header: 'name', kind: 'text',
+      onSave: (id, name) => { execute({ type: 'RenameRoom', id, name }); },
+    },
+    {
+      key: 'owner_user_id', header: 'owner', kind: 'fk', ref: 'users',
+      onSave: (id, owner_user_id) => { execute({ type: 'TransferRoom', id, owner_user_id }); },
+    },
+  ],
+  rowActionDisabledTooltip: 'no DeleteRoom command exposed',
+  create: {
+    label: 'CreateRoom',
+    fields: [
+      { key: 'name', kind: 'text', placeholder: 'name' },
+      { key: 'owner_user_id', kind: 'fk', ref: 'users' },
+    ],
+    fire: (v) => execute({
+      type: 'CreateRoom',
+      id: nextId(),
+      name: String(v.name).trim(),
+      owner_user_id: String(v.owner_user_id),
+    }),
+  },
+};
+
+export const COUNTERS_SPEC: TableSpec = {
+  table: 'counters',
+  label: 'counters',
+  orderBy: 'counters.label',
+  columns: [
+    { key: 'id', header: 'id', kind: 'id' },
+    { key: 'label', header: 'label', kind: 'text', readOnly: true },
+    {
+      key: 'value', header: 'value', kind: 'number',
+      onSave: (id, value) => { execute({ type: 'SetCounterValue', id, value }); },
+    },
+  ],
+  rowActionDisabledTooltip: 'no DeleteCounter command exposed',
+  rowActionExtras: (id, row) => {
+    const value = Number(row.value ?? 0);
+    return (
+      <>
+        <button
+          className="counter-step"
+          data-testid={`exp-counters-inc-${id}`}
+          title="+1"
+          onClick={() => execute({ type: 'SetCounterValue', id, value: value + 1 })}
+        >+1</button>
+        <button
+          className="counter-step"
+          data-testid={`exp-counters-dec-${id}`}
+          title="-1"
+          onClick={() => execute({ type: 'SetCounterValue', id, value: value - 1 })}
+        >−1</button>
+      </>
+    );
+  },
+  create: {
+    label: 'CreateCounter',
+    fields: [
+      { key: 'label', kind: 'text', placeholder: 'label' },
+      { key: 'value', kind: 'number', placeholder: 'value', defaultValue: 0 },
+    ],
+    fire: (v) => execute({
+      type: 'CreateCounter',
+      id: nextId(),
+      label: String(v.label).trim(),
+      value: Number(v.value),
+    }),
+  },
+};
+
+export const MESSAGES_SPEC: TableSpec = {
+  table: 'messages',
+  label: 'messages',
+  orderBy: 'messages.created_at',
+  columns: [
+    { key: 'id', header: 'id', kind: 'id' },
+    {
+      key: 'room_id', header: 'room', kind: 'fk', ref: 'rooms',
+      onSave: (id, room_id) => { execute({ type: 'MoveMessage', id, room_id }); },
+    },
+    {
+      key: 'author_user_id', header: 'author', kind: 'fk', ref: 'users', readOnly: true,
+    },
+    { key: 'body', header: 'body', kind: 'text', readOnly: true },
+    { key: 'created_at', header: 'created', kind: 'text', readOnly: true, mono: true },
+  ],
+  rowAction: {
+    label: '×',
+    tooltip: 'DeleteMessage',
+    fire: (id) => execute({ type: 'DeleteMessage', id }),
+  },
+  create: {
+    label: 'AddMessage',
+    fields: [
+      { key: 'room_id', kind: 'fk', ref: 'rooms' },
+      { key: 'author_user_id', kind: 'fk', ref: 'users' },
+      { key: 'body', kind: 'text', placeholder: 'body' },
+    ],
+    fire: (v) => execute({
+      type: 'AddMessage',
+      id: nextId(),
+      room_id: String(v.room_id),
+      author_user_id: String(v.author_user_id),
+      body: String(v.body).trim(),
+      created_at: new Date().toISOString(),
+    }),
+  },
+};
+
+export const ALL_SPECS: TableSpec[] = [
+  USERS_SPEC,
+  ROOMS_SPEC,
+  COUNTERS_SPEC,
+  MESSAGES_SPEC,
+];

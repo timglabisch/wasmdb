@@ -21,6 +21,11 @@ export function ScenarioIndex() {
           broke isolation. Try predicting first, click, watch, then reveal
           the answer.
         </p>
+        <p className="scenario-index-playground">
+          Or jump into the <a href="#/playground" data-testid="playground-link"><strong>data playground</strong></a> —
+          live tables for every domain table, inline editing, same in-memory
+          database the scenarios use.
+        </p>
       </header>
       {ORDER.map((cat) => (
         <section key={cat} className="panel">
