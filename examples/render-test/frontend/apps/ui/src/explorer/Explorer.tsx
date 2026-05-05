@@ -2,8 +2,35 @@ import { useState } from 'react';
 import { CustomQuery } from './CustomQuery';
 import { DataTable } from './DataTable';
 import { LiveStats } from './LiveStats';
+import { Splitter } from './Splitter';
 import { ALL_SPECS } from './tableSpecs';
 import type { TableSpec } from './types';
+
+const SIDEBAR_MIN = 140;
+const SIDEBAR_MAX = 480;
+const LIVESTATS_MIN = 32;
+const LIVESTATS_MAX_RESERVE = 200;
+const STORAGE_KEY = 'explorer.layout.v1';
+
+interface Layout { sidebarW: number; liveStatsH: number }
+
+function loadLayout(): Layout {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<Layout>;
+      return {
+        sidebarW: typeof v.sidebarW === 'number' ? v.sidebarW : 220,
+        liveStatsH: typeof v.liveStatsH === 'number' ? v.liveStatsH : 180,
+      };
+    }
+  } catch { /* ignore */ }
+  return { sidebarW: 220, liveStatsH: 180 };
+}
+
+function saveLayout(layout: Layout) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(layout)); } catch { /* ignore */ }
+}
 
 type Tab =
   | { id: string; kind: 'table'; spec: TableSpec }
@@ -21,6 +48,23 @@ export function Explorer() {
     { id: `table-${ALL_SPECS[0]!.table}`, kind: 'table', spec: ALL_SPECS[0]! },
   ]);
   const [activeId, setActiveId] = useState<string>(() => `table-${ALL_SPECS[0]!.table}`);
+  const [layout, setLayout] = useState<Layout>(loadLayout);
+
+  const dragSidebar = (delta: number) => {
+    setLayout((l) => {
+      const next = { ...l, sidebarW: Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, l.sidebarW + delta)) };
+      saveLayout(next);
+      return next;
+    });
+  };
+  const dragLiveStats = (delta: number) => {
+    setLayout((l) => {
+      const max = Math.max(LIVESTATS_MIN, window.innerHeight - LIVESTATS_MAX_RESERVE);
+      const next = { ...l, liveStatsH: Math.max(LIVESTATS_MIN, Math.min(max, l.liveStatsH - delta)) };
+      saveLayout(next);
+      return next;
+    });
+  };
 
   const openTable = (spec: TableSpec) => {
     const id = `table-${spec.table}`;
@@ -50,7 +94,12 @@ export function Explorer() {
   const active = tabs.find((t) => t.id === activeId) ?? null;
 
   return (
-    <div className="explorer-shell">
+    <div
+      className="explorer-shell"
+      style={{
+        gridTemplateColumns: `${layout.sidebarW}px 4px minmax(0, 1fr)`,
+      }}
+    >
       <aside className="explorer-sidebar">
         <div className="explorer-sidebar-header">
           <span className="explorer-db-icon">▾</span>
@@ -102,6 +151,8 @@ export function Explorer() {
         </div>
       </aside>
 
+      <Splitter direction="horizontal" onDrag={dragSidebar} testid="exp-splitter-sidebar" />
+
       <main className="explorer-main">
         <div className="explorer-tabs" role="tablist">
           {tabs.map((t) => {
@@ -141,7 +192,11 @@ export function Explorer() {
           {active?.kind === 'query' && <CustomQuery key={active.id} />}
         </div>
 
-        <LiveStats />
+        <Splitter direction="vertical" onDrag={dragLiveStats} testid="exp-splitter-livestats" />
+
+        <div className="explorer-livestats-wrap" style={{ height: layout.liveStatsH }}>
+          <LiveStats />
+        </div>
       </main>
     </div>
   );
