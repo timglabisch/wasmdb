@@ -206,6 +206,7 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
     return v;
   }, [create, fkOptions]);
   const [values, setValues] = useState<Record<string, unknown>>(initial);
+  const [bulkCount, setBulkCount] = useState<number>(10);
 
   if (!create) return null;
 
@@ -220,6 +221,19 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
     if (!valid) return;
     create.fire(values);
     setValues(initial);
+  };
+
+  const submitBulk = () => {
+    if (!valid || bulkCount < 1) return;
+    for (let i = 0; i < bulkCount; i++) {
+      const v: Record<string, unknown> = { ...values };
+      for (const f of create.fields) {
+        if (f.kind === 'text' && typeof v[f.key] === 'string' && (v[f.key] as string).trim()) {
+          v[f.key] = `${(v[f.key] as string).trim()} ${i + 1}`;
+        }
+      }
+      create.fire(v);
+    }
   };
 
   return (
@@ -240,6 +254,90 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
         disabled={!valid}
         data-testid={`exp-${spec.table}-create-submit`}
       >{create.label}</button>
+      <span className="explorer-new-bulk">
+        <span className="explorer-new-bulk-times">×</span>
+        <input
+          type="number"
+          min={1}
+          max={10000}
+          value={bulkCount}
+          onChange={(e) => setBulkCount(Math.max(1, Number(e.target.value) || 1))}
+          className="explorer-new-bulk-count"
+          data-testid={`exp-${spec.table}-bulk-count`}
+        />
+        <button
+          onClick={submitBulk}
+          disabled={!valid}
+          className="explorer-new-bulk-submit"
+          title={`spawn ${bulkCount} rows · text fields get suffixed " 1", " 2" …`}
+          data-testid={`exp-${spec.table}-bulk-submit`}
+        >bulk</button>
+      </span>
+    </div>
+  );
+}
+
+const PAGE_SIZES = [25, 50, 100, 500] as const;
+
+function Pagination({
+  table,
+  total,
+  page,
+  pageSize,
+  onPage,
+  onPageSize,
+}: {
+  table: string;
+  total: number;
+  page: number;
+  pageSize: number | 'all';
+  onPage: (p: number) => void;
+  onPageSize: (s: number | 'all') => void;
+}) {
+  const effectiveSize = pageSize === 'all' ? Math.max(total, 1) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(total / effectiveSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const start = total === 0 ? 0 : safePage * effectiveSize + 1;
+  const end = Math.min(total, (safePage + 1) * effectiveSize);
+  return (
+    <div className="explorer-pagination" data-testid={`exp-${table}-pagination`}>
+      <button
+        onClick={() => onPage(0)}
+        disabled={safePage === 0}
+        title="first"
+        data-testid={`exp-${table}-page-first`}
+      >«</button>
+      <button
+        onClick={() => onPage(Math.max(0, safePage - 1))}
+        disabled={safePage === 0}
+        title="prev"
+        data-testid={`exp-${table}-page-prev`}
+      >‹</button>
+      <span className="explorer-pagination-info">
+        {start}–{end} of {total} · page {safePage + 1}/{totalPages}
+      </span>
+      <button
+        onClick={() => onPage(Math.min(totalPages - 1, safePage + 1))}
+        disabled={safePage >= totalPages - 1}
+        title="next"
+        data-testid={`exp-${table}-page-next`}
+      >›</button>
+      <button
+        onClick={() => onPage(totalPages - 1)}
+        disabled={safePage >= totalPages - 1}
+        title="last"
+        data-testid={`exp-${table}-page-last`}
+      >»</button>
+      <span className="explorer-pagination-spacer" />
+      <select
+        value={pageSize}
+        onChange={(e) => onPageSize(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+        className="explorer-pagination-size"
+        data-testid={`exp-${table}-page-size`}
+      >
+        {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}/page</option>)}
+        <option value="all">all</option>
+      </select>
     </div>
   );
 }
@@ -257,6 +355,13 @@ export function DataTable({ spec }: { spec: TableSpec }) {
     `SELECT REACTIVE(${spec.table}.id), ${spec.table}.id FROM ${spec.table} ORDER BY ${orderBy}`,
     ([_r, id]) => ({ id: id as string }),
   );
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number | 'all'>(25);
+  const visibleIds = useMemo(() => {
+    if (pageSize === 'all') return ids;
+    const start = page * pageSize;
+    return ids.slice(start, start + pageSize);
+  }, [ids, page, pageSize]);
   // FK options for the new-row form. Subscribe table-wide so the dropdowns
   // stay current. Always included so the hook order is stable.
   const userOpts = useQuery<Option>(
@@ -287,10 +392,18 @@ export function DataTable({ spec }: { spec: TableSpec }) {
             </tr>
           </thead>
           <tbody>
-            {ids.map((r) => <Row key={r.id} spec={spec} rowId={r.id} />)}
+            {visibleIds.map((r) => <Row key={r.id} spec={spec} rowId={r.id} />)}
           </tbody>
         </table>
       </div>
+      <Pagination
+        table={spec.table}
+        total={ids.length}
+        page={page}
+        pageSize={pageSize}
+        onPage={setPage}
+        onPageSize={(s) => { setPageSize(s); setPage(0); }}
+      />
       <NewRowForm spec={spec} fkOptions={fkOptions} />
     </section>
   );

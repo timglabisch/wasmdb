@@ -60,12 +60,14 @@ pub enum RenderTestCommand {
     AddMessage(AddMessage),
     DeleteMessage(DeleteMessage),
     MoveMessage(MoveMessage),
-    UpdateMessageAuthor(UpdateMessageAuthor),
-    UpdateMessageBody(UpdateMessageBody),
-    UpdateMessageCreatedAt(UpdateMessageCreatedAt),
 
     CreateCounter(CreateCounter),
     SetCounterValue(SetCounterValue),
+
+    // appended (preserve borsh variant indices above)
+    UpdateMessageAuthor(UpdateMessageAuthor),
+    UpdateMessageBody(UpdateMessageBody),
+    UpdateMessageCreatedAt(UpdateMessageCreatedAt),
     UpdateCounterLabel(UpdateCounterLabel),
 }
 
