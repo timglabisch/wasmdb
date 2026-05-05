@@ -1,4 +1,4 @@
-.PHONY: clean invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-invoice render-test render-test-types render-test-dev render-test-dev-server render-test-test kill-render-test
+.PHONY: clean invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-invoice render-test render-test-types render-test-dev render-test-dev-profiling render-test-dev-server render-test-test kill-render-test
 
 INVOICE_COMPOSE := examples/invoice-demo/docker-compose.yml
 INVOICE_SCHEMA  := examples/invoice-demo/server/sql/001_init.sql
@@ -70,6 +70,12 @@ render-test: render-test-types kill-render-test
 
 render-test-dev: render-test-types
 	wasm-pack build examples/render-test/frontend/apps/wasm --target web --out-dir pkg && cd examples/render-test/frontend/apps/ui && npm run dev
+
+# Same as render-test-dev but builds wasm with --profiling: release-level
+# optimizations + debug info / function names kept so the browser profiler
+# shows real Rust symbols instead of wasm-function[1234].
+render-test-dev-profiling: render-test-types
+	wasm-pack build examples/render-test/frontend/apps/wasm --profiling --target web --out-dir pkg && cd examples/render-test/frontend/apps/ui && npm run dev
 
 render-test-dev-server: kill-render-test
 	cargo run -p render-test-server --bin server

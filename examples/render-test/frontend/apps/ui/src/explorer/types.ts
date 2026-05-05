@@ -57,6 +57,6 @@ export interface TableSpec {
   create?: {
     label: string;
     fields: NewFieldSpec[];
-    fire: (values: Record<string, unknown>) => void;
+    fire: (values: Record<string, unknown>, streamId?: number) => void;
   };
 }

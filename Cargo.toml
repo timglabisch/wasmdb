@@ -78,3 +78,11 @@ sqlbuilder-macros     = { path = "crates/sqlbuilder/sqlbuilder-macros" }
 
 requirements          = { path = "crates/requirements" }
 wasmdb-debug          = { path = "crates/wasmdb-debug" }
+
+# Profiling profile: release-optimized but keeps debug info / function names
+# so the browser profiler shows real symbols inside the wasm module.
+# Use via `wasm-pack build --profiling` (or `cargo build --profile profiling`).
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

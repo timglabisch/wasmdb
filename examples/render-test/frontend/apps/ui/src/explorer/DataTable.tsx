@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react';
-import { useQuery } from '@wasmdb/client';
+import { createStream, flushStream, useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
 import { useRenderFlash } from '../test-utils/useRenderFlash';
 import { EditableNumber } from './EditableNumber';
@@ -223,8 +223,12 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
     setValues(initial);
   };
 
-  const submitBulk = () => {
+  const submitBulk = async () => {
     if (!valid || bulkCount < 1) return;
+    // Batch all bulk inserts onto a single stream so the client sends ONE
+    // HTTP request (instead of N). Stream's batchCount = bulkCount caps the
+    // outgoing batch at exactly the number of commands we enqueue.
+    const streamId = createStream(bulkCount, 0, 0);
     for (let i = 0; i < bulkCount; i++) {
       const v: Record<string, unknown> = { ...values };
       for (const f of create.fields) {
@@ -232,8 +236,9 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
           v[f.key] = `${(v[f.key] as string).trim()} ${i + 1}`;
         }
       }
-      create.fire(v);
+      create.fire(v, streamId);
     }
+    await flushStream(streamId);
   };
 
   return (

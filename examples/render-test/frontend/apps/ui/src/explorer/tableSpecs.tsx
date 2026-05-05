@@ -1,5 +1,13 @@
-import { execute, nextId } from '@wasmdb/client';
+import { execute, executeOnStream, nextId } from '@wasmdb/client';
 import type { TableSpec } from './types';
+
+function fireCmd(cmd: unknown, streamId?: number) {
+  if (streamId !== undefined) {
+    executeOnStream(streamId, cmd);
+  } else {
+    execute(cmd);
+  }
+}
 
 const STATUS_OPTIONS = [
   { value: 'online', label: 'online' },
@@ -33,12 +41,12 @@ export const USERS_SPEC: TableSpec = {
       { key: 'name', kind: 'text', placeholder: 'name' },
       { key: 'status', kind: 'enum', options: STATUS_OPTIONS },
     ],
-    fire: (v) => execute({
+    fire: (v, streamId) => fireCmd({
       type: 'CreateUser',
       id: nextId(),
       name: String(v.name).trim(),
       status: String(v.status),
-    }),
+    }, streamId),
   },
 };
 
@@ -64,12 +72,12 @@ export const ROOMS_SPEC: TableSpec = {
       { key: 'name', kind: 'text', placeholder: 'name' },
       { key: 'owner_user_id', kind: 'fk', ref: 'users' },
     ],
-    fire: (v) => execute({
+    fire: (v, streamId) => fireCmd({
       type: 'CreateRoom',
       id: nextId(),
       name: String(v.name).trim(),
       owner_user_id: String(v.owner_user_id),
-    }),
+    }, streamId),
   },
 };
 
@@ -114,12 +122,12 @@ export const COUNTERS_SPEC: TableSpec = {
       { key: 'label', kind: 'text', placeholder: 'label' },
       { key: 'value', kind: 'number', placeholder: 'value', defaultValue: 0 },
     ],
-    fire: (v) => execute({
+    fire: (v, streamId) => fireCmd({
       type: 'CreateCounter',
       id: nextId(),
       label: String(v.label).trim(),
       value: Number(v.value),
-    }),
+    }, streamId),
   },
 };
 
@@ -158,14 +166,14 @@ export const MESSAGES_SPEC: TableSpec = {
       { key: 'author_user_id', kind: 'fk', ref: 'users' },
       { key: 'body', kind: 'text', placeholder: 'body' },
     ],
-    fire: (v) => execute({
+    fire: (v, streamId) => fireCmd({
       type: 'AddMessage',
       id: nextId(),
       room_id: String(v.room_id),
       author_user_id: String(v.author_user_id),
       body: String(v.body).trim(),
       created_at: new Date().toISOString(),
-    }),
+    }, streamId),
   },
 };
 
