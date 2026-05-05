@@ -79,7 +79,10 @@ export const COUNTERS_SPEC: TableSpec = {
   orderBy: 'counters.label',
   columns: [
     { key: 'id', header: 'id', kind: 'id' },
-    { key: 'label', header: 'label', kind: 'text', readOnly: true },
+    {
+      key: 'label', header: 'label', kind: 'text',
+      onSave: (id, label) => { execute({ type: 'UpdateCounterLabel', id, label }); },
+    },
     {
       key: 'value', header: 'value', kind: 'number',
       onSave: (id, value) => { execute({ type: 'SetCounterValue', id, value }); },
@@ -131,10 +134,17 @@ export const MESSAGES_SPEC: TableSpec = {
       onSave: (id, room_id) => { execute({ type: 'MoveMessage', id, room_id }); },
     },
     {
-      key: 'author_user_id', header: 'author', kind: 'fk', ref: 'users', readOnly: true,
+      key: 'author_user_id', header: 'author', kind: 'fk', ref: 'users',
+      onSave: (id, author_user_id) => { execute({ type: 'UpdateMessageAuthor', id, author_user_id }); },
     },
-    { key: 'body', header: 'body', kind: 'text', readOnly: true },
-    { key: 'created_at', header: 'created', kind: 'text', readOnly: true, mono: true },
+    {
+      key: 'body', header: 'body', kind: 'text',
+      onSave: (id, body) => { execute({ type: 'UpdateMessageBody', id, body }); },
+    },
+    {
+      key: 'created_at', header: 'created', kind: 'text', mono: true,
+      onSave: (id, created_at) => { execute({ type: 'UpdateMessageCreatedAt', id, created_at }); },
+    },
   ],
   rowAction: {
     label: '×',

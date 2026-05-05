@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CustomQuery } from './CustomQuery';
 import { DataTable } from './DataTable';
+import { LiveStats } from './LiveStats';
 import { ALL_SPECS } from './tableSpecs';
 import type { TableSpec } from './types';
 
@@ -139,6 +140,8 @@ export function Explorer() {
           {active?.kind === 'table' && <DataTable key={active.id} spec={active.spec} />}
           {active?.kind === 'query' && <CustomQuery key={active.id} />}
         </div>
+
+        <LiveStats />
       </main>
     </div>
   );

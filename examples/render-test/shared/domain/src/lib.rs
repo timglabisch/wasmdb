@@ -26,10 +26,13 @@ use ts_rs::TS;
 
 use counters::command::{
     create_counter::CreateCounter, set_counter_value::SetCounterValue,
+    update_counter_label::UpdateCounterLabel,
 };
 use messages::command::{
     add_message::AddMessage, delete_message::DeleteMessage,
-    move_message::MoveMessage,
+    move_message::MoveMessage, update_message_author::UpdateMessageAuthor,
+    update_message_body::UpdateMessageBody,
+    update_message_created_at::UpdateMessageCreatedAt,
 };
 use rooms::command::{
     create_room::CreateRoom, rename_room::RenameRoom, transfer_room::TransferRoom,
@@ -57,9 +60,13 @@ pub enum RenderTestCommand {
     AddMessage(AddMessage),
     DeleteMessage(DeleteMessage),
     MoveMessage(MoveMessage),
+    UpdateMessageAuthor(UpdateMessageAuthor),
+    UpdateMessageBody(UpdateMessageBody),
+    UpdateMessageCreatedAt(UpdateMessageCreatedAt),
 
     CreateCounter(CreateCounter),
     SetCounterValue(SetCounterValue),
+    UpdateCounterLabel(UpdateCounterLabel),
 }
 
 impl Command for RenderTestCommand {
@@ -75,8 +82,12 @@ impl Command for RenderTestCommand {
             RenderTestCommand::AddMessage(c) => c.execute_optimistic(db),
             RenderTestCommand::DeleteMessage(c) => c.execute_optimistic(db),
             RenderTestCommand::MoveMessage(c) => c.execute_optimistic(db),
+            RenderTestCommand::UpdateMessageAuthor(c) => c.execute_optimistic(db),
+            RenderTestCommand::UpdateMessageBody(c) => c.execute_optimistic(db),
+            RenderTestCommand::UpdateMessageCreatedAt(c) => c.execute_optimistic(db),
             RenderTestCommand::CreateCounter(c) => c.execute_optimistic(db),
             RenderTestCommand::SetCounterValue(c) => c.execute_optimistic(db),
+            RenderTestCommand::UpdateCounterLabel(c) => c.execute_optimistic(db),
         }
     }
 }

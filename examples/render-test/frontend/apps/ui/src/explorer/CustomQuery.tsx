@@ -1,7 +1,8 @@
-import { Component, type ReactNode, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@wasmdb/client';
 import { useRenderCount } from '../test-utils/useRenderCount';
 import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { QueryErrorBoundary } from './QueryErrorBoundary';
 
 const PRESETS: { label: string; sql: string }[] = [
   {
@@ -21,26 +22,6 @@ const PRESETS: { label: string; sql: string }[] = [
     sql: `SELECT users.id, users.name\nFROM users\nWHERE REACTIVE(users.status = 'busy')`,
   },
 ];
-
-interface BoundaryState { error: string | null }
-
-class QueryErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
-  state: BoundaryState = { error: null };
-  static getDerivedStateFromError(error: unknown): BoundaryState {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
-  componentDidUpdate(prev: { children: ReactNode }) {
-    if (prev.children !== this.props.children && this.state.error) {
-      this.setState({ error: null });
-    }
-  }
-  render() {
-    if (this.state.error) {
-      return <pre className="custom-query-error" data-testid="exp-custom-query-error">{this.state.error}</pre>;
-    }
-    return this.props.children;
-  }
-}
 
 function ResultTable({ sql }: { sql: string }) {
   const renders = useRenderCount(`Explorer.CustomQuery:${sql}`);
