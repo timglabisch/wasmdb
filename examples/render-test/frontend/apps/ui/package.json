@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@wasmdb/client": "*",
+    "@wasmdb/debug-toolbar": "*",
     "render-test-generated": "*",
     "render-test-wasm": "*",
     "react": "^19",

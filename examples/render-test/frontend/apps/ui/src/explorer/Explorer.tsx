@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { DebugToolbar } from '@wasmdb/debug-toolbar';
 import { CustomQuery } from './CustomQuery';
 import { DataTable } from './DataTable';
 import { LiveStats } from './LiveStats';
@@ -49,6 +50,30 @@ export function Explorer() {
   ]);
   const [activeId, setActiveId] = useState<string>(() => `table-${ALL_SPECS[0]!.table}`);
   const [layout, setLayout] = useState<Layout>(loadLayout);
+  const [toolbarH, setToolbarH] = useState(0);
+
+  useEffect(() => {
+    let ro: ResizeObserver | null = null;
+    const attach = (el: HTMLElement) => {
+      setToolbarH(Math.round(el.getBoundingClientRect().height));
+      ro = new ResizeObserver((entries) => {
+        for (const e of entries) setToolbarH(Math.round(e.contentRect.height));
+      });
+      ro.observe(el);
+    };
+    const el = document.querySelector<HTMLElement>('.debug-toolbar');
+    if (el) {
+      attach(el);
+    } else {
+      const mo = new MutationObserver(() => {
+        const found = document.querySelector<HTMLElement>('.debug-toolbar');
+        if (found) { attach(found); mo.disconnect(); }
+      });
+      mo.observe(document.body, { childList: true, subtree: true });
+      return () => { mo.disconnect(); ro?.disconnect(); };
+    }
+    return () => { ro?.disconnect(); };
+  }, []);
 
   const dragSidebar = (delta: number) => {
     setLayout((l) => {
@@ -98,6 +123,9 @@ export function Explorer() {
       className="explorer-shell"
       style={{
         gridTemplateColumns: `${layout.sidebarW}px 4px minmax(0, 1fr)`,
+        bottom: `${toolbarH}px`,
+        height: 'auto',
+        maxHeight: 'none',
       }}
     >
       <aside className="explorer-sidebar">
@@ -198,6 +226,8 @@ export function Explorer() {
           <LiveStats />
         </div>
       </main>
+
+      <DebugToolbar />
     </div>
   );
 }
