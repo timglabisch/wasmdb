@@ -1,34 +1,20 @@
-.PHONY: clean sync sync-types sync-install sync-dev invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-sync kill-invoice
+.PHONY: clean invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-invoice render-test render-test-types render-test-dev render-test-dev-server render-test-test kill-render-test
 
 INVOICE_COMPOSE := examples/invoice-demo/docker-compose.yml
 INVOICE_SCHEMA  := examples/invoice-demo/server/sql/001_init.sql
 
-kill-sync:
-	@lsof -ti:3123 | xargs kill -9 2>/dev/null || true
-
 kill-invoice:
 	@lsof -ti:3124 | xargs kill -9 2>/dev/null || true
 
+kill-render-test:
+	@lsof -ti:3125 | xargs kill -9 2>/dev/null || true
+
 clean:
 	cargo clean
-	rm -rf examples/sync-demo/frontend/dist
-	rm -rf examples/sync-demo/wasm/pkg
 	rm -rf examples/invoice-demo/frontend/apps/ui/dist
 	rm -rf examples/invoice-demo/frontend/apps/wasm/pkg
-
-sync-types:
-	cargo test -p sync-demo-commands -- --test-threads=1
-	mkdir -p examples/sync-demo/frontend/src/generated
-	cp examples/sync-demo/commands/bindings/UserCommand.ts examples/sync-demo/frontend/src/generated/
-
-sync: sync-types kill-sync
-	wasm-pack build examples/sync-demo/wasm --target web --out-dir pkg && cd examples/sync-demo/frontend && npm run build && cd ../../.. && cargo run -p sync-demo-server --bin server
-
-sync-install:
-	npm install
-
-sync-dev: sync-types
-	wasm-pack build examples/sync-demo/wasm --target web --out-dir pkg && cd examples/sync-demo/frontend && npm run dev
+	rm -rf examples/render-test/frontend/apps/ui/dist
+	rm -rf examples/render-test/frontend/apps/wasm/pkg
 
 invoice-types:
 	mkdir -p examples/invoice-demo/frontend/packages/generated/src
@@ -71,3 +57,24 @@ invoice-db-down:
 
 install:
 	npm install
+
+# render-test: reactivity integration-test example. Echo-server (no DB), Playwright drives.
+render-test-types:
+	mkdir -p examples/render-test/frontend/packages/generated/src
+	rm -f examples/render-test/frontend/packages/generated/src/*.ts
+	cargo test -p render-test-domain -- --test-threads=1
+	touch examples/render-test/frontend/apps/wasm/build.rs
+
+render-test: render-test-types kill-render-test
+	wasm-pack build examples/render-test/frontend/apps/wasm --target web --out-dir pkg && cd examples/render-test/frontend/apps/ui && npm run build && cd ../../../../.. && cargo run -p render-test-server --bin server
+
+render-test-dev: render-test-types
+	wasm-pack build examples/render-test/frontend/apps/wasm --target web --out-dir pkg && cd examples/render-test/frontend/apps/ui && npm run dev
+
+render-test-dev-server: kill-render-test
+	cargo run -p render-test-server --bin server
+
+render-test-test: render-test-types kill-render-test
+	wasm-pack build examples/render-test/frontend/apps/wasm --target web --out-dir pkg
+	cd examples/render-test/frontend/apps/ui && npm run build
+	cd examples/render-test/tests && npx playwright test

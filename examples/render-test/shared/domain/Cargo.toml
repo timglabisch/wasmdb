@@ -1,0 +1,28 @@
+[package]
+name = "render-test-domain"
+version = "0.1.0"
+edition = "2021"
+
+# Render-test domain: 4 tables (rooms, users, messages, counters), ~12
+# commands targeting specific reactivity patterns. NO server-side execution
+# (echo-server doesn't need it) — keeps this crate wasm-friendly with no
+# MySQL/SeaORM deps.
+
+[features]
+default = []
+
+[dependencies]
+sync = { workspace = true }
+sync-client = { workspace = true }
+database = { workspace = true, features = ["borsh"] }
+sql-engine = { workspace = true, features = ["borsh", "serde"] }
+sql-parser = { workspace = true }
+requirements = { workspace = true }
+tables = { workspace = true }
+tables-storage = { workspace = true }
+rpc-command = { workspace = true }
+sqlbuilder = { workspace = true, features = ["sql-engine"] }
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+ts-rs = { version = "12", features = ["serde-compat"] }
+

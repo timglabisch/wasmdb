@@ -1615,6 +1615,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "render-test-domain"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "requirements",
+ "rpc-command",
+ "serde",
+ "sql-engine",
+ "sql-parser",
+ "sqlbuilder",
+ "sync",
+ "sync-client",
+ "tables",
+ "tables-storage",
+ "ts-rs",
+]
+
+[[package]]
+name = "render-test-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "borsh",
+ "render-test-domain",
+ "sync",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
+name = "render-test-wasm"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "js-sys",
+ "render-test-domain",
+ "requirements",
+ "serde",
+ "serde-wasm-bindgen",
+ "sql-engine",
+ "sql-parser",
+ "sync-client",
+ "tables",
+ "tables-client",
+ "tables-codegen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "requirements"
 version = "0.1.0"
 dependencies = [
@@ -2355,46 +2407,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasmdb-debug",
  "web-sys",
-]
-
-[[package]]
-name = "sync-demo-commands"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "database",
- "serde",
- "sql-engine",
- "sqlbuilder",
- "sync",
- "ts-rs",
-]
-
-[[package]]
-name = "sync-demo-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "borsh",
- "database",
- "sql-engine",
- "sync",
- "sync-demo-commands",
- "sync-server",
- "tokio",
- "tower-http",
-]
-
-[[package]]
-name = "sync-demo-wasm"
-version = "0.1.0"
-dependencies = [
- "database",
- "js-sys",
- "sql-engine",
- "sync-client",
- "sync-demo-commands",
- "wasm-bindgen",
 ]
 
 [[package]]

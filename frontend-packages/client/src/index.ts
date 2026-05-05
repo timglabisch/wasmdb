@@ -37,7 +37,7 @@ export interface WasmSyncApi {
    * Async sibling of `query`. Required when the SQL contains a
    * `schema.fn(args)` source — the sync path refuses those because it
    * would have to await an HTTP roundtrip. Optional in the shape because
-   * not every demo wires it up (sync-demo doesn't need fetchers).
+   * not every demo wires it up (render-test doesn't need fetchers).
    */
   query_async?(sql: string, params?: QueryParams | null): Promise<any[][]>;
   /**

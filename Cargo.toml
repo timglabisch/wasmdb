@@ -38,12 +38,12 @@ members = [
     "crates/wasmdb-debug",
 
     # Examples
-    "examples/sync-demo/server",
-    "examples/sync-demo/commands",
-    "examples/sync-demo/wasm",
     "examples/invoice-demo/server",
     "examples/invoice-demo/frontend/apps/wasm",
     "examples/invoice-demo/shared/domain",
+    "examples/render-test/server",
+    "examples/render-test/frontend/apps/wasm",
+    "examples/render-test/shared/domain",
 ]
 resolver = "2"
 

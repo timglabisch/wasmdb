@@ -79,13 +79,14 @@ wasmdb is reactive SQL **with** shared Rust logic **with** Z-set sync **with** n
 
 ## Demos
 
-- **`examples/sync-demo/`** — minimal end-to-end: users + orders, React frontend, live queries with JOIN + GROUP BY + COUNT.
 - **`examples/invoice-demo/`** — realistic B2B app: six tables, 38 command variants, MySQL-backed server.
+- **`examples/render-test/`** — reactivity integration-test example. Echo-server (no DB), Playwright drives complex re-render scenarios.
 
 ```bash
-make install     # npm workspaces
-make sync-dev    # ts-rs bindings → wasm-pack → vite dev
-make sync        # full build: bindings → wasm-pack → vite build → cargo run -p sync-demo-server
+make install         # npm workspaces
+make invoice-dev     # invoice-demo: ts-rs → wasm-pack → vite dev
+make render-test     # render-test: build + start echo-server (port 3125)
+make render-test-test # run Playwright integration tests
 ```
 
 ---
