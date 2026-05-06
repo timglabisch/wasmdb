@@ -1,23 +1,37 @@
 import { memo, useMemo, useState } from 'react';
 import { createStream, flushStream, useQuery } from '@wasmdb/client';
-import { useRenderCount } from '../test-utils/useRenderCount';
-import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { useRenderCount, useRenderFlash } from './hooks';
 import { EditableNumber } from './EditableNumber';
 import { EditableSelect } from './EditableSelect';
 import { EditableText } from './EditableText';
-import { RoomPicker, UserPicker } from './Pickers';
-import type { ColumnSpec, NewFieldSpec, Option, TableSpec } from './types';
+import { FkPicker } from './FkPicker';
+import type { ColumnSpec, FkResolver, NewFieldSpec, Option, TableSpec } from './types';
+
+type FkResolverMap = Record<string, FkResolver>;
+
+function resolveFk(resolvers: FkResolverMap | undefined, ref: string): FkResolver {
+  const r = resolvers?.[ref];
+  if (!r) {
+    throw new Error(
+      `Playground: missing fkResolver for ref="${ref}". ` +
+      `Add it to PlaygroundConfig.fkResolvers.`,
+    );
+  }
+  return r;
+}
 
 function Cell({
   table,
   rowId,
   col,
   value,
+  fkResolvers,
 }: {
   table: string;
   rowId: string;
   col: ColumnSpec;
   value: unknown;
+  fkResolvers: FkResolverMap | undefined;
 }) {
   const testid = `exp-${table}-${col.key}-${rowId}`;
   switch (col.kind) {
@@ -72,9 +86,9 @@ function Cell({
           </span>
         );
       }
-      const Picker = col.ref === 'users' ? UserPicker : RoomPicker;
       return (
-        <Picker
+        <FkPicker
+          resolver={resolveFk(fkResolvers, col.ref)}
           value={String(value ?? '')}
           onSave={(v) => col.onSave!(rowId, v)}
           testid={testid}
@@ -84,7 +98,15 @@ function Cell({
   }
 }
 
-const Row = memo(function Row({ spec, rowId }: { spec: TableSpec; rowId: string }) {
+const Row = memo(function Row({
+  spec,
+  rowId,
+  fkResolvers,
+}: {
+  spec: TableSpec;
+  rowId: string;
+  fkResolvers: FkResolverMap | undefined;
+}) {
   const flashRef = useRenderFlash<HTMLTableRowElement>();
   const renders = useRenderCount(`Explorer.${spec.table}.Row:${rowId}`);
   const sql = useMemo(() => {
@@ -100,7 +122,7 @@ const Row = memo(function Row({ spec, rowId }: { spec: TableSpec; rowId: string 
     <tr ref={flashRef} data-testid={`exp-${spec.table}-row-${rowId}`}>
       {spec.columns.map((c) => (
         <td key={c.key}>
-          <Cell table={spec.table} rowId={rowId} col={c} value={row[c.key]} />
+          <Cell table={spec.table} rowId={rowId} col={c} value={row[c.key]} fkResolvers={fkResolvers} />
         </td>
       ))}
       <td className="cell-renders" title={`renders: ${renders}`}>r:{renders}</td>
@@ -138,18 +160,20 @@ function NewFieldInput({
   value,
   onChange,
   onSubmit,
+  fkResolvers,
 }: {
   table: string;
   field: NewFieldSpec;
   value: unknown;
   onChange: (v: unknown) => void;
   onSubmit: () => void;
+  fkResolvers: FkResolverMap | undefined;
 }) {
   const testid = `exp-${table}-new-${field.key}`;
   if (field.kind === 'fk') {
-    const Picker = field.ref === 'users' ? UserPicker : RoomPicker;
     return (
-      <Picker
+      <FkPicker
+        resolver={resolveFk(fkResolvers, field.ref)}
         value={String(value ?? '')}
         onSave={(v) => onChange(v)}
         testid={testid}
@@ -193,18 +217,20 @@ function NewFieldInput({
   );
 }
 
-function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions }) {
+function NewRowForm({
+  spec,
+  fkResolvers,
+}: {
+  spec: TableSpec;
+  fkResolvers: FkResolverMap | undefined;
+}) {
   const create = spec.create;
   const initial = useMemo<Record<string, unknown>>(() => {
     if (!create) return {};
     const v: Record<string, unknown> = {};
-    for (const f of create.fields) {
-      v[f.key] = f.kind === 'fk'
-        ? (fkOptions[f.ref]?.[0]?.value ?? '')
-        : defaultFor(f);
-    }
+    for (const f of create.fields) v[f.key] = defaultFor(f);
     return v;
-  }, [create, fkOptions]);
+  }, [create]);
   const [values, setValues] = useState<Record<string, unknown>>(initial);
   const [bulkCount, setBulkCount] = useState<number>(10);
 
@@ -252,6 +278,7 @@ function NewRowForm({ spec, fkOptions }: { spec: TableSpec; fkOptions: FkOptions
           value={values[f.key] ?? defaultFor(f)}
           onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
           onSubmit={submit}
+          fkResolvers={fkResolvers}
         />
       ))}
       <button
@@ -347,12 +374,13 @@ function Pagination({
   );
 }
 
-interface FkOptions {
-  users?: Option[];
-  rooms?: Option[];
-}
-
-export function DataTable({ spec }: { spec: TableSpec }) {
+export function DataTable({
+  spec,
+  fkResolvers,
+}: {
+  spec: TableSpec;
+  fkResolvers: FkResolverMap | undefined;
+}) {
   const renders = useRenderCount(`Explorer.${spec.table}.Table`);
   const flashRef = useRenderFlash<HTMLDivElement>();
   const orderBy = spec.orderBy ?? `${spec.table}.id`;
@@ -367,17 +395,6 @@ export function DataTable({ spec }: { spec: TableSpec }) {
     const start = page * pageSize;
     return ids.slice(start, start + pageSize);
   }, [ids, page, pageSize]);
-  // FK options for the new-row form. Subscribe table-wide so the dropdowns
-  // stay current. Always included so the hook order is stable.
-  const userOpts = useQuery<Option>(
-    'SELECT REACTIVE(users.id), users.id, users.name FROM users ORDER BY users.name',
-    ([_r, id, n]) => ({ value: id as string, label: n as string }),
-  );
-  const roomOpts = useQuery<Option>(
-    'SELECT REACTIVE(rooms.id), rooms.id, rooms.name FROM rooms ORDER BY rooms.name',
-    ([_r, id, n]) => ({ value: id as string, label: n as string }),
-  );
-  const fkOptions: FkOptions = { users: userOpts, rooms: roomOpts };
 
   return (
     <section className="explorer-table">
@@ -397,7 +414,7 @@ export function DataTable({ spec }: { spec: TableSpec }) {
             </tr>
           </thead>
           <tbody>
-            {visibleIds.map((r) => <Row key={r.id} spec={spec} rowId={r.id} />)}
+            {visibleIds.map((r) => <Row key={r.id} spec={spec} rowId={r.id} fkResolvers={fkResolvers} />)}
           </tbody>
         </table>
       </div>
@@ -409,7 +426,9 @@ export function DataTable({ spec }: { spec: TableSpec }) {
         onPage={setPage}
         onPageSize={(s) => { setPageSize(s); setPage(0); }}
       />
-      <NewRowForm spec={spec} fkOptions={fkOptions} />
+      <NewRowForm spec={spec} fkResolvers={fkResolvers} />
     </section>
   );
 }
+
+export type { Option };

@@ -1,5 +1,5 @@
 import { execute, executeOnStream, nextId } from '@wasmdb/client';
-import type { TableSpec } from './types';
+import type { FkResolver, PlaygroundConfig, TableSpec } from '@wasmdb/playground';
 
 function fireCmd(cmd: unknown, streamId?: number) {
   if (streamId !== undefined) {
@@ -15,7 +15,7 @@ const STATUS_OPTIONS = [
   { value: 'away', label: 'away' },
 ];
 
-export const USERS_SPEC: TableSpec = {
+const USERS_SPEC: TableSpec = {
   table: 'users',
   label: 'users',
   orderBy: 'users.name',
@@ -50,7 +50,7 @@ export const USERS_SPEC: TableSpec = {
   },
 };
 
-export const ROOMS_SPEC: TableSpec = {
+const ROOMS_SPEC: TableSpec = {
   table: 'rooms',
   label: 'rooms',
   orderBy: 'rooms.name',
@@ -81,7 +81,7 @@ export const ROOMS_SPEC: TableSpec = {
   },
 };
 
-export const COUNTERS_SPEC: TableSpec = {
+const COUNTERS_SPEC: TableSpec = {
   table: 'counters',
   label: 'counters',
   orderBy: 'counters.label',
@@ -131,7 +131,7 @@ export const COUNTERS_SPEC: TableSpec = {
   },
 };
 
-export const MESSAGES_SPEC: TableSpec = {
+const MESSAGES_SPEC: TableSpec = {
   table: 'messages',
   label: 'messages',
   orderBy: 'messages.created_at',
@@ -177,9 +177,46 @@ export const MESSAGES_SPEC: TableSpec = {
   },
 };
 
-export const ALL_SPECS: TableSpec[] = [
-  USERS_SPEC,
-  ROOMS_SPEC,
-  COUNTERS_SPEC,
-  MESSAGES_SPEC,
-];
+const FK_RESOLVERS: Record<string, FkResolver> = {
+  users: {
+    query: 'SELECT REACTIVE(users.id), users.id, users.name FROM users ORDER BY users.name',
+  },
+  rooms: {
+    query: 'SELECT REACTIVE(rooms.id), rooms.id, rooms.name FROM rooms ORDER BY rooms.name',
+  },
+};
+
+export const PLAYGROUND_CONFIG: PlaygroundConfig = {
+  specs: [USERS_SPEC, ROOMS_SPEC, COUNTERS_SPEC, MESSAGES_SPEC],
+  fkResolvers: FK_RESOLVERS,
+  customQueryPresets: [
+    {
+      label: 'all users',
+      sql: `SELECT REACTIVE(users.id), users.id, users.name, users.status\nFROM users\nORDER BY users.name`,
+    },
+    {
+      label: 'rooms with owner names',
+      sql: `SELECT REACTIVE(rooms.id), rooms.name, users.name\nFROM rooms\nJOIN users ON users.id = rooms.owner_user_id\nORDER BY rooms.name`,
+    },
+    {
+      label: 'message count per room',
+      sql: `SELECT REACTIVE(messages.room_id), messages.room_id, COUNT(messages.id)\nFROM messages\nGROUP BY messages.room_id`,
+    },
+    {
+      label: 'busy users',
+      sql: `SELECT users.id, users.name\nFROM users\nWHERE REACTIVE(users.status = 'busy')`,
+    },
+  ],
+  liveQueries: [
+    { id: 'q-users', sql: 'SELECT COUNT(users.id) FROM users' },
+    { id: 'q-rooms', sql: 'SELECT COUNT(rooms.id) FROM rooms' },
+    { id: 'q-messages', sql: 'SELECT COUNT(messages.id) FROM messages' },
+    { id: 'q-counter-sum', sql: 'SELECT SUM(counters.value) FROM counters' },
+    {
+      id: 'q-status',
+      sql: 'SELECT REACTIVE(users.status), users.status, COUNT(users.id) FROM users GROUP BY users.status',
+    },
+  ],
+  backHref: '#/',
+  backLabel: '← scenarios',
+};

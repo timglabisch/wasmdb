@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useWasm } from '@wasmdb/client';
-import { Explorer } from './explorer/Explorer';
+import { Playground } from '@wasmdb/playground';
 import { ScenarioIndex } from './scenarios/Index';
 import { ScenarioLayout } from './scenarios/Layout';
 import { SCENARIOS_BY_ID } from './scenarios/registry';
 import { useRenderCount } from './test-utils/useRenderCount';
+import { PLAYGROUND_CONFIG } from './playground/config';
 import { seed } from './seed';
 import './index.css';
 
@@ -49,7 +50,7 @@ export default function App() {
   if (route === 'playground') {
     return (
       <main data-testid="app-ready" className="app" data-route="playground">
-        <Explorer />
+        <Playground config={PLAYGROUND_CONFIG} />
       </main>
     );
   }

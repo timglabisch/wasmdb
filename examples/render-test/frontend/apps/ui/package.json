@@ -10,6 +10,7 @@
   "dependencies": {
     "@wasmdb/client": "*",
     "@wasmdb/debug-toolbar": "*",
+    "@wasmdb/playground": "*",
     "render-test-generated": "*",
     "render-test-wasm": "*",
     "react": "^19",

@@ -1,21 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@wasmdb/client';
-import { useRenderCount } from '../test-utils/useRenderCount';
-import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { useRenderCount, useRenderFlash } from './hooks';
 import { QueryErrorBoundary } from './QueryErrorBoundary';
-
-interface Query { id: string; sql: string }
-
-const DEFAULT_QUERIES: Query[] = [
-  { id: 'q-users', sql: 'SELECT COUNT(users.id) FROM users' },
-  { id: 'q-rooms', sql: 'SELECT COUNT(rooms.id) FROM rooms' },
-  { id: 'q-messages', sql: 'SELECT COUNT(messages.id) FROM messages' },
-  { id: 'q-counter-sum', sql: 'SELECT SUM(counters.value) FROM counters' },
-  {
-    id: 'q-status',
-    sql: 'SELECT REACTIVE(users.status), users.status, COUNT(users.id) FROM users GROUP BY users.status',
-  },
-];
+import type { LiveQueryDef } from './types';
 
 let querySeq = 0;
 function freshId(): string {
@@ -55,7 +42,7 @@ function QueryRow({
   onChange,
   onDelete,
 }: {
-  query: Query;
+  query: LiveQueryDef;
   onChange: (sql: string) => void;
   onDelete: () => void;
 }) {
@@ -124,8 +111,10 @@ function QueryRow({
   );
 }
 
-export function LiveStats() {
-  const [queries, setQueries] = useState<Query[]>(DEFAULT_QUERIES);
+const ADD_FALLBACK = 'SELECT 1';
+
+export function LiveStats({ initial }: { initial: LiveQueryDef[] }) {
+  const [queries, setQueries] = useState<LiveQueryDef[]>(initial);
 
   const update = (id: string, sql: string) => {
     setQueries((prev) => prev.map((q) => (q.id === id ? { ...q, sql } : q)));
@@ -134,7 +123,7 @@ export function LiveStats() {
     setQueries((prev) => prev.filter((q) => q.id !== id));
   };
   const add = () => {
-    setQueries((prev) => [...prev, { id: freshId(), sql: 'SELECT COUNT(users.id) FROM users' }]);
+    setQueries((prev) => [...prev, { id: freshId(), sql: ADD_FALLBACK }]);
   };
 
   return (

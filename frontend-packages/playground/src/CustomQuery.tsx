@@ -1,27 +1,8 @@
 import { useState } from 'react';
 import { useQuery } from '@wasmdb/client';
-import { useRenderCount } from '../test-utils/useRenderCount';
-import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { useRenderCount, useRenderFlash } from './hooks';
 import { QueryErrorBoundary } from './QueryErrorBoundary';
-
-const PRESETS: { label: string; sql: string }[] = [
-  {
-    label: 'all users',
-    sql: `SELECT REACTIVE(users.id), users.id, users.name, users.status\nFROM users\nORDER BY users.name`,
-  },
-  {
-    label: 'rooms with owner names',
-    sql: `SELECT REACTIVE(rooms.id), rooms.name, users.name\nFROM rooms\nJOIN users ON users.id = rooms.owner_user_id\nORDER BY rooms.name`,
-  },
-  {
-    label: 'message count per room',
-    sql: `SELECT REACTIVE(messages.room_id), messages.room_id, COUNT(messages.id)\nFROM messages\nGROUP BY messages.room_id`,
-  },
-  {
-    label: 'busy users',
-    sql: `SELECT users.id, users.name\nFROM users\nWHERE REACTIVE(users.status = 'busy')`,
-  },
-];
+import type { QueryPreset } from './types';
 
 function ResultTable({ sql }: { sql: string }) {
   const renders = useRenderCount(`Explorer.CustomQuery:${sql}`);
@@ -61,9 +42,12 @@ function stringify(v: unknown): string {
   return String(v);
 }
 
-export function CustomQuery() {
-  const [draft, setDraft] = useState(PRESETS[0]!.sql);
-  const [committed, setCommitted] = useState<string | null>(PRESETS[0]!.sql);
+const FALLBACK_SQL = '-- write any SELECT, run with REACTIVE(...) to make it live\n';
+
+export function CustomQuery({ presets }: { presets: QueryPreset[] }) {
+  const initial = presets[0]?.sql ?? FALLBACK_SQL;
+  const [draft, setDraft] = useState(initial);
+  const [committed, setCommitted] = useState<string | null>(presets[0]?.sql ?? null);
   return (
     <section className="explorer-table">
       <header className="explorer-table-header">
@@ -84,15 +68,17 @@ export function CustomQuery() {
             data-testid="exp-custom-query-run"
             onClick={() => setCommitted(draft)}
           >Run</button>
-          <span className="custom-query-presets">
-            {PRESETS.map((p) => (
-              <button
-                key={p.label}
-                className="custom-query-preset"
-                onClick={() => { setDraft(p.sql); setCommitted(p.sql); }}
-              >{p.label}</button>
-            ))}
-          </span>
+          {presets.length > 0 && (
+            <span className="custom-query-presets">
+              {presets.map((p) => (
+                <button
+                  key={p.label}
+                  className="custom-query-preset"
+                  onClick={() => { setDraft(p.sql); setCommitted(p.sql); }}
+                >{p.label}</button>
+              ))}
+            </span>
+          )}
         </div>
       </div>
       {committed && (

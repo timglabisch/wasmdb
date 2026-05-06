@@ -1,17 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DebugToolbar } from '@wasmdb/debug-toolbar';
 import { CustomQuery } from './CustomQuery';
 import { DataTable } from './DataTable';
 import { LiveStats } from './LiveStats';
 import { Splitter } from './Splitter';
-import { ALL_SPECS } from './tableSpecs';
-import type { TableSpec } from './types';
+import type { PlaygroundConfig, TableSpec } from './types';
+import './Playground.css';
 
 const SIDEBAR_MIN = 140;
 const SIDEBAR_MAX = 480;
 const LIVESTATS_MIN = 32;
 const LIVESTATS_MAX_RESERVE = 200;
-const STORAGE_KEY = 'explorer.layout.v1';
+const STORAGE_KEY = 'wasmdb-playground.layout.v1';
 
 interface Layout { sidebarW: number; liveStatsH: number }
 
@@ -44,11 +44,24 @@ function makeQueryTab(): Tab {
   return { id: `query-${queryTabSeq}`, kind: 'query', title: `console ${queryTabSeq}` };
 }
 
-export function Explorer() {
-  const [tabs, setTabs] = useState<Tab[]>(() => [
-    { id: `table-${ALL_SPECS[0]!.table}`, kind: 'table', spec: ALL_SPECS[0]! },
-  ]);
-  const [activeId, setActiveId] = useState<string>(() => `table-${ALL_SPECS[0]!.table}`);
+export function Playground({ config }: { config: PlaygroundConfig }) {
+  const {
+    specs,
+    fkResolvers,
+    customQueryPresets = [],
+    liveQueries = [],
+    backHref = '#/',
+    backLabel = '← back',
+  } = config;
+
+  const initialTab = useMemo<Tab[]>(() => {
+    if (specs.length === 0) return [];
+    const first = specs[0]!;
+    return [{ id: `table-${first.table}`, kind: 'table', spec: first }];
+  }, [specs]);
+
+  const [tabs, setTabs] = useState<Tab[]>(initialTab);
+  const [activeId, setActiveId] = useState<string>(() => initialTab[0]?.id ?? '');
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const [toolbarH, setToolbarH] = useState(0);
 
@@ -137,7 +150,7 @@ export function Explorer() {
           <li className="explorer-tree-group">
             <span className="explorer-tree-group-label">▾ tables</span>
             <ul className="explorer-tree-children">
-              {ALL_SPECS.map((spec) => {
+              {specs.map((spec) => {
                 const id = `table-${spec.table}`;
                 const isOpen = tabs.some((t) => t.id === id);
                 const isActive = activeId === id;
@@ -175,7 +188,7 @@ export function Explorer() {
           </li>
         </ul>
         <div className="explorer-sidebar-footer">
-          <a href="#/" data-testid="explorer-back">← scenarios</a>
+          <a href={backHref} data-testid="explorer-back">{backLabel}</a>
         </div>
       </aside>
 
@@ -216,14 +229,14 @@ export function Explorer() {
 
         <div className="explorer-tab-body">
           {active === null && <div className="explorer-empty">no tab open · pick a table from the tree</div>}
-          {active?.kind === 'table' && <DataTable key={active.id} spec={active.spec} />}
-          {active?.kind === 'query' && <CustomQuery key={active.id} />}
+          {active?.kind === 'table' && <DataTable key={active.id} spec={active.spec} fkResolvers={fkResolvers} />}
+          {active?.kind === 'query' && <CustomQuery key={active.id} presets={customQueryPresets} />}
         </div>
 
         <Splitter direction="vertical" onDrag={dragLiveStats} testid="exp-splitter-livestats" />
 
         <div className="explorer-livestats-wrap" style={{ height: layout.liveStatsH }}>
-          <LiveStats />
+          <LiveStats initial={liveQueries} />
         </div>
       </main>
 
