@@ -1,7 +1,6 @@
 import { memo, useState } from 'react';
 import { peekQuery } from '@wasmdb/client';
-import { useRenderCount } from '../test-utils/useRenderCount';
-import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { useRenderCount, useRenderFlash } from '@wasmdb/scenarios';
 import { SEED } from '../seed';
 
 /**

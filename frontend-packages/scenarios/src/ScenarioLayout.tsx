@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import type { Scenario } from './types';
 import { CATEGORY_LABEL } from './types';
-import { resetRenderLog } from '../test-utils/useRenderCount';
 import { ActionProvider, LastActionPanel } from './ActionTracker';
-import { SCENARIOS } from './registry';
+import { resetRenderLog } from './renderLog';
+import './Scenarios.css';
 
 interface Props {
   scenario: Scenario;
+  /** Full registry — used for prev/next navigation and position display. */
+  scenarios: Scenario[];
+  /** Hash to jump back to the index. Defaults to `#/`. */
+  backHref?: string;
+  backLabel?: string;
 }
 
 /**
@@ -16,19 +21,24 @@ interface Props {
  * diff panel, and finally the scenario body. Acts as living documentation
  * with immediate cause→effect feedback.
  */
-export function ScenarioLayout({ scenario }: Props) {
+export function ScenarioLayout({
+  scenario,
+  scenarios,
+  backHref = '#/',
+  backLabel = '← all scenarios',
+}: Props) {
   const [revealed, setRevealed] = useState(false);
-  const idx = SCENARIOS.findIndex((s) => s.id === scenario.id);
-  const prev = idx > 0 ? SCENARIOS[idx - 1] : null;
-  const next = idx >= 0 && idx < SCENARIOS.length - 1 ? SCENARIOS[idx + 1] : null;
+  const idx = scenarios.findIndex((s) => s.id === scenario.id);
+  const prev = idx > 0 ? scenarios[idx - 1] : null;
+  const next = idx >= 0 && idx < scenarios.length - 1 ? scenarios[idx + 1] : null;
 
   return (
     <ActionProvider scenario={scenario}>
       <div className="scenario-page">
         <nav className="scenario-nav">
-          <a href="#/" data-testid="scenario-back">← all scenarios</a>
+          <a href={backHref} data-testid="scenario-back">{backLabel}</a>
           <span className="scenario-crumb">{CATEGORY_LABEL[scenario.category]}</span>
-          <span className="scenario-pos">{idx + 1} / {SCENARIOS.length}</span>
+          <span className="scenario-pos">{idx + 1} / {scenarios.length}</span>
           <span className="scenario-nav-spacer" />
           {prev && (
             <a className="scenario-prev" href={`#/${prev.id}`} title={prev.title}>

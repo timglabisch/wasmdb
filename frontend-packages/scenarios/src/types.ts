@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 
-export type ScenarioCategory = 'counters' | 'users' | 'rooms' | 'messages' | 'joins' | 'hooks';
+export type ScenarioCategory =
+  | 'reactivity'
+  | 'filters'
+  | 'joins'
+  | 'aggregates'
+  | 'ordering'
+  | 'batching'
+  | 'lifecycle';
 
 export interface Subscription {
   component: string;
@@ -35,10 +42,21 @@ export interface Scenario {
 }
 
 export const CATEGORY_LABEL: Record<ScenarioCategory, string> = {
-  counters: 'Counters',
-  users: 'Users',
-  rooms: 'Rooms',
-  messages: 'Messages',
-  joins: 'Joins',
-  hooks: 'Hook probes',
+  reactivity: 'Reactivity — what ticks, what stays quiet',
+  filters:    'Filters & predicates — WHERE boundaries',
+  joins:      'Joins & cross-table queries',
+  aggregates: 'Aggregates — COUNT / SUM / EXISTS',
+  ordering:   'Ordering — ORDER BY behavior',
+  batching:   'Batching & bulk writes',
+  lifecycle:  'Lifecycle & hooks — teardown, rebind, peek',
 };
+
+export const CATEGORY_ORDER: ScenarioCategory[] = [
+  'reactivity',
+  'filters',
+  'joins',
+  'aggregates',
+  'ordering',
+  'batching',
+  'lifecycle',
+];

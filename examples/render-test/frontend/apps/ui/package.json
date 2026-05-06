@@ -11,6 +11,7 @@
     "@wasmdb/client": "*",
     "@wasmdb/debug-toolbar": "*",
     "@wasmdb/playground": "*",
+    "@wasmdb/scenarios": "*",
     "render-test-generated": "*",
     "render-test-wasm": "*",
     "react": "^19",

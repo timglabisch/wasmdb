@@ -1,7 +1,6 @@
 import { memo } from 'react';
 import { useQuery } from '@wasmdb/client';
-import { useRenderCount } from '../test-utils/useRenderCount';
-import { useRenderFlash } from '../test-utils/useRenderFlash';
+import { useRenderCount, useRenderFlash } from '@wasmdb/scenarios';
 
 interface Props {
   roomId: string;

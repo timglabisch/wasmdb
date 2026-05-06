@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useWasm } from '@wasmdb/client';
 import { Playground } from '@wasmdb/playground';
-import { ScenarioIndex } from './scenarios/Index';
-import { ScenarioLayout } from './scenarios/Layout';
-import { SCENARIOS_BY_ID } from './scenarios/registry';
-import { useRenderCount } from './test-utils/useRenderCount';
+import { ScenarioApp, useRenderCount } from '@wasmdb/scenarios';
+import { SCENARIOS } from './scenarios/registry';
 import { PLAYGROUND_CONFIG } from './playground/config';
 import { seed } from './seed';
 import './index.css';
@@ -39,14 +37,6 @@ export default function App() {
   if (!ready) return <div data-testid="loading">loading wasm…</div>;
   if (!seeded) return <div data-testid="seeding">seeding…</div>;
 
-  if (route === null) {
-    return (
-      <main data-testid="app-ready" className="app">
-        <ScenarioIndex />
-      </main>
-    );
-  }
-
   if (route === 'playground') {
     return (
       <main data-testid="app-ready" className="app" data-route="playground">
@@ -55,24 +45,17 @@ export default function App() {
     );
   }
 
-  const scenario = SCENARIOS_BY_ID[route];
-  if (!scenario) {
-    return (
-      <main data-testid="app-ready" className="app">
-        <div className="scenario-page">
-          <nav className="scenario-nav">
-            <a href="#/" data-testid="scenario-back">← all scenarios</a>
-          </nav>
-          <h1>Unknown scenario: <code>{route}</code></h1>
-          <p>Pick one from the index.</p>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main data-testid="app-ready" className="app" data-scenario-id={scenario.id}>
-      <ScenarioLayout scenario={scenario} />
+    <main
+      data-testid="app-ready"
+      className="app"
+      {...(route !== null ? { 'data-scenario-id': route } : {})}
+    >
+      <ScenarioApp
+        scenarios={SCENARIOS}
+        title="render-test scenarios"
+        playground={{ href: '#/playground' }}
+      />
     </main>
   );
 }

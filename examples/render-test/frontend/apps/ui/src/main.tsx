@@ -2,8 +2,8 @@ import { createRoot } from 'react-dom/client';
 import initWasm, * as wasm from 'render-test-wasm';
 import { provideWasm, markReady } from '@wasmdb/client';
 import { setDebugWasm } from '@wasmdb/debug-toolbar';
+import { resetRenderLog } from '@wasmdb/scenarios';
 import App from './App.tsx';
-import { resetRenderLog } from './test-utils/useRenderCount.ts';
 
 void (async () => {
   await initWasm();
