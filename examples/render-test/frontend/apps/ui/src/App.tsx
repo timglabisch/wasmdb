@@ -7,14 +7,24 @@ import { PLAYGROUND_CONFIG } from './playground/config';
 import { seed } from './seed';
 import './index.css';
 
-function parseHash(): string | null {
-  const h = window.location.hash;
-  if (!h || h === '#' || h === '#/') return null;
-  return h.replace(/^#\/?/, '');
+interface HashRoute {
+  path: string | null;
+  params: URLSearchParams;
 }
 
-function useHashRoute(): string | null {
-  const [route, setRoute] = useState<string | null>(parseHash());
+function parseHash(): HashRoute {
+  const h = window.location.hash;
+  if (!h || h === '#' || h === '#/') return { path: null, params: new URLSearchParams() };
+  const stripped = h.replace(/^#\/?/, '');
+  const qIdx = stripped.indexOf('?');
+  if (qIdx === -1) return { path: stripped, params: new URLSearchParams() };
+  const path = stripped.slice(0, qIdx);
+  const params = new URLSearchParams(stripped.slice(qIdx + 1));
+  return { path: path === '' ? null : path, params };
+}
+
+function useHashRoute(): HashRoute {
+  const [route, setRoute] = useState<HashRoute>(parseHash());
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     window.addEventListener('hashchange', onHash);
@@ -37,10 +47,20 @@ export default function App() {
   if (!ready) return <div data-testid="loading">loading wasm…</div>;
   if (!seeded) return <div data-testid="seeding">seeding…</div>;
 
-  if (route === 'playground') {
+  if (route.path === 'playground') {
+    const from = route.params.get('from');
+    const sql = route.params.get('sql');
+    const table = route.params.get('table');
+    const config = from
+      ? { ...PLAYGROUND_CONFIG, backHref: `#/${from}`, backLabel: '← back to scenario' }
+      : PLAYGROUND_CONFIG;
     return (
       <main data-testid="app-ready" className="app" data-route="playground">
-        <Playground config={PLAYGROUND_CONFIG} />
+        <Playground
+          config={config}
+          initialSql={sql ?? undefined}
+          initialTable={table ?? undefined}
+        />
       </main>
     );
   }
@@ -49,7 +69,7 @@ export default function App() {
     <main
       data-testid="app-ready"
       className="app"
-      {...(route !== null ? { 'data-scenario-id': route } : {})}
+      {...(route.path !== null ? { 'data-scenario-id': route.path } : {})}
     >
       <ScenarioApp
         scenarios={SCENARIOS}

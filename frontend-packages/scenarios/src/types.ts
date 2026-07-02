@@ -13,6 +13,13 @@ export interface Subscription {
   component: string;
   sql: string;
   note?: string;
+  /**
+   * Executable substitute for `sql` when generating "→ open in playground"
+   * deep-links. Use this when the displayed `sql` contains placeholders
+   * (e.g. `<room-id>`) that wouldn't actually run. If absent, the displayed
+   * `sql` is used directly.
+   */
+  playgroundSql?: string;
 }
 
 export interface Scenario {
@@ -39,6 +46,12 @@ export interface Scenario {
    * the observed reactivity.
    */
   subscriptions?: Subscription[];
+  /**
+   * Drives the primary "Open in playground" button at the top of the
+   * scenario layout. If absent, the button still appears but with no SQL
+   * or table — just `from=<id>`.
+   */
+  playgroundFocus?: { table?: string; sql?: string };
 }
 
 export const CATEGORY_LABEL: Record<ScenarioCategory, string> = {

@@ -44,10 +44,10 @@ function stringify(v: unknown): string {
 
 const FALLBACK_SQL = '-- write any SELECT, run with REACTIVE(...) to make it live\n';
 
-export function CustomQuery({ presets }: { presets: QueryPreset[] }) {
-  const initial = presets[0]?.sql ?? FALLBACK_SQL;
+export function CustomQuery({ presets, initialSql }: { presets: QueryPreset[]; initialSql?: string }) {
+  const initial = initialSql ?? presets[0]?.sql ?? FALLBACK_SQL;
   const [draft, setDraft] = useState(initial);
-  const [committed, setCommitted] = useState<string | null>(presets[0]?.sql ?? null);
+  const [committed, setCommitted] = useState<string | null>(initialSql ?? presets[0]?.sql ?? null);
   return (
     <section className="explorer-table">
       <header className="explorer-table-header">

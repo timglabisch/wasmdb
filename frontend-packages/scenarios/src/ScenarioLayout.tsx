@@ -3,6 +3,7 @@ import type { Scenario } from './types';
 import { CATEGORY_LABEL } from './types';
 import { ActionProvider, LastActionPanel } from './ActionTracker';
 import { resetRenderLog } from './renderLog';
+import { buildPlaygroundHref } from './playgroundLink';
 import './Scenarios.css';
 
 interface Props {
@@ -12,6 +13,11 @@ interface Props {
   /** Hash to jump back to the index. Defaults to `#/`. */
   backHref?: string;
   backLabel?: string;
+  /**
+   * Base hash for the playground. Defaults to `#/playground`. Used as the
+   * `base` of every "Open in playground" deep-link rendered on the page.
+   */
+  playgroundHref?: string;
 }
 
 /**
@@ -26,11 +32,19 @@ export function ScenarioLayout({
   scenarios,
   backHref = '#/',
   backLabel = '← all scenarios',
+  playgroundHref = '#/playground',
 }: Props) {
   const [revealed, setRevealed] = useState(false);
   const idx = scenarios.findIndex((s) => s.id === scenario.id);
   const prev = idx > 0 ? scenarios[idx - 1] : null;
   const next = idx >= 0 && idx < scenarios.length - 1 ? scenarios[idx + 1] : null;
+
+  const primaryPlaygroundHref = buildPlaygroundHref({
+    base: playgroundHref,
+    from: scenario.id,
+    sql: scenario.playgroundFocus?.sql,
+    table: scenario.playgroundFocus?.table,
+  });
 
   return (
     <ActionProvider scenario={scenario}>
@@ -63,6 +77,13 @@ export function ScenarioLayout({
             >
               Reset render counts
             </button>
+            <a
+              className="scenario-playground-jump"
+              href={primaryPlaygroundHref}
+              data-testid="scenario-playground-jump"
+            >
+              Open in playground →
+            </a>
           </div>
         </header>
 
@@ -103,13 +124,31 @@ export function ScenarioLayout({
           <section className="scenario-subscriptions">
             <h2>What each component subscribes to</h2>
             <ul>
-              {scenario.subscriptions.map((s, i) => (
-                <li key={i}>
-                  <div className="sub-name"><strong>{s.component}</strong></div>
-                  <pre><code>{s.sql}</code></pre>
-                  {s.note && <small>{s.note}</small>}
-                </li>
-              ))}
+              {scenario.subscriptions.map((s, i) => {
+                const hidePlaygroundLink =
+                  !s.playgroundSql && /<[^>]+>/.test(s.sql);
+                const subHref = buildPlaygroundHref({
+                  base: playgroundHref,
+                  from: scenario.id,
+                  sql: s.playgroundSql ?? s.sql,
+                });
+                return (
+                  <li key={i}>
+                    <div className="sub-name"><strong>{s.component}</strong></div>
+                    <pre><code>{s.sql}</code></pre>
+                    {s.note && <small>{s.note}</small>}
+                    {!hidePlaygroundLink && (
+                      <a
+                        className="subscription-playground-link"
+                        href={subHref}
+                        data-testid={`subscription-playground-link-${i}`}
+                      >
+                        → open in playground
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}

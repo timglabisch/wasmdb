@@ -13,6 +13,8 @@ export type { TrackedButtonVariant } from './TrackedButton';
 
 export { resetRenderLog } from './renderLog';
 
+export { buildPlaygroundHref } from './playgroundLink';
+
 // Re-export the render-counter hooks from the playground package so scenario
 // bodies can pull everything from a single import.
 export { useRenderCount, useRenderFlash } from '@wasmdb/playground';

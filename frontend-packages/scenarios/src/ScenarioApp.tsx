@@ -57,5 +57,11 @@ export function ScenarioApp({ scenarios, playground, title, intro }: Props) {
     );
   }
 
-  return <ScenarioLayout scenario={scenario} scenarios={scenarios} />;
+  return (
+    <ScenarioLayout
+      scenario={scenario}
+      scenarios={scenarios}
+      {...(playground?.href ? { playgroundHref: playground.href } : {})}
+    />
+  );
 }

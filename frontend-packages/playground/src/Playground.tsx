@@ -35,16 +35,24 @@ function saveLayout(layout: Layout) {
 
 type Tab =
   | { id: string; kind: 'table'; spec: TableSpec }
-  | { id: string; kind: 'query'; title: string };
+  | { id: string; kind: 'query'; title: string; initialSql?: string };
 
 let queryTabSeq = 0;
 
-function makeQueryTab(): Tab {
+function makeQueryTab(initialSql?: string): Tab {
   queryTabSeq += 1;
-  return { id: `query-${queryTabSeq}`, kind: 'query', title: `console ${queryTabSeq}` };
+  return { id: `query-${queryTabSeq}`, kind: 'query', title: `console ${queryTabSeq}`, initialSql };
 }
 
-export function Playground({ config }: { config: PlaygroundConfig }) {
+export function Playground({
+  config,
+  initialSql,
+  initialTable,
+}: {
+  config: PlaygroundConfig;
+  initialSql?: string;
+  initialTable?: string;
+}) {
   const {
     specs,
     fkResolvers,
@@ -54,14 +62,37 @@ export function Playground({ config }: { config: PlaygroundConfig }) {
     backLabel = '← back',
   } = config;
 
-  const initialTab = useMemo<Tab[]>(() => {
-    if (specs.length === 0) return [];
-    const first = specs[0]!;
-    return [{ id: `table-${first.table}`, kind: 'table', spec: first }];
+  const initialState = useMemo<{ tabs: Tab[]; activeId: string }>(() => {
+    if (specs.length === 0) return { tabs: [], activeId: '' };
+
+    const tabs: Tab[] = [];
+    let tableTabId: string | null = null;
+    let queryTabId: string | null = null;
+
+    if (initialTable !== undefined) {
+      const matched = specs.find((s) => s.table === initialTable);
+      const chosen = matched ?? specs[0]!;
+      tableTabId = `table-${chosen.table}`;
+      tabs.push({ id: tableTabId, kind: 'table', spec: chosen });
+    } else if (initialSql === undefined) {
+      const first = specs[0]!;
+      tableTabId = `table-${first.table}`;
+      tabs.push({ id: tableTabId, kind: 'table', spec: first });
+    }
+
+    if (initialSql !== undefined) {
+      const queryTab = makeQueryTab(initialSql);
+      queryTabId = queryTab.id;
+      tabs.push(queryTab);
+    }
+
+    const activeId = queryTabId ?? tableTabId ?? '';
+    return { tabs, activeId };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [specs]);
 
-  const [tabs, setTabs] = useState<Tab[]>(initialTab);
-  const [activeId, setActiveId] = useState<string>(() => initialTab[0]?.id ?? '');
+  const [tabs, setTabs] = useState<Tab[]>(initialState.tabs);
+  const [activeId, setActiveId] = useState<string>(initialState.activeId);
   const [layout, setLayout] = useState<Layout>(loadLayout);
   const [toolbarH, setToolbarH] = useState(0);
 
@@ -230,7 +261,7 @@ export function Playground({ config }: { config: PlaygroundConfig }) {
         <div className="explorer-tab-body">
           {active === null && <div className="explorer-empty">no tab open · pick a table from the tree</div>}
           {active?.kind === 'table' && <DataTable key={active.id} spec={active.spec} fkResolvers={fkResolvers} />}
-          {active?.kind === 'query' && <CustomQuery key={active.id} presets={customQueryPresets} />}
+          {active?.kind === 'query' && <CustomQuery key={active.id} presets={customQueryPresets} initialSql={active.initialSql} />}
         </div>
 
         <Splitter direction="vertical" onDrag={dragLiveStats} testid="exp-splitter-livestats" />
