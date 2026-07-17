@@ -20,7 +20,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub struct Builder {
-    source_root: Option<PathBuf>,
+    source_roots: Vec<PathBuf>,
     out_file: String,
     mode: Mode,
     url: String,
@@ -45,7 +45,7 @@ impl Default for Builder {
 impl Builder {
     pub fn new() -> Self {
         Self {
-            source_root: None,
+            source_roots: Vec::new(),
             out_file: "generated.rs".into(),
             mode: Mode::Client,
             url: "/table-fetch".into(),
@@ -56,9 +56,12 @@ impl Builder {
         }
     }
 
-    /// Path to the source crate's `src/` (where `lib.rs` lives).
+    /// Path to a source crate's `src/` (where `lib.rs` lives). **Additiv:**
+    /// mehrfaches Aufrufen scannt MEHRERE Crates in EIN Modell (die Roots werden
+    /// gemergt, nicht überschrieben) — nötig, seit `#[row]`-Deklarationen über
+    /// zwei Crates verteilt liegen (z.B. Domain-Stammdaten + Beleg-Read-Model).
     pub fn source_root(mut self, path: impl AsRef<Path>) -> Self {
-        self.source_root = Some(path.as_ref().to_path_buf());
+        self.source_roots.push(path.as_ref().to_path_buf());
         self
     }
 
@@ -114,11 +117,22 @@ impl Builder {
     }
 
     pub fn compile(self) -> Result<(), CodegenError> {
-        let root = self
-            .source_root
-            .as_ref()
+        let (first, rest) = self
+            .source_roots
+            .split_first()
             .ok_or(CodegenError::MissingSourceRoot)?;
-        let model = parse::scan(root)?;
+        // Ein Modell über ALLE Roots: den ersten scannen, jeden weiteren
+        // hineinmergen. Rows/Queries verschiedener Crates leben in disjunkten
+        // Modulpfaden; `emit` baut daraus den Modulbaum und EIN
+        // `register_all_tables`. Ohne diesen Merge gewönne der letzte
+        // `source_root`-Aufruf und die Tabellen der übrigen Crates verschwänden
+        // still aus der Registrierung.
+        let mut model = parse::scan(first)?;
+        for root in rest {
+            let m = parse::scan(root)?;
+            model.modules.extend(m.modules);
+            model.scanned_files.extend(m.scanned_files);
+        }
 
         for path in &model.scanned_files {
             println!("cargo::rerun-if-changed={}", path.display());
