@@ -1,8 +1,9 @@
-//! Proves the §9.3 incremental EXECUTION of the fold shim: already
+//! Proves the §9.3/§11 incremental EXECUTION of the fold shim: already
 //! folded committed rows are not re-applied (memoized committed-prefix
-//! snapshot), read-dirty only re-renders, pendings refold from the
-//! snapshot, and a backfill behind the committed frontier falls back to
-//! fold-from-zero. The apply counters make execution (not just results)
+//! snapshot keyed by the server-chain id list), read-dirty only
+//! re-renders, pendings refold from the snapshot, and a server reorder of
+//! the committed chain (the id list stops extending the memo) falls back
+//! to fold-from-zero. The apply counters make execution (not just results)
 //! observable; each test owns its projection type and counter because
 //! tests run in parallel within one binary.
 
@@ -12,14 +13,14 @@ use database::Database;
 use database_projection::db_host::DatabaseHost;
 use database_projection::{Out, ProjectionEngine, RenderCtx};
 use rpc_command::rpc_command;
-use sql_engine::storage::{CellValue, ZSet};
+use sql_engine::storage::{CellValue, Uuid, ZSet};
 use sql_engine::DbTable;
-use tables::ProjectionLog;
+use tables::{ProjectionLog, ROOT_PARENT};
 use tables_storage::{projection, projection_row, row};
 
 #[projection_row]
 pub struct DraftLog {
-    pub command_id: i64,
+    pub command_id: Uuid,
     pub doc_id: i64,
 }
 
@@ -54,11 +55,38 @@ pub struct TotalLabeled {
     pub label: String,
 }
 
-fn log_row(command_id: i64, seq: i64, committed: i64, price_cents: i64) -> DraftLog {
-    let payload =
-        rpc_command::payload_json(&SetLinePrice { id: command_id, doc_id: 1, price_cents })
-            .unwrap();
-    DraftLog { command_id, doc_id: 1, seq, committed, payload }
+fn uuid(n: u8) -> Uuid {
+    let mut bytes = [0u8; 16];
+    bytes[15] = n;
+    Uuid(bytes)
+}
+
+fn payload(n: u8, price_cents: i64) -> String {
+    rpc_command::payload_json(&SetLinePrice { id: n as i64, doc_id: 1, price_cents }).unwrap()
+}
+
+/// A committed row (partition `doc_id = 1`): the server linked it after
+/// `parent`. No drift, so the client link mirrors the server link.
+fn committed_row(n: u8, parent: Uuid, price_cents: i64) -> DraftLog {
+    DraftLog {
+        command_id: uuid(n),
+        doc_id: 1,
+        client_parent_id: parent,
+        server_parent_id: Some(parent),
+        payload: payload(n, price_cents),
+    }
+}
+
+/// A pending row: off-chain (`server_parent_id = None`), on the client's
+/// optimistic chain after `client_parent`.
+fn pending_row(n: u8, client_parent: Uuid, price_cents: i64) -> DraftLog {
+    DraftLog {
+        command_id: uuid(n),
+        doc_id: 1,
+        client_parent_id: client_parent,
+        server_parent_id: None,
+        payload: payload(n, price_cents),
+    }
 }
 
 fn insert<R: DbTable>(db: &mut Database, row: R) -> ZSet {
@@ -121,14 +149,18 @@ fn committed_rows_fold_only_once() {
     engine.register(Box::new(FoldA::default())).unwrap();
 
     let mut batch = ZSet::new();
-    for row in [log_row(100, 0, 1, 10), log_row(101, 1, 1, 20), log_row(102, 2, 1, 30)] {
+    for row in [
+        committed_row(100, ROOT_PARENT, 10),
+        committed_row(101, uuid(100), 20),
+        committed_row(102, uuid(101), 30),
+    ] {
         batch.extend(insert(&mut db, row));
     }
     derive(&mut db, &mut engine, &batch);
     assert_eq!(APPLIES_A.load(Ordering::SeqCst), 3);
     assert_eq!(single_row(&db, "total")[1], CellValue::I64(60));
 
-    let batch = insert(&mut db, log_row(103, 3, 1, 5));
+    let batch = insert(&mut db, committed_row(103, uuid(102), 5));
     derive(&mut db, &mut engine, &batch);
     assert_eq!(
         APPLIES_A.load(Ordering::SeqCst),
@@ -184,7 +216,7 @@ fn read_change_rerenders_without_refolding() {
     engine.register(Box::new(FoldB::default())).unwrap();
 
     let mut batch = ZSet::new();
-    for row in [log_row(100, 0, 1, 10), log_row(101, 1, 1, 20)] {
+    for row in [committed_row(100, ROOT_PARENT, 10), committed_row(101, uuid(100), 20)] {
         batch.extend(insert(&mut db, row));
     }
     derive(&mut db, &mut engine, &batch);
@@ -234,7 +266,11 @@ fn pendings_refold_from_the_committed_snapshot() {
     engine.register(Box::new(FoldC::default())).unwrap();
 
     let mut batch = ZSet::new();
-    for row in [log_row(100, 0, 1, 10), log_row(101, 1, 1, 20), log_row(102, 0, 0, 1)] {
+    for row in [
+        committed_row(100, ROOT_PARENT, 10),
+        committed_row(101, uuid(100), 20),
+        pending_row(102, uuid(101), 1), // pending after the committed tail
+    ] {
         batch.extend(insert(&mut db, row));
     }
     derive(&mut db, &mut engine, &batch);
@@ -243,13 +279,13 @@ fn pendings_refold_from_the_committed_snapshot() {
 
     // A second pending: the committed prefix is skipped, but pendings are
     // never memoized — BOTH refold on top of the snapshot.
-    let batch = insert(&mut db, log_row(103, 1, 0, 2));
+    let batch = insert(&mut db, pending_row(103, uuid(102), 2));
     derive(&mut db, &mut engine, &batch);
     assert_eq!(APPLIES_C.load(Ordering::SeqCst), 5, "2 committed skipped, 2 pendings folded");
     assert_eq!(single_row(&db, "total")[1], CellValue::I64(33));
 }
 
-// ── 4: backfill behind the frontier invalidates the memo ─────────────
+// ── 4: a server reorder of the committed chain folds from zero ────────
 
 static APPLIES_D: AtomicUsize = AtomicUsize::new(0);
 
@@ -276,7 +312,7 @@ impl FoldD {
 }
 
 #[test]
-fn backfill_behind_the_frontier_folds_from_zero() {
+fn reorder_of_the_committed_chain_folds_from_zero() {
     let mut db = Database::new();
     db.register_table::<DraftLog>().unwrap();
     db.register_table::<Total>().unwrap();
@@ -284,20 +320,37 @@ fn backfill_behind_the_frontier_folds_from_zero() {
     engine.register(Box::new(FoldD::default())).unwrap();
 
     let mut batch = ZSet::new();
-    for row in [log_row(100, 2, 1, 10), log_row(101, 5, 1, 20)] {
+    for row in [committed_row(100, ROOT_PARENT, 10), committed_row(101, uuid(100), 20)] {
         batch.extend(insert(&mut db, row));
     }
     derive(&mut db, &mut engine, &batch);
     assert_eq!(APPLIES_D.load(Ordering::SeqCst), 2);
+    assert_eq!(single_row(&db, "total")[1], CellValue::I64(30));
 
-    // seq 3 lands BEHIND the folded frontier (tail backfill): the seq
-    // list [2,5] is no prefix of [2,3,5] — fold from zero, once.
-    let batch = insert(&mut db, log_row(102, 3, 1, 100));
-    derive(&mut db, &mut engine, &batch);
-    assert_eq!(APPLIES_D.load(Ordering::SeqCst), 5, "full refold after backfill");
+    // The server re-links the committed chain, inserting 102 BETWEEN 100 and
+    // 101: 100 → 102 → 101. The reconcile deletes the old 101 (linked after
+    // 100) and re-inserts it linked after 102 (a drift: its client link
+    // stays 100). The committed id list becomes [100, 102, 101] — no longer
+    // a prefix of the memoized [100, 101] — so the shim folds from zero.
+    let old_101 = committed_row(101, uuid(100), 20);
+    let relinked_101 = DraftLog {
+        command_id: uuid(101),
+        doc_id: 1,
+        client_parent_id: uuid(100), // client still believes it follows 100
+        server_parent_id: Some(uuid(102)),
+        payload: payload(101, 20),
+    };
+    let mut reorder = ZSet::new();
+    reorder.delete(DraftLog::TABLE.into(), old_101.into_cells());
+    reorder.insert(DraftLog::TABLE.into(), committed_row(102, uuid(100), 100).into_cells());
+    reorder.insert(DraftLog::TABLE.into(), relinked_101.into_cells());
+    db.apply_zset(&reorder).unwrap();
+    derive(&mut db, &mut engine, &reorder);
+
+    assert_eq!(APPLIES_D.load(Ordering::SeqCst), 5, "full refold after the reorder");
     assert_eq!(
         single_row(&db, "total")[1],
         CellValue::I64(130),
-        "fold order includes the backfilled row"
+        "fold order is the re-linked server chain 100 → 102 → 101"
     );
 }

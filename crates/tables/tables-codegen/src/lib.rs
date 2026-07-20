@@ -257,7 +257,7 @@ mod tests {
         let field_names: Vec<&str> = log.fields.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             field_names,
-            vec!["command_id", "doc_id", "seq", "committed", "payload"]
+            vec!["command_id", "doc_id", "client_parent_id", "server_parent_id", "payload"]
         );
         assert_eq!(log.pk_name, "command_id");
         assert!(log.exports.is_empty());
@@ -270,7 +270,7 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(tokens.contains("struct DraftLog"), "{tokens}");
-        assert!(tokens.contains("committed"), "{tokens}");
+        assert!(tokens.contains("server_parent_id"), "{tokens}");
         assert!(tokens.contains("payload"), "{tokens}");
     }
 

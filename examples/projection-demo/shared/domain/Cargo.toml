@@ -35,3 +35,7 @@ database = { workspace = true, features = ["borsh"] }
 database-projection = { workspace = true }
 sql-engine = { workspace = true, features = ["borsh", "serde"] }
 sync = { workspace = true }
+# Host-drives the real gap-repair core (`missing_parents`) against the demo
+# server's `ServerLog` in `tests/gap_repair.rs`. Dev-only — the wasm cdylib
+# never links it.
+sync-client = { workspace = true }

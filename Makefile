@@ -90,8 +90,10 @@ render-test-test: render-test-types kill-render-test
 	cd examples/render-test/frontend/apps/ui && npm run build
 	cd examples/render-test/tests && npx playwright test
 
-# projection-demo: the projection-engine showcase. Confirm-server (no DB,
-# flips `committed`), event-sourced ledger, live derived `balance`.
+# projection-demo: the projection-engine showcase. Confirm-server (no SQL DB,
+# stamps `server_parent_id` from a chain-head map and serves committed rows
+# by PK for gap-repair, §11/§11.4), event-sourced ledger, live derived
+# `balance`.
 projection-demo-types:
 	mkdir -p examples/projection-demo/frontend/packages/generated/src
 	rm -f examples/projection-demo/frontend/packages/generated/src/*.ts

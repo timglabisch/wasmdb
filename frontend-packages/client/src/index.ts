@@ -66,6 +66,25 @@ export interface WasmSyncApi {
    * exhausted. Call in a loop until it returns `null` to finish the cycle.
    */
   next_dirty(): DirtyNotification | null;
+  /**
+   * Backward-refetch gap-repair (commit-chain v2, design §11.4). After a
+   * confirm, walk any committed `server_parent_id` this client doesn't hold
+   * backward — fetching the missing ancestor rows by PK from `fetchPath`
+   * and applying them (which re-folds the affected projection partition) —
+   * until the chain is contiguous from ROOT. Resolves to the number of rows
+   * backfilled. Optional: only demos with a fetch-by-PK endpoint wire it.
+   */
+  repair_chain?(table: string, fetchPath: string): Promise<number>;
+  /**
+   * Bootstrap a projection-log table from the server (commit-chain v2). The
+   * client DB is wasm-memory only, so a reload/new tab starts empty: this
+   * asks `headsPath` for the current chain heads, fetches the ones not yet
+   * held from `fetchPath`, then walks each chain to ROOT — reconstructing
+   * the whole committed history and re-folding the projections. Resolves to
+   * the number of rows backfilled. Optional: only demos with a heads +
+   * fetch-by-PK endpoint wire it.
+   */
+  bootstrap?(table: string, headsPath: string, fetchPath: string): Promise<number>;
 
   // ── Requirements API (typed-deps useQuery overload) ─────────────
   /**
@@ -236,6 +255,41 @@ export function flushStream(streamId: number): Promise<void> {
  */
 export function nextId(): string {
   return crypto.randomUUID();
+}
+
+/**
+ * Run commit-chain-v2 gap-repair (design §11.4) on a projection-log table:
+ * backfill any committed ancestors this client is missing by refetching
+ * them from `fetchPath` (default `/fetch`), until the chain is contiguous
+ * from ROOT. Resolves to the number of rows backfilled — `0` when the chain
+ * is already whole (a cheap local scan, no round-trip) or when the wasm
+ * module doesn't expose the repair loop.
+ */
+export function repairChain(table: string, fetchPath: string = '/fetch'): Promise<number> {
+  const w = wasm();
+  if (!w.repair_chain) return Promise.resolve(0);
+  return w.repair_chain(table, fetchPath);
+}
+
+/**
+ * Bootstrap a projection-log table's state from the server (commit-chain
+ * v2). Because the client DB lives only in wasm memory, a page reload or a
+ * fresh tab starts empty — this rebuilds it: fetch the current chain heads
+ * from `headsPath` (default `/heads`), pull the ones not yet held via
+ * `fetchPath` (default `/fetch`), then walk each chain back to ROOT. The
+ * projections re-fold as rows land, so the UI shows the full state again.
+ * Resolves to the number of rows backfilled — `0` if the wasm module
+ * doesn't expose the bootstrap. Call once after wasm is ready; calling it
+ * again (e.g. after a `/foreign-write`) pulls newer entries in live.
+ */
+export function bootstrap(
+  table: string,
+  headsPath: string = '/heads',
+  fetchPath: string = '/fetch',
+): Promise<number> {
+  const w = wasm();
+  if (!w.bootstrap) return Promise.resolve(0);
+  return w.bootstrap(table, headsPath, fetchPath);
 }
 
 // ── React hooks ───────────────────────────────────────────────────

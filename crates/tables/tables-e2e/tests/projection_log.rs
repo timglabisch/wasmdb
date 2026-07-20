@@ -1,21 +1,22 @@
-//! E2E of `#[projection_row]` (M6a/§9.6): the struct declares only
-//! `command_id` and the partition column (inferred — no attribute
-//! argument); the macro appends `seq`, `committed` and `payload`,
-//! expands to a full `#[row]` and implements `tables::ProjectionLog`.
-//! A hand-written append (`sync::append::{next_seq, append_row}` +
-//! `rpc_command::payload_json`) fills exactly the generated shape.
+//! E2E of `#[projection_row]` (M6a/§9.6/§11): the struct declares only
+//! `command_id` (Uuid) and the partition column (inferred — no attribute
+//! argument); the macro appends the two-parent-link bookkeeping columns
+//! `client_parent_id`, `server_parent_id` and `payload`, expands to a full
+//! `#[row]` and implements `tables::ProjectionLog`. A hand-written append
+//! (`sync::append::{client_head, append_row}` + `rpc_command::payload_json`)
+//! fills exactly the generated shape.
 
 use database::Database;
 use rpc_command::rpc_command;
-use sql_engine::storage::CellValue;
+use sql_engine::storage::{CellValue, Uuid};
 use sql_engine::DbTable;
-use sync::append::{append_row, next_seq};
-use tables::ProjectionLog;
+use sync::append::{append_row, client_head};
+use tables::{ProjectionLog, ROOT_PARENT};
 use tables_storage::{projection, projection_row, row};
 
 #[projection_row]
 pub struct DraftLog {
-    pub command_id: i64,
+    pub command_id: Uuid,
     pub doc_id: i64,
 }
 
@@ -28,15 +29,28 @@ pub struct SetLinePrice {
     pub price_cents: i64,
 }
 
+/// Deterministic command id from a small counter — no RNG in fixtures.
+fn uuid(n: u8) -> Uuid {
+    let mut bytes = [0u8; 16];
+    bytes[15] = n;
+    Uuid(bytes)
+}
+
 /// Append one event to `DraftLog` by hand — the pattern that replaced the
-/// generated `append_to` impl: provisional per-partition `seq`,
-/// `committed = 0` (off-chain), payload = the event's RPC form.
-fn append(db: &mut Database, command_id: i64, doc_id: i64, price_cents: i64) {
+/// generated `append_to` impl: `client_parent_id` = the partition's current
+/// chain head, `server_parent_id = None` (off-chain until the server links
+/// it), payload = the event's RPC form.
+fn append(db: &mut Database, n: u8, doc_id: i64, price_cents: i64) {
     let partition = CellValue::from(doc_id);
-    let seq = next_seq::<DraftLog>(db, DraftLog::PARTITION_COLUMN, &partition).unwrap();
+    let client_parent_id =
+        client_head::<DraftLog>(db, DraftLog::PARTITION_COLUMN, &partition).unwrap();
     let payload =
-        rpc_command::payload_json(&SetLinePrice { id: command_id, doc_id, price_cents }).unwrap();
-    append_row(db, DraftLog { command_id, doc_id, seq, committed: 0, payload }).unwrap();
+        rpc_command::payload_json(&SetLinePrice { id: n as i64, doc_id, price_cents }).unwrap();
+    append_row(
+        db,
+        DraftLog { command_id: uuid(n), doc_id, client_parent_id, server_parent_id: None, payload },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -45,7 +59,7 @@ fn log_form_generates_the_full_row_shape() {
     let names: Vec<&str> = schema.columns.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(
         names,
-        vec!["command_id", "doc_id", "seq", "committed", "payload"]
+        vec!["command_id", "doc_id", "client_parent_id", "server_parent_id", "payload"]
     );
     assert_eq!(schema.primary_key, vec![0]);
     assert_eq!(DraftLog::TABLE, "draft_log");
@@ -58,20 +72,31 @@ fn log_form_infers_the_partition_column() {
 
 #[test]
 fn log_row_roundtrips_through_cells() {
+    // A committed row: `server_parent_id = Some(..)`.
     let row = DraftLog {
-        command_id: 7,
+        command_id: uuid(7),
         doc_id: 1,
-        seq: 3,
-        committed: 1,
+        client_parent_id: uuid(3),
+        server_parent_id: Some(uuid(3)),
         payload: "{}".into(),
     };
-    let cells = row.into_cells();
-    let back = DraftLog::from_cells(&cells).unwrap();
-    assert_eq!(back.command_id, 7);
-    assert_eq!(back.doc_id, 1);
-    assert_eq!(back.seq, 3);
-    assert_eq!(back.committed, 1);
+    let back = DraftLog::from_cells(&row.clone().into_cells()).unwrap();
+    assert_eq!(back.command_id, uuid(7));
+    assert_eq!(back.client_parent_id, uuid(3));
+    assert_eq!(back.server_parent_id, Some(uuid(3)));
     assert_eq!(back.payload, "{}");
+
+    // A pending row: `server_parent_id = None` maps to a NULL cell and back.
+    let pending = DraftLog {
+        command_id: uuid(8),
+        doc_id: 1,
+        client_parent_id: uuid(7),
+        server_parent_id: None,
+        payload: "{}".into(),
+    };
+    let cells = pending.into_cells();
+    assert_eq!(cells[3], CellValue::Null, "None server parent is a NULL cell");
+    assert_eq!(DraftLog::from_cells(&cells).unwrap().server_parent_id, None);
 }
 
 #[test]
@@ -84,67 +109,74 @@ fn hand_written_append_fills_the_generated_shape() {
 
     let t = db.table(DraftLog::TABLE).unwrap();
     let ncols = t.schema.columns.len();
-    let mut rows: Vec<DraftLog> = t
+    let rows: Vec<DraftLog> = t
         .row_ids()
         .map(|r| {
             let cells: Vec<CellValue> = (0..ncols).map(|c| t.get(r, c)).collect();
             DraftLog::from_cells(&cells).unwrap()
         })
         .collect();
-    rows.sort_by_key(|r| r.seq);
-
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].command_id, 100);
-    assert_eq!(rows[0].seq, 0);
-    assert_eq!(rows[0].committed, 0, "optimistic rows are off-chain");
-    assert_eq!(rows[1].seq, 1, "provisional seq counts per partition");
+
+    let first = rows.iter().find(|r| r.command_id == uuid(100)).unwrap();
+    let second = rows.iter().find(|r| r.command_id == uuid(101)).unwrap();
+
+    // The first event opens the partition's chain (parent = ROOT); the
+    // second links to the first — the client chain, built by `client_head`.
+    assert_eq!(first.client_parent_id, ROOT_PARENT);
+    assert_eq!(second.client_parent_id, uuid(100), "chained onto the head");
+    assert_eq!(first.server_parent_id, None, "optimistic rows are off-chain");
+    assert_eq!(second.server_parent_id, None);
 
     // Payload is the command's own wire form — deserializable back.
-    let back: SetLinePrice = serde_json::from_str(&rows[1].payload).unwrap();
+    let back: SetLinePrice = second.decode().unwrap();
     assert_eq!(back.id, 101);
     assert_eq!(back.price_cents, 900);
 }
 
-// ── Generated fold helpers (§9.6) ────────────────────────────────────
+// ── Generated fold helpers (§9.6/§11) ────────────────────────────────
 
-fn log_row(command_id: i64, seq: i64, committed: i64, payload: &str) -> DraftLog {
-    DraftLog { command_id, doc_id: 1, seq, committed, payload: payload.into() }
+fn log_row(command_id: Uuid, client_parent: Uuid, server_parent: Option<Uuid>, payload: &str) -> DraftLog {
+    DraftLog { command_id, doc_id: 1, client_parent_id: client_parent, server_parent_id: server_parent, payload: payload.into() }
 }
 
 #[test]
 fn decode_roundtrips_the_payload_and_names_the_type_on_error() {
     let cmd = SetLinePrice { id: 100, doc_id: 1, price_cents: 1500 };
     let payload = rpc_command::payload_json(&cmd).unwrap();
-    let row = log_row(100, 0, 0, &payload);
+    let row = log_row(uuid(100), ROOT_PARENT, None, &payload);
 
     let back: SetLinePrice = row.decode().unwrap();
     assert_eq!(back.price_cents, 1500);
 
-    let err = log_row(101, 1, 0, "not json").decode::<SetLinePrice>().unwrap_err();
+    let err = log_row(uuid(101), ROOT_PARENT, None, "not json")
+        .decode::<SetLinePrice>()
+        .unwrap_err();
     assert!(err.contains("SetLinePrice"), "error names the type: {err}");
 }
 
 #[test]
-fn is_committed_reads_the_convention_column() {
-    assert!(!log_row(1, 0, 0, "{}").is_committed());
-    assert!(log_row(2, 0, 1, "{}").is_committed());
+fn is_committed_reads_the_server_parent_link() {
+    // No server link yet → pending; a server link (even to ROOT) → committed.
+    assert!(!log_row(uuid(1), ROOT_PARENT, None, "{}").is_committed());
+    assert!(log_row(uuid(2), ROOT_PARENT, Some(ROOT_PARENT), "{}").is_committed());
 }
 
 #[test]
-fn in_fold_order_sorts_committed_by_seq_then_pendings() {
-    // Arrival order scrambled: a pending with LOW provisional seq must
-    // still fold after every committed row (§9.3 fold order).
+fn in_fold_order_walks_the_chain() {
+    // Arrival order scrambled: the committed server chain must come first
+    // (ROOT → 100 → 101), then the pending client tail (101 → 103 → 104).
     let rows = vec![
-        log_row(103, 0, 0, "{}"), // pending, provisional seq 0
-        log_row(101, 5, 1, "{}"), // committed, seq 5
-        log_row(104, 1, 0, "{}"), // pending, provisional seq 1
-        log_row(100, 2, 1, "{}"), // committed, seq 2
+        log_row(uuid(103), uuid(101), None, "{}"),                 // pending after tail
+        log_row(uuid(101), uuid(100), Some(uuid(100)), "{}"),      // committed 2nd
+        log_row(uuid(104), uuid(103), None, "{}"),                 // pending after 103
+        log_row(uuid(100), ROOT_PARENT, Some(ROOT_PARENT), "{}"),  // committed 1st
     ];
-    let ordered: Vec<i64> = DraftLog::in_fold_order(&rows)
+    let ordered: Vec<Uuid> = DraftLog::in_fold_order(&rows)
         .into_iter()
         .map(|r| r.command_id)
         .collect();
-    assert_eq!(ordered, vec![100, 101, 103, 104]);
+    assert_eq!(ordered, vec![uuid(100), uuid(101), uuid(103), uuid(104)]);
 }
 
 // ── Impl-form partition inference from the log source (§9.6) ─────────

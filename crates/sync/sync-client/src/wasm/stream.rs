@@ -331,12 +331,19 @@ fn finish_flush<C: Command + 'static>(stream_id_val: u64) {
 }
 
 async fn do_fetch(body: &[u8]) -> Result<Vec<u8>, JsValue> {
+    post_bytes("/command", body).await
+}
+
+/// POST `body` as `application/octet-stream` to `path`, returning the raw
+/// response bytes. The shared transport behind both the confirm flush and
+/// the gap-repair fetch ([`crate::wasm::api::repair_chain`]).
+pub(crate) async fn post_bytes(path: &str, body: &[u8]) -> Result<Vec<u8>, JsValue> {
     let opts = web_sys::RequestInit::new();
     opts.set_method("POST");
     let uint8_body = Uint8Array::from(body);
     opts.set_body(&uint8_body);
 
-    let request = web_sys::Request::new_with_str_and_init("/command", &opts)?;
+    let request = web_sys::Request::new_with_str_and_init(path, &opts)?;
     request.headers().set("Content-Type", "application/octet-stream")?;
 
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no global window"))?;

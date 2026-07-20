@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useWasm } from '@wasmdb/client';
+import { bootstrap, useQuery, useWasm } from '@wasmdb/client';
 import { DebugToolbar } from '@wasmdb/debug-toolbar';
-import { post } from './commands';
-import { seed } from './seed';
+import { post, foreignWriteCarol } from './commands';
 import './index.css';
 
 // ── Derived read model: `balance`, maintained by BalanceFold ─────────
@@ -28,27 +27,83 @@ function useBalances(): BalanceRow[] {
 
 // ── The raw event log: `ledger_log` ──────────────────────────────────
 
+// The chain root sentinel (design §11): the nil UUID, mirroring
+// `tables::ROOT_PARENT`.
+const ROOT_PARENT = '00000000-0000-0000-0000-000000000000';
+
 interface LedgerRow {
+  commandId: string;
   account: string;
-  seq: number;
-  committed: boolean;
+  clientParentId: string;
+  // null while pending (off-chain); the server's link once committed.
+  serverParentId: string | null;
   amountCents: number;
 }
 
+// Committed once the server has linked the row into the chain (§11).
+const isCommitted = (e: LedgerRow): boolean => e.serverParentId !== null;
+// Drift: the server sorted the row after a different predecessor than the
+// client optimistically assumed (§11.4). Only meaningful once committed.
+const hasDrift = (e: LedgerRow): boolean =>
+  isCommitted(e) && e.serverParentId !== e.clientParentId;
+
+// Fold order within one account — mirrors `ProjectionLog::in_fold_order`
+// (§11.3): the committed server-parent chain from ROOT, then the pending
+// client-parent tail. There is no `seq` column any more; order IS the
+// chain. Rows a broken chain can't reach are appended last.
+function chainOrder(rows: LedgerRow[]): LedgerRow[] {
+  const committedByParent = new Map<string, LedgerRow>();
+  const pendingByParent = new Map<string, LedgerRow>();
+  for (const r of rows) {
+    if (r.serverParentId !== null) committedByParent.set(r.serverParentId, r);
+    else pendingByParent.set(r.clientParentId, r);
+  }
+  const out: LedgerRow[] = [];
+  const seen = new Set<string>();
+  let cursor = ROOT_PARENT;
+  while (committedByParent.has(cursor)) {
+    const r = committedByParent.get(cursor)!;
+    if (seen.has(r.commandId)) break;
+    seen.add(r.commandId);
+    out.push(r);
+    cursor = r.commandId;
+  }
+  while (pendingByParent.has(cursor)) {
+    const r = pendingByParent.get(cursor)!;
+    if (seen.has(r.commandId)) break;
+    seen.add(r.commandId);
+    out.push(r);
+    cursor = r.commandId;
+  }
+  for (const r of rows) if (!seen.has(r.commandId)) out.push(r);
+  return out;
+}
+
 function useLedger(): LedgerRow[] {
-  return useQuery<LedgerRow>(
-    'SELECT REACTIVE(ledger_log.command_id), ledger_log.account, ledger_log.seq,' +
-      ' ledger_log.committed, ledger_log.payload' +
-      ' FROM ledger_log ORDER BY ledger_log.account, ledger_log.seq',
+  const rows = useQuery<LedgerRow>(
+    'SELECT REACTIVE(ledger_log.command_id), ledger_log.command_id, ledger_log.account,' +
+      ' ledger_log.client_parent_id, ledger_log.server_parent_id, ledger_log.payload' +
+      ' FROM ledger_log ORDER BY ledger_log.account',
     // col 0 is the REACTIVE(...) marker that binds the subscription; skip it.
-    ([, account, seq, committed, payload]) => ({
+    ([, commandId, account, clientParentId, serverParentId, payload]) => ({
+      commandId: commandId as string,
       account: account as string,
-      seq: seq as number,
-      committed: (committed as number) !== 0,
+      clientParentId: clientParentId as string,
+      serverParentId: (serverParentId as string | null) ?? null,
       // The payload is the EntryPosted event: { amount_cents }.
       amountCents: (JSON.parse(payload as string) as { amount_cents: number }).amount_cents,
     }),
   );
+
+  // Reconstruct each account's chain order client-side — SQL can't traverse
+  // the parent links, and `seq` is gone (§11).
+  const byAccount = new Map<string, LedgerRow[]>();
+  for (const r of rows) {
+    const group = byAccount.get(r.account) ?? [];
+    group.push(r);
+    byAccount.set(r.account, group);
+  }
+  return [...byAccount.keys()].sort().flatMap((a) => chainOrder(byAccount.get(a)!));
 }
 
 // ── Formatting ───────────────────────────────────────────────────────
@@ -105,23 +160,26 @@ function Ledger({ rows }: { rows: LedgerRow[] }) {
           <thead>
             <tr>
               <th>account</th>
-              <th className="num">seq</th>
               <th className="num">amount</th>
               <th>state</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((e) => (
-              <tr key={`${e.account}-${e.seq}`}>
+              <tr key={e.commandId}>
                 <td className="acct">{e.account}</td>
-                <td className="num muted">{e.seq}</td>
                 <td className={`num amount ${e.amountCents < 0 ? 'neg' : 'pos'}`}>
                   {euro(e.amountCents)}
                 </td>
                 <td>
-                  <span className={`badge ${e.committed ? 'committed' : 'pending'}`}>
-                    {e.committed ? 'committed' : 'pending'}
+                  <span className={`badge ${isCommitted(e) ? 'committed' : 'pending'}`}>
+                    {isCommitted(e) ? 'committed' : 'pending'}
                   </span>
+                  {hasDrift(e) && (
+                    <span className="badge drift" title="server linked it after a different row than the client assumed">
+                      drift
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -137,9 +195,24 @@ const ACCOUNTS = ['alice', 'bob', 'carol'];
 function Controls() {
   const [account, setAccount] = useState('alice');
   const [amount, setAmount] = useState('10.00');
+  const [repairMsg, setRepairMsg] = useState<string | null>(null);
+  const [foreignBusy, setForeignBusy] = useState(false);
 
   const cents = Math.round(parseFloat(amount || '0') * 100);
   const valid = Number.isFinite(cents) && cents > 0 && account.trim().length > 0;
+
+  // Advance carol out-of-band, then let bootstrap gap-repair the new rows
+  // in — a live §11.4 demonstration mid-session.
+  const runForeignWrite = () => {
+    setForeignBusy(true);
+    setRepairMsg(null);
+    void foreignWriteCarol()
+      .then((n) =>
+        setRepairMsg(`another writer advanced carol · repair pulled ${n} row${n === 1 ? '' : 's'} in`),
+      )
+      .catch((e) => setRepairMsg(`foreign write failed: ${String(e)}`))
+      .finally(() => setForeignBusy(false));
+  };
 
   return (
     <section className="panel controls">
@@ -193,6 +266,12 @@ function Controls() {
           </button>
         ))}
       </div>
+      <div className="row foreign">
+        <button className="chip foreign" disabled={foreignBusy} onClick={runForeignWrite}>
+          {foreignBusy ? 'syncing…' : 'simulate another writer → carol'}
+        </button>
+        {repairMsg && <span className="repair-status">{repairMsg}</span>}
+      </div>
     </section>
   );
 }
@@ -229,12 +308,18 @@ function Dashboard() {
 
 export default function App() {
   const ready = useWasm();
-  const [seeded, setSeeded] = useState(false);
+  const [booted, setBooted] = useState(false);
 
+  // The client DB is wasm-memory only, so every load starts empty. Rather
+  // than re-seed hardcoded rows, rebuild state from the server: fetch the
+  // chain heads and walk each chain to ROOT (design §11.4). This is itself
+  // a gap-repair — and why a reload no longer wipes the ledger.
   useEffect(() => {
-    if (!ready || seeded) return;
-    void seed().then(() => setSeeded(true));
-  }, [ready, seeded]);
+    if (!ready || booted) return;
+    bootstrap('ledger_log')
+      .catch((e) => console.error('[bootstrap] failed — is the confirm-server up on :3126?', e))
+      .finally(() => setBooted(true));
+  }, [ready, booted]);
 
   if (!ready) return <div className="loading">loading wasm…</div>;
 

@@ -1473,6 +1473,7 @@ dependencies = [
  "serde",
  "sql-engine",
  "sync",
+ "sync-client",
  "tables",
  "tables-storage",
  "ts-rs",
@@ -2520,6 +2521,7 @@ dependencies = [
  "borsh",
  "serde",
  "serde_json",
+ "sql-engine",
 ]
 
 [[package]]

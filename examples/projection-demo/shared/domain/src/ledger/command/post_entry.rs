@@ -2,12 +2,12 @@ use database::Database;
 use rpc_command::{payload_json, rpc_command};
 use sql_engine::storage::{CellValue, Uuid};
 use sql_engine::DbTable;
-use sync::append::{append_row, next_seq};
+use sync::append::{append_row, client_head};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use tables::ProjectionLog;
 
-use crate::ServerCommand;
+use crate::{ServerCommand, ServerLog};
 
 use super::super::ledger_log::{EntryPosted, LedgerLog};
 
@@ -33,22 +33,25 @@ pub struct PostEntry {
 
 impl Command for PostEntry {
     /// Append one `EntryPosted` event to the ledger log. Building the row
-    /// is the command's job: a provisional per-partition `seq`,
-    /// `committed = 0` (off-chain until the server confirms), the event as
-    /// the JSON payload the fold decodes back. The same append could come
-    /// from any other trigger — it is an effect, not the command's identity.
+    /// is the command's job: `client_parent_id` = the account's current
+    /// client-chain head (its optimistic predecessor), `server_parent_id =
+    /// None` (off-chain until the server links it), the event as the JSON
+    /// payload the fold decodes back (design §11). The same append could
+    /// come from any other trigger — it is an effect, not the command's
+    /// identity.
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         let payload = payload_json(&EntryPosted { amount_cents: self.amount_cents })
             .map_err(CommandError::ExecutionFailed)?;
         let partition = CellValue::from(self.account.clone());
-        let seq = next_seq::<LedgerLog>(db, LedgerLog::PARTITION_COLUMN, &partition)?;
+        let client_parent_id =
+            client_head::<LedgerLog>(db, LedgerLog::PARTITION_COLUMN, &partition)?;
         append_row(
             db,
             LedgerLog {
                 command_id: self.id,
                 account: self.account.clone(),
-                seq,
-                committed: 0,
+                client_parent_id,
+                server_parent_id: None,
                 payload,
             },
         )
@@ -56,21 +59,33 @@ impl Command for PostEntry {
 }
 
 impl ServerCommand for PostEntry {
-    /// Approve the append. The demo confirm-server holds no store, so this is
-    /// a pure transform: echo the client's delta back with the `ledger_log`
-    /// row flipped to `committed = 1` (design §4.7). The client's invert+apply
-    /// reconcile then finalizes the optimistic row — advancing the fold's
-    /// committed frontier and flipping the UI from pending to confirmed.
-    fn execute_server(&self, client_zset: &ZSet) -> Result<ZSet, CommandError> {
-        let committed_idx = LedgerLog::schema()
+    /// Approve the append. The demo confirm-server holds a small in-memory
+    /// log ([`ServerLog`]): echo the client's delta back with the
+    /// `ledger_log` row's `server_parent_id` stamped to the account's
+    /// current chain head (design §11.5) — `ROOT_PARENT` for the first
+    /// commit — advance that head, and *record* the committed row so a later
+    /// gap-repair can refetch it. The client's invert+apply reconcile then
+    /// finalizes the optimistic row (`server_parent_id: None` → `Some(..)`),
+    /// advancing the fold's committed frontier and flipping the UI from
+    /// pending to confirmed. A per-row drift is then visible as
+    /// `client_parent_id != server_parent_id`; if the stamped parent is one
+    /// the client never fetched, its repair loop backfills it (§11.4).
+    fn execute_server(
+        &self,
+        client_zset: &ZSet,
+        log: &mut ServerLog,
+    ) -> Result<ZSet, CommandError> {
+        let server_parent = log.link(&self.account, self.id);
+        let server_parent_idx = LedgerLog::schema()
             .columns
             .iter()
-            .position(|c| c.name == "committed")
-            .expect("ledger_log has a `committed` column");
+            .position(|c| c.name == "server_parent_id")
+            .expect("ledger_log has a `server_parent_id` column");
         let mut zset = client_zset.clone();
         for entry in &mut zset.entries {
             if entry.table == LedgerLog::TABLE {
-                entry.row[committed_idx] = CellValue::I64(1);
+                entry.row[server_parent_idx] = CellValue::from(server_parent);
+                log.record(self.id, entry.row.clone());
             }
         }
         Ok(zset)

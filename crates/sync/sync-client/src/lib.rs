@@ -1,5 +1,6 @@
 pub mod stream;
 pub mod client;
+pub mod repair;
 
 pub use client::SyncClient;
 

@@ -4,9 +4,11 @@ use tables_storage::projection_row;
 
 /// The append-only event log for account entries. `#[projection_row]`
 /// declares only the identity — `command_id` (PK) and the `account`
-/// partition — and generates the bookkeeping columns `seq`, `committed`
-/// and `payload`. The payload holds the domain *event* ([`EntryPosted`]),
-/// not the command that produced it.
+/// partition — and generates the two-parent-link bookkeeping columns
+/// `client_parent_id`, `server_parent_id` and `payload` (design §11). The
+/// payload holds the domain *event* ([`EntryPosted`]), not the command that
+/// produced it. A row is committed once the server has set its
+/// `server_parent_id`.
 ///
 /// One partition = one account's independently-ordered event stream.
 #[projection_row]

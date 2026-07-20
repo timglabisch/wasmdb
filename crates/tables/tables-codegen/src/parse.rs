@@ -205,8 +205,9 @@ fn parse_projection(imp: &syn::ItemImpl) -> Result<Projection, CodegenError> {
 
 /// Parse a `#[projection_row]` struct into a [`Row`], mirroring the
 /// macro's expansion: the source declares `command_id` (PK) and the
-/// partition column; `seq`/`committed`/`payload` are appended here
-/// exactly like the macro appends them, so the client-mode row
+/// partition column; the two-parent-link bookkeeping
+/// `client_parent_id`/`server_parent_id`/`payload` is appended here
+/// exactly like the macro appends it (design §11), so the client-mode row
 /// duplicate matches the expanded original.
 fn parse_projection_row(s: &ItemStruct) -> Result<Row, CodegenError> {
     let name = s.ident.to_string();
@@ -236,12 +237,14 @@ fn parse_projection_row(s: &ItemStruct) -> Result<Row, CodegenError> {
         ))
     })?;
 
-    let i64_ty: Type = syn::parse_str("i64")
+    let uuid_ty: Type = syn::parse_str("Uuid")
+        .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
+    let opt_uuid_ty: Type = syn::parse_str("Option<Uuid>")
         .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
     let string_ty: Type = syn::parse_str("String")
         .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
-    fields.push(("seq".into(), i64_ty.clone()));
-    fields.push(("committed".into(), i64_ty));
+    fields.push(("client_parent_id".into(), uuid_ty));
+    fields.push(("server_parent_id".into(), opt_uuid_ty));
     fields.push(("payload".into(), string_ty));
 
     let n = fields.len();

@@ -19,7 +19,7 @@ pub struct DraftTotal {
 
 #[projection_row]
 pub struct DraftLog {
-    pub command_id: i64,
+    pub command_id: Uuid,
     pub doc_id: i64,
 }
 

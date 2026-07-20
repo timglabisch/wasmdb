@@ -918,11 +918,13 @@ unverändert.
 
 ## 11. Commit-Chain v2: Zwei Parent-Links — `committed`-Flag & `seq`-Order entfallen
 
-**Status:** DESIGN (noch nicht umgesetzt). Verfeinert §4.6 Punkt 2
-(„Bestätigt-Sein ist eine Daten-Eigenschaft") zur präzisen Form.
-Umsetzungsreihenfolge: erst Framework (`tables`/`tables-macros` + e2e), dann
-Demo-Prototyp (`examples/projection-demo`); Backward-Refetch/Rebuild als
-Stufe 2.
+**Status:** UMGESETZT (inkl. Stufe 2) — Framework (`tables`/`tables-macros`/
+`database-projection`/`sync` + `tables-e2e`) und Demo-Prototyp
+(`examples/projection-demo`) laufen auf dem Zwei-Link-Modell; der
+Backward-Refetch/Rebuild (§11.4 Gap-Repair) ist als generischer Client-Loop
+(`sync-client::repair` + `repair_chain`-Export) über eine Fetch-by-PK-Route
+(`sync::protocol::FetchRows{Request,Response}`) umgesetzt. Verfeinert §4.6
+Punkt 2 („Bestätigt-Sein ist eine Daten-Eigenschaft") zur präzisen Form.
 
 ### 11.1 Kernidee
 
@@ -1000,8 +1002,36 @@ die der Client nie fetchte), fehlt ein Ancestor → **Backward-Refetch:** den
 Parent per PK holen, dann dessen Parent … bis die Kette lückenlos ab `ROOT`
 steht, dann Projektion neu ableiten. Verallgemeinert §4.6 („Off-Chain-Rows
 löschen, Tail refetchen, neu ableiten") zum gezielten Rückwärtslauf entlang
-der Parent-Zeiger. — **Stufe 2**, braucht einen Fetch-by-PK-Endpoint +
-Repair-Loop im Client; der heutige Confirm-Server liefert noch nicht aus.
+der Parent-Zeiger.
+
+**Umgesetzt (Stufe 2):**
+- **Wire:** `sync::protocol::FetchRowsRequest { table, ids: Vec<Uuid> }` →
+  `FetchRowsResponse { rows: ZSet }` (borsh). Der Server antwortet aus einem
+  autoritativen Row-Store; unbekannte ids fehlen einfach.
+- **Client-Kern:** `sync_client::repair::missing_parents(db, table)` liefert
+  die Gap-Frontier — die `server_parent_id`s committeter Rows, die der
+  Client nicht als `command_id` hält (ohne `ROOT`, dedupliziert, sortiert).
+  Host-getestet, entkoppelt von `tables` (Spalten per Name, wie
+  `sync::append`).
+- **Loop:** der wasm-Export `repair_chain(table, fetch_path)` iteriert:
+  Frontier holen → per POST an `fetch_path` nachfetchen → `apply_zset`
+  (re-foldet die Partition am Notify-Chokepoint) → wiederholen bis lückenlos.
+  Selbstterminierend: jede Runde verkleinert die Frontier oder der Server
+  liefert nichts mehr (ein lügender/lückiger Server dreht die Schleife nie).
+- **Auto vs. explizit:** produktiv liefe das automatisch am
+  Confirm-Chokepoint; die Demo ruft `repairChain` nach `.confirmed`
+  explizit auf, damit der Backfill sichtbar ist.
+- **Bootstrap = Repair für den frischen Client:** der Client-DB lebt nur im
+  wasm-Speicher, ein Reload startet leer — er hält *nichts*, also
+  referenziert nichts einen Parent und `repair_chain` allein findet keine
+  Frontier. `bootstrap(table, heads_path, fetch_path)` seedet das: es holt
+  die aktuellen Ketten-Köpfe (`HeadsRequest`/`HeadsResponse`), fetcht die
+  noch nicht gehaltenen (`sync_client::repair::unknown_ids` hält den
+  Re-Bootstrap idempotent — ein bereits gehaltener Kopf würde beim
+  Re-Applyen den Fold doppelt zählen) und lässt dann `repair_chain` jede
+  Kette bis ROOT laufen. Damit wird der Server zur einzigen Wahrheit und ein
+  Reload verlustfrei; ein `bootstrap` nach einem Out-of-band-Write eines
+  anderen Writers zieht dessen Zeilen live nach.
 
 ### 11.5 Auswirkungen auf das Framework
 
@@ -1042,11 +1072,30 @@ Repair-Loop im Client; der heutige Confirm-Server liefert noch nicht aus.
 
 ### 11.7 Umsetzungsreihenfolge
 
-1. **Framework:** `#[projection_row]` + `ProjectionLog` + Fold-Shim/Memo auf
-   das Zwei-Link-Modell umstellen; `tables-e2e`-Tests (`projection_log.rs`,
-   `projection_fold*.rs`) nachziehen.
-2. **Demo-Prototyp** (`examples/projection-demo`): `LedgerLog` auf die neuen
-   Spalten, `PostEntry`/`ServerCommand` + Server-Head-Map, UI zeigt
-   pending/committed via `server_parent_id` und den Drift.
-3. **Stufe 2:** Backward-Refetch/Rebuild (Fetch-by-PK-Endpoint +
-   Client-Repair-Loop).
+1. **Framework** ✅ — `#[projection_row]` generiert `client_parent_id: Uuid` +
+   `server_parent_id: Option<Uuid>`; `ProjectionLog` hat
+   `command_id()`/`client_parent_id()`/`server_parent_id()`, `is_committed()`
+   = `server_parent_id().is_some()`, `in_fold_order()` = Ketten-Traversal;
+   `FoldSnapshot` memoisiert über `committed_ids: Vec<Uuid>` (server-chain);
+   `sync::append::next_seq` → `client_head` (Ketten-Tail). `tables-e2e`
+   (`projection_log.rs`, `projection_fold*.rs`) nachgezogen — der frühere
+   `backfill_behind_the_frontier`-Test ist jetzt
+   `reorder_of_the_committed_chain_folds_from_zero`.
+2. **Demo-Prototyp** (`examples/projection-demo`) ✅ — `LedgerLog` auf die
+   neuen Spalten; `PostEntry::execute_optimistic` linkt über `client_head`,
+   `execute_server` stempelt `server_parent_id` aus dem `ServerLog`
+   (per-account head-map, im Confirm-Server gehalten; in Stufe 2 um einen
+   Row-Store erweitert); UI zeigt pending/committed via `server_parent_id`,
+   rekonstruiert die Ketten-Order clientseitig und flaggt Drift.
+3. **Stufe 2** ✅ — Backward-Refetch/Rebuild: `sync::protocol::FetchRows{Request,
+   Response}` (Fetch-by-PK-Wire), `sync_client::repair::missing_parents` +
+   der `repair_chain`-wasm-Loop (Client-Repair), demo-server `/fetch`-Route
+   auf einem autoritativen `ServerLog` (heads + Row-Store), das mit einer
+   `carol`-Vorgeschichte geseedet ist, damit der Gap-Fall (§11.4) reproduzier-
+   und beobachtbar ist. Rebuild fällt gratis ab: `apply_zset` der
+   nachgefetchten Rows re-foldet die Partition (Memo-Suffix-Invalidierung).
+
+**Neuer Contract (aus 1):** `#[projection_row]` verlangt jetzt
+`command_id: Uuid` (die Parent-Links referenzieren es) — ein `i64`-`command_id`
+ist ein Kompilierfehler mit gezielter Meldung. `seq` entfällt ersatzlos (kein
+Debug-/Anzeigefeld).

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sql-engine = { workspace = true }
 borsh = { version = "1", features = ["derive"] }
 serde = "1"
 serde_json = "1"

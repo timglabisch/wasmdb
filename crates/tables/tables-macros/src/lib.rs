@@ -285,11 +285,11 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
 /// the accumulator, one value per partition. The macro emits the user
 /// impl unchanged plus an `impl database_projection::Projection` shim.
 /// THE contract is the fold (§9.4): `apply` gets ONE typed log row at
-/// a time — the shim feeds the partition's rows in fold order
-/// (committed by seq, then pendings by provisional seq —
-/// `tables::ProjectionLog::in_fold_order`) into a `Default::default()`
-/// value — and `render` then emits the outputs once. Reads ONLY in
-/// `render`; `apply` must stay a pure function of the rows:
+/// a time — the shim feeds the partition's rows in fold order (the
+/// committed server-parent chain, then the pending client-parent tail —
+/// `tables::ProjectionLog::in_fold_order`, §11.3) into a
+/// `Default::default()` value — and `render` then emits the outputs once.
+/// Reads ONLY in `render`; `apply` must stay a pure function of the rows:
 ///
 /// ```ignore
 /// #[derive(Default, Clone)]
@@ -318,10 +318,10 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
 /// the engine-owned `FoldCache`; a later derive resumes there and folds
 /// only new committed rows plus the pendings (never memoized — they
 /// reorder). A read-table change therefore re-renders without folding
-/// anything. If the committed seq list stops extending the memoized one
-/// (backfill, deletes, replaced data), the shim folds from zero —
-/// determinism makes both paths identical in result. This relies on
-/// committed log rows being immutable per (partition, seq).
+/// anything. If the committed id list stops extending the memoized one
+/// (a server reorder/drift, deletes, replaced data), the shim folds from
+/// zero — determinism makes both paths identical in result. This relies on
+/// a committed log row being immutable at its server-chain position.
 ///
 /// `id` defaults to the snake_case struct name. The consuming crate
 /// needs `database-projection`, `sql-engine` and `tables` deps.
@@ -353,28 +353,28 @@ pub fn projection(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 /// `#[projection_row]` on a struct declares a projection's event LOG —
-/// the row shape behind it, mirroring `#[row]` for tables (M6a/§9.6).
-/// The struct declares only `command_id` (i64 or Uuid — becomes the PK)
-/// and ONE further field: the partition column, the log's stream
-/// identity. The macro appends the bookkeeping columns `seq: i64`,
-/// `committed: i64` and `payload: String` (the event's RPC form),
-/// expands to a full `#[row]`, and implements `tables::ProjectionLog`
-/// (PARTITION_COLUMN + the fold helpers
-/// `decode`/`is_committed`/`in_fold_order`). Event content lives in the
-/// payload, not in columns:
+/// the row shape behind it, mirroring `#[row]` for tables (M6a/§9.6/§11).
+/// The struct declares only `command_id` (`Uuid` — becomes the PK, the
+/// target the parent links reference) and ONE further field: the partition
+/// column, the log's stream identity. The macro appends the two-parent-link
+/// bookkeeping columns `client_parent_id: Uuid`, `server_parent_id:
+/// Option<Uuid>` and `payload: String` (the event's RPC form), expands to a
+/// full `#[row]`, and implements `tables::ProjectionLog` (PARTITION_COLUMN +
+/// the fold helpers `decode`/`is_committed`/`in_fold_order`). Event content
+/// lives in the payload, not in columns:
 ///
 /// ```ignore
 /// #[projection_row]
 /// pub struct DraftLog {
-///     pub command_id: i64,
+///     pub command_id: Uuid,
 ///     pub doc_id: i64,     // the partition — inferred, no attribute
 /// }
 /// // expands to a #[row] with columns:
-/// //   command_id (PK), doc_id, seq, committed, payload
+/// //   command_id (PK), doc_id, client_parent_id, server_parent_id, payload
 /// ```
 ///
 /// A command hand-writes `execute_optimistic` and fills exactly this
-/// shape through `sync::append::{next_seq, append_row}` +
+/// shape through `sync::append::{client_head, append_row}` +
 /// `rpc_command::payload_json` — appending an event is an effect the
 /// command performs, not the command's identity.
 #[proc_macro_attribute]
@@ -426,7 +426,7 @@ fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
         ));
     };
 
-    let mut has_command_id = false;
+    let mut command_id_ty: Option<Type> = None;
     let mut partition: Option<Ident> = None;
     for field in &named.named {
         let Some(ident) = &field.ident else { continue };
@@ -437,8 +437,8 @@ fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
             ));
         }
         match ident.to_string().as_str() {
-            "command_id" => has_command_id = true,
-            "seq" | "committed" | "payload" => {
+            "command_id" => command_id_ty = Some(field.ty.clone()),
+            "client_parent_id" | "server_parent_id" | "payload" => {
                 return Err(Error::new_spanned(
                     field,
                     format!("#[projection_row]: `{ident}` is generated — do not declare it"),
@@ -460,10 +460,20 @@ fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
             }
         }
     }
-    if !has_command_id {
+    let Some(command_id_ty) = command_id_ty else {
         return Err(Error::new_spanned(
             &s.ident,
-            "#[projection_row]: needs a `command_id` field (i64 or Uuid) — it becomes the PK",
+            "#[projection_row]: needs a `command_id` field (Uuid) — it becomes the PK",
+        ));
+    };
+    // v2 (§11): the parent links are `Uuid` and reference `command_id`, so
+    // the identity itself must be `Uuid` — a numeric id could not be the
+    // target of a `client_parent_id`/`server_parent_id` link.
+    if !matches!(classify(&command_id_ty), Some(FieldKind::Uuid)) {
+        return Err(Error::new_spanned(
+            &command_id_ty,
+            "#[projection_row]: `command_id` must be `Uuid` — the parent-link \
+             chain (`client_parent_id`/`server_parent_id`) references it (§11)",
         ));
     }
     let Some(partition) = partition else {
@@ -480,8 +490,8 @@ fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
         }
     }
     for tokens in [
-        quote! { pub seq: i64 },
-        quote! { pub committed: i64 },
+        quote! { pub client_parent_id: ::sql_engine::storage::Uuid },
+        quote! { pub server_parent_id: ::core::option::Option<::sql_engine::storage::Uuid> },
         quote! { pub payload: String },
     ] {
         named.named.push(syn::Field::parse_named.parse2(tokens)?);
@@ -497,11 +507,14 @@ fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
         impl ::tables::ProjectionLog for #name {
             const PARTITION_COLUMN: &'static str = #partition_lit;
 
-            fn seq(&self) -> i64 {
-                self.seq
+            fn command_id(&self) -> ::sql_engine::storage::Uuid {
+                self.command_id
             }
-            fn committed(&self) -> i64 {
-                self.committed
+            fn client_parent_id(&self) -> ::sql_engine::storage::Uuid {
+                self.client_parent_id
+            }
+            fn server_parent_id(&self) -> ::core::option::Option<::sql_engine::storage::Uuid> {
+                self.server_parent_id
             }
             fn payload(&self) -> &str {
                 &self.payload
@@ -651,7 +664,7 @@ fn expand_projection(
             &apply_fn.sig,
             "#[projection]: `apply` must take `&mut self, row: &LogRow` — \
              `self` is the fold state, the row is the generated log row \
-             (seq/committed are fold input)",
+             (the parent-link chain is fold input, §11)",
         )
     };
     let mut apply_args = apply_fn.sig.inputs.iter();
@@ -743,21 +756,22 @@ fn expand_projection(
                     .iter()
                     .take_while(|__r| <#row_ty as ::tables::ProjectionLog>::is_committed(__r))
                     .count();
-                let __seqs: ::std::vec::Vec<i64> = __ordered[..__committed_len]
-                    .iter()
-                    .map(|__r| <#row_ty as ::tables::ProjectionLog>::seq(__r))
-                    .collect();
+                let __committed_ids: ::std::vec::Vec<::sql_engine::storage::Uuid> =
+                    __ordered[..__committed_len]
+                        .iter()
+                        .map(|__r| <#row_ty as ::tables::ProjectionLog>::command_id(__r))
+                        .collect();
 
-                // §9.3 execution: resume from the committed-prefix memo when
-                // the current committed seq list still extends it; anything
-                // else (backfill, delete, first run) folds from zero.
+                // §9.3/§11 execution: resume from the committed-prefix memo
+                // when the current committed id list still extends it; a
+                // reorder/drift, delete or first run folds from zero.
                 let (mut __state, __start): (#name, usize) = match cache
                     .get::<::database_projection::typed::FoldSnapshot<#name>>()
                 {
                     ::core::option::Option::Some(__snap)
-                        if __seqs.starts_with(&__snap.seqs) =>
+                        if __committed_ids.starts_with(&__snap.committed_ids) =>
                     {
-                        (__snap.state.clone(), __snap.seqs.len())
+                        (__snap.state.clone(), __snap.committed_ids.len())
                     }
                     _ => (::core::default::Default::default(), 0),
                 };
@@ -766,7 +780,7 @@ fn expand_projection(
                 }
                 if __start < __committed_len {
                     cache.put(::database_projection::typed::FoldSnapshot {
-                        seqs: __seqs,
+                        committed_ids: __committed_ids,
                         state: __state.clone(),
                     });
                 }

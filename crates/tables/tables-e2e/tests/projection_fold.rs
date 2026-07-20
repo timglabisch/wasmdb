@@ -1,28 +1,29 @@
 //! E2E of the `#[projection]` fold contract (§9.4): the impl target IS
 //! the fold state; `apply` folds ONE typed log row at a time — the shim
-//! feeds the partition's rows in fold order (committed by seq, then
-//! pendings) into a `Default::default()` value — and `render` emits the
-//! outputs once. Executed on the recompute node: the contract is M6b's,
-//! the execution strategy is fold-from-zero.
+//! feeds the partition's rows in fold order (the committed server-parent
+//! chain, then the pending client-parent tail — §11.3) into a
+//! `Default::default()` value — and `render` emits the outputs once.
+//! Executed on the recompute node: the contract is M6b's, the execution
+//! strategy is fold-from-zero.
 
 use database::Database;
 use database_projection::db_host::DatabaseHost;
 use database_projection::{Out, Projection, ProjectionEngine, RenderCtx};
 use rpc_command::rpc_command;
-use sql_engine::storage::{CellValue, ZSet};
+use sql_engine::storage::{CellValue, Uuid, ZSet};
 use sql_engine::DbTable;
-use tables::ProjectionLog;
+use tables::{ProjectionLog, ROOT_PARENT};
 use tables_storage::{projection, projection_row, row};
 
 #[projection_row]
 pub struct DraftLog {
-    pub command_id: i64,
+    pub command_id: Uuid,
     pub doc_id: i64,
 }
 
 /// The event carried in a `DraftLog` row's payload. A plain `#[rpc_command]`
 /// (a serializable request shape) — the log rows here are built directly by
-/// the test fixture, so no `execute_optimistic` is involved.
+/// the test fixture. Its `id` (a small int) doubles as the fold-order trace.
 #[rpc_command]
 pub struct SetLinePrice {
     pub id: i64,
@@ -42,7 +43,7 @@ pub struct DraftTotal {
     #[pk]
     pub doc_id: i64,
     pub amount: i64,
-    /// Command ids in the order `apply` saw them — makes the fold order
+    /// Payload ids in the order `apply` saw them — makes the fold order
     /// observable in the output.
     pub fold_trace: String,
     pub label: String,
@@ -70,7 +71,7 @@ impl DraftFold {
         let cmd: SetLinePrice = row.decode()?;
         self.doc_id = row.doc_id;
         self.amount += cmd.price_cents;
-        self.trace.push(row.command_id);
+        self.trace.push(cmd.id);
         Ok(())
     }
 
@@ -97,10 +98,38 @@ impl DraftFold {
     }
 }
 
-fn log_row(command_id: i64, doc_id: i64, seq: i64, committed: i64, price_cents: i64) -> DraftLog {
-    let payload =
-        rpc_command::payload_json(&SetLinePrice { id: command_id, doc_id, price_cents }).unwrap();
-    DraftLog { command_id, doc_id, seq, committed, payload }
+fn uuid(n: u8) -> Uuid {
+    let mut bytes = [0u8; 16];
+    bytes[15] = n;
+    Uuid(bytes)
+}
+
+fn payload(n: u8, doc_id: i64, price_cents: i64) -> String {
+    rpc_command::payload_json(&SetLinePrice { id: n as i64, doc_id, price_cents }).unwrap()
+}
+
+/// A committed row: the server has linked it after `parent`. No drift, so
+/// the client link mirrors the server link.
+fn committed_row(n: u8, doc_id: i64, parent: Uuid, price_cents: i64) -> DraftLog {
+    DraftLog {
+        command_id: uuid(n),
+        doc_id,
+        client_parent_id: parent,
+        server_parent_id: Some(parent),
+        payload: payload(n, doc_id, price_cents),
+    }
+}
+
+/// A pending row: off-chain (`server_parent_id = None`), linked into the
+/// client's optimistic chain after `client_parent`.
+fn pending_row(n: u8, doc_id: i64, client_parent: Uuid, price_cents: i64) -> DraftLog {
+    DraftLog {
+        command_id: uuid(n),
+        doc_id,
+        client_parent_id: client_parent,
+        server_parent_id: None,
+        payload: payload(n, doc_id, price_cents),
+    }
 }
 
 fn setup() -> (Database, ProjectionEngine) {
@@ -151,14 +180,15 @@ fn spec_reflects_the_fold_form() {
 fn shim_feeds_rows_in_fold_order() {
     let (mut db, mut engine) = setup();
 
-    // Arrival order scrambled: pendings land first, committed rows carry
-    // higher seqs — apply must still see committed-by-seq, then pendings.
+    // Arrival order scrambled: the pending tail lands first — apply must
+    // still see the committed server chain (100 → 101), then the pending
+    // client tail (101 → 103 → 104).
     let mut batch = ZSet::new();
     for row in [
-        log_row(103, 1, 0, 0, 7),  // pending, provisional seq 0
-        log_row(101, 1, 5, 1, 30), // committed, seq 5
-        log_row(104, 1, 1, 0, 9),  // pending, provisional seq 1
-        log_row(100, 1, 2, 1, 10), // committed, seq 2
+        pending_row(103, 1, uuid(101), 7),        // pending after committed tail
+        committed_row(101, 1, uuid(100), 30),     // committed 2nd
+        pending_row(104, 1, uuid(103), 9),         // pending after 103
+        committed_row(100, 1, ROOT_PARENT, 10),   // committed 1st
     ] {
         batch.extend(insert(&mut db, row));
     }
@@ -186,7 +216,7 @@ fn shim_feeds_rows_in_fold_order() {
 fn apply_error_pins_the_partition_and_keeps_the_last_render() {
     let (mut db, mut engine) = setup();
 
-    let batch = insert(&mut db, log_row(100, 1, 0, 1, 10));
+    let batch = insert(&mut db, committed_row(100, 1, ROOT_PARENT, 10));
     let mut host = DatabaseHost::new(&mut db);
     let outcome = engine.derive(&batch, &mut host);
     assert!(outcome.failures.is_empty());
@@ -195,10 +225,10 @@ fn apply_error_pins_the_partition_and_keeps_the_last_render() {
     // An undecodable payload fails the WHOLE partition (fold, not row
     // isolation) — decode policy beyond `?` is product code.
     let bad = DraftLog {
-        command_id: 101,
+        command_id: uuid(101),
         doc_id: 1,
-        seq: 1,
-        committed: 1,
+        client_parent_id: uuid(100),
+        server_parent_id: Some(uuid(100)),
         payload: "not json".into(),
     };
     let batch = insert(&mut db, bad);
@@ -220,7 +250,7 @@ fn apply_error_pins_the_partition_and_keeps_the_last_render() {
 fn read_change_rerenders_the_partition() {
     let (mut db, mut engine) = setup();
 
-    let batch = insert(&mut db, log_row(100, 1, 0, 1, 10));
+    let batch = insert(&mut db, committed_row(100, 1, ROOT_PARENT, 10));
     let mut host = DatabaseHost::new(&mut db);
     engine.derive(&batch, &mut host);
     assert_eq!(

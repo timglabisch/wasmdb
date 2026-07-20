@@ -71,6 +71,7 @@ table.grid tr:last-child td { border-bottom: none; }
 }
 .badge.pending { background: #fff5e0; color: #a86a00; }
 .badge.committed { background: #e6f4ec; color: #1a7f4b; }
+.badge.drift { background: #fdeaea; color: #c0392b; margin-left: .3rem; }
 
 .controls .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .controls .row + .row { margin-top: .5rem; }
@@ -97,3 +98,5 @@ button.deposit { border-color: #1a7f4b; color: #1a7f4b; }
 button.withdraw { border-color: #c0392b; color: #c0392b; }
 button.chip { padding: .2rem .6rem; color: #56607a; }
 .quick { font-size: .72rem; color: #9aa3b2; }
+button.chip.foreign { border-color: #7a5cc0; color: #7a5cc0; }
+.repair-status { font-size: .74rem; color: #7a5cc0; }
