@@ -1,0 +1,20 @@
+[package]
+name = "projection-demo-server"
+version = "0.1.0"
+edition = "2021"
+
+# Confirm-server: no DB. It mirrors render-test's echo-server but adds ONE
+# domain-aware step — it flips the appended log row's `committed` flag to
+# 1 in the returned `server_zset` (design §4.7). That lets the projection
+# engine's committed-frontier memo advance and the UI show the
+# pending → committed transition. Provisional `seq` is kept as
+# authoritative (single-client demo); a real multi-client server would
+# reassign it here.
+[dependencies]
+sync = { workspace = true }
+sql-engine = { workspace = true, features = ["borsh"] }
+projection-demo-domain = { path = "../shared/domain" }
+borsh = { version = "1", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }

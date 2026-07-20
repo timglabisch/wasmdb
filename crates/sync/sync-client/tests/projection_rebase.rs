@@ -13,7 +13,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use database::Database;
 use database_projection::{
-    Inputs, PartitionedSource, OutputRow, Projection, ProjectionEngine, ProjectionSpec, ReadCtx,
+    FoldCache, Inputs, OutputRow, PartitionedSource, Projection, ProjectionEngine,
+    ProjectionSpec, ReadCtx,
 };
 use sql_engine::storage::{CellValue, ZSet};
 use sync::command::{Command, CommandError};
@@ -81,6 +82,7 @@ impl Projection for Totals {
         key: &CellValue,
         inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let mut sum = 0i64;
         for row in inputs.rows("events") {

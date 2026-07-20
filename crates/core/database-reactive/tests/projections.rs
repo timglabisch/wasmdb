@@ -8,7 +8,8 @@
 
 use database::{Database, DbError};
 use database_projection::{
-    Inputs, PartitionedSource, OutputRow, Projection, ProjectionEngine, ProjectionSpec, ReadCtx,
+    FoldCache, Inputs, OutputRow, PartitionedSource, Projection, ProjectionEngine,
+    ProjectionSpec, ReadCtx,
 };
 use database_reactive::{ProjectionEvent, ReactiveDatabase};
 use sql_engine::storage::{CellValue, ZSet};
@@ -47,6 +48,7 @@ impl Projection for Totals {
         partition: &CellValue,
         inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let mut sum = 0i64;
         for row in inputs.rows("events") {
@@ -196,6 +198,7 @@ impl Projection for Superstitious {
         partition: &CellValue,
         inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let mut sum = 0i64;
         for row in inputs.rows("events") {

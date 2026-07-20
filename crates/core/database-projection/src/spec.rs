@@ -40,6 +40,10 @@ pub struct ProjectionSpec {
 /// that partition. It is NOT called for partitions whose sources hold
 /// zero rows — data presence is the lifecycle (the engine clears the
 /// partition's output).
+///
+/// `cache` is an execution memo, never an input: the returned rows must
+/// be a pure function of `(inputs, ctx)` alone — an empty cache must
+/// always produce the same result, just with more work.
 pub trait Projection {
     fn spec(&self) -> ProjectionSpec;
 
@@ -48,7 +52,26 @@ pub trait Projection {
         partition: &CellValue,
         inputs: &Inputs,
         ctx: &ReadCtx<'_>,
+        cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String>;
+}
+
+/// Opaque per-(projection, partition) execution memo (§9.3). Owned by
+/// the engine so its lifecycle follows the partition: dropped when the
+/// partition loses its last source row, cleared wholesale on
+/// `reset_and_rederive`. The fold shim memoizes its committed-prefix
+/// state here; hand-written impls are free to ignore it.
+#[derive(Default)]
+pub struct FoldCache(Option<Box<dyn std::any::Any>>);
+
+impl FoldCache {
+    pub fn get<T: 'static>(&self) -> Option<&T> {
+        self.0.as_ref()?.downcast_ref()
+    }
+
+    pub fn put<T: 'static>(&mut self, value: T) {
+        self.0 = Some(Box::new(value));
+    }
 }
 
 /// Rows of the sources for the partition being recomputed, in declaration

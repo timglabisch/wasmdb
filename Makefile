@@ -1,4 +1,4 @@
-.PHONY: clean invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-invoice render-test render-test-types render-test-dev render-test-dev-profiling render-test-dev-server render-test-test kill-render-test
+.PHONY: clean invoice invoice-types invoice-dev invoice-dev-server invoice-db invoice-db-down install kill-invoice render-test render-test-types render-test-dev render-test-dev-profiling render-test-dev-server render-test-test kill-render-test projection-demo projection-demo-types projection-demo-dev projection-demo-dev-server kill-projection-demo
 
 INVOICE_COMPOSE := examples/invoice-demo/docker-compose.yml
 INVOICE_SCHEMA  := examples/invoice-demo/server/sql/001_init.sql
@@ -9,12 +9,17 @@ kill-invoice:
 kill-render-test:
 	@lsof -ti:3125 | xargs kill -9 2>/dev/null || true
 
+kill-projection-demo:
+	@lsof -ti:3126 | xargs kill -9 2>/dev/null || true
+
 clean:
 	cargo clean
 	rm -rf examples/invoice-demo/frontend/apps/ui/dist
 	rm -rf examples/invoice-demo/frontend/apps/wasm/pkg
 	rm -rf examples/render-test/frontend/apps/ui/dist
 	rm -rf examples/render-test/frontend/apps/wasm/pkg
+	rm -rf examples/projection-demo/frontend/apps/ui/dist
+	rm -rf examples/projection-demo/frontend/apps/wasm/pkg
 
 invoice-types:
 	mkdir -p examples/invoice-demo/frontend/packages/generated/src
@@ -84,3 +89,20 @@ render-test-test: render-test-types kill-render-test
 	wasm-pack build examples/render-test/frontend/apps/wasm --target web --out-dir pkg
 	cd examples/render-test/frontend/apps/ui && npm run build
 	cd examples/render-test/tests && npx playwright test
+
+# projection-demo: the projection-engine showcase. Confirm-server (no DB,
+# flips `committed`), event-sourced ledger, live derived `balance`.
+projection-demo-types:
+	mkdir -p examples/projection-demo/frontend/packages/generated/src
+	rm -f examples/projection-demo/frontend/packages/generated/src/*.ts
+	cargo test -p projection-demo-domain -- --test-threads=1
+	touch examples/projection-demo/frontend/apps/wasm/build.rs
+
+projection-demo: projection-demo-types kill-projection-demo
+	wasm-pack build examples/projection-demo/frontend/apps/wasm --target web --out-dir pkg && cd examples/projection-demo/frontend/apps/ui && npm run build && cd ../../../../.. && cargo run -p projection-demo-server --bin server
+
+projection-demo-dev: projection-demo-types
+	wasm-pack build examples/projection-demo/frontend/apps/wasm --target web --out-dir pkg && cd examples/projection-demo/frontend/apps/ui && npm run dev
+
+projection-demo-dev-server: kill-projection-demo
+	cargo run -p projection-demo-server --bin server

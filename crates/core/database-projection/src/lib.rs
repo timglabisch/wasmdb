@@ -39,7 +39,7 @@ pub mod typed;
 pub use diff::multiset_diff;
 pub use engine::{DeriveFailure, DeriveOutcome, ProjectionEngine, RegisterError};
 pub use spec::{
-    Inputs, OutputRow, OwnershipViolation, PartitionedSource, Projection, ProjectionHost,
-    ProjectionSpec, ReadCtx, RowReader,
+    FoldCache, Inputs, OutputRow, OwnershipViolation, PartitionedSource, Projection,
+    ProjectionHost, ProjectionSpec, ReadCtx, RowReader,
 };
 pub use typed::{Out, RenderCtx};

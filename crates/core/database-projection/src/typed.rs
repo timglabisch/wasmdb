@@ -35,6 +35,17 @@ pub fn partition_column_index<R: DbTable>(partition: &str) -> usize {
         })
 }
 
+/// Memo of the fold over a partition's COMMITTED prefix (§9.3): `state`
+/// is the fold of exactly the committed rows whose seqs are `seqs`, in
+/// fold order. Valid for reuse iff the current committed seq list still
+/// starts with `seqs` — committed log rows are immutable per
+/// (partition, seq), so equal seqs ⇒ equal rows ⇒ equal fold. Pendings
+/// are never memoized: they reorder freely and are replaced on commit.
+pub struct FoldSnapshot<S> {
+    pub seqs: Vec<i64>,
+    pub state: S,
+}
+
 /// Typed view of the declared read tables. Wraps [`ReadCtx`]; reading a
 /// table not declared in `reads` is an error, same as the raw contract.
 pub struct RenderCtx<'a> {

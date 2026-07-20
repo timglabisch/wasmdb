@@ -7,7 +7,8 @@ use sql_engine::storage::{CellValue, ZSet};
 
 use crate::diff::multiset_diff;
 use crate::spec::{
-    Inputs, OutputRow, OwnershipViolation, Projection, ProjectionHost, ProjectionSpec, ReadCtx,
+    FoldCache, Inputs, OutputRow, OwnershipViolation, Projection, ProjectionHost, ProjectionSpec,
+    ReadCtx,
 };
 
 /// Registration-time errors. All of them are programming errors in the
@@ -88,6 +89,10 @@ pub struct ProjectionEngine {
     /// from `last_render` because a live partition may legitimately render
     /// zero rows and must still re-render when a read table changes.
     live_partitions: Vec<HashSet<CellValue>>,
+    /// Per node: partition → execution memo handed to `project` (§9.3).
+    /// Lifecycle mirrors `live_partitions`: dropped with the partition,
+    /// cleared on `reset_and_rederive`.
+    fold_caches: Vec<HashMap<CellValue, FoldCache>>,
 }
 
 impl ProjectionEngine {
@@ -158,6 +163,7 @@ impl ProjectionEngine {
         self.nodes.push(Node { spec, imp });
         self.last_render.push(HashMap::new());
         self.live_partitions.push(HashSet::new());
+        self.fold_caches.push(HashMap::new());
         self.topo = topo;
         Ok(())
     }
@@ -262,6 +268,11 @@ impl ProjectionEngine {
         for live in &mut self.live_partitions {
             live.clear();
         }
+        // Replacement invalidates every memo: seq lists could match the
+        // new reality by coincidence while the row contents differ.
+        for caches in &mut self.fold_caches {
+            caches.clear();
+        }
 
         // 2. Re-derive every partition present in any source, in topo order.
         let order = self.topo.clone();
@@ -344,14 +355,17 @@ impl ProjectionEngine {
 
         let new_render: Vec<OutputRow> = if total == 0 {
             // Data presence is the lifecycle: no source rows → no output,
-            // and the pure function is not called.
+            // and the pure function is not called. The execution memo
+            // dies with the partition.
             self.live_partitions[p].remove(partition);
+            self.fold_caches[p].remove(partition);
             Vec::new()
         } else {
             self.live_partitions[p].insert(partition.clone());
             let inputs = Inputs { tables };
             let ctx = ReadCtx { reader: &*host, allowed: &reads };
-            let rendered = self.nodes[p].imp.project(partition, &inputs, &ctx)?;
+            let cache = self.fold_caches[p].entry(partition.clone()).or_default();
+            let rendered = self.nodes[p].imp.project(partition, &inputs, &ctx, cache)?;
             for (table, _) in &rendered {
                 if !outputs.iter().any(|o| o == table) {
                     return Err(format!("rendered into undeclared output table '{table}'"));

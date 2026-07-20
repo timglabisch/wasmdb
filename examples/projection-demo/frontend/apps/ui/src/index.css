@@ -1,0 +1,99 @@
+/* projection-demo app shell. Small, dependency-free styling — the demo's
+   point is the projection engine, not the design system. */
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  margin: 0;
+  padding: 1.5rem;
+  background: #f6f7f9;
+  color: #1e2430;
+}
+
+.loading { color: #888; }
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+header h1 { margin: 0 0 .35rem; font-size: 1.35rem; }
+header p { margin: 0; color: #56607a; font-size: .85rem; line-height: 1.5; max-width: 70ch; }
+header code, .panel code {
+  background: #eceef3;
+  padding: 0 .25rem;
+  border-radius: 3px;
+  font-size: .85em;
+}
+
+.panel {
+  border: 1px solid #dfe3ea;
+  border-radius: 6px;
+  padding: .85rem 1rem;
+  background: #fff;
+}
+.panel h2 { margin: 0 0 .6rem; font-size: .95rem; }
+.panel h2 small { font-weight: normal; color: #8a93a6; font-size: .72rem; }
+.empty { color: #9aa3b2; font-size: .85rem; margin: .25rem 0 0; }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+@media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+
+table.grid { width: 100%; border-collapse: collapse; font-size: .85rem; }
+table.grid th {
+  text-align: left;
+  font-weight: 600;
+  color: #8a93a6;
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  padding: .2rem .4rem;
+  border-bottom: 1px solid #eceef3;
+}
+table.grid td { padding: .3rem .4rem; border-bottom: 1px solid #f2f4f7; }
+table.grid tr:last-child td { border-bottom: none; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.muted { color: #9aa3b2; }
+.acct { font-weight: 600; }
+.amount.pos { color: #1a7f4b; }
+.amount.neg { color: #c0392b; }
+
+.badge {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 10px;
+  font-size: .72rem;
+  font-weight: 600;
+}
+.badge.pending { background: #fff5e0; color: #a86a00; }
+.badge.committed { background: #e6f4ec; color: #1a7f4b; }
+
+.controls .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.controls .row + .row { margin-top: .5rem; }
+.controls label { font-size: .82rem; color: #56607a; }
+.controls input {
+  font-family: inherit;
+  font-size: .85rem;
+  padding: .3rem .45rem;
+  border: 1px solid #cfd5df;
+  border-radius: 4px;
+  width: 8rem;
+}
+button {
+  font-family: inherit;
+  font-size: .82rem;
+  padding: .35rem .8rem;
+  border: 1px solid #cfd5df;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.deposit { border-color: #1a7f4b; color: #1a7f4b; }
+button.withdraw { border-color: #c0392b; color: #c0392b; }
+button.chip { padding: .2rem .6rem; color: #56607a; }
+.quick { font-size: .72rem; color: #9aa3b2; }

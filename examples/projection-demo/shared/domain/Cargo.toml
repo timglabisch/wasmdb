@@ -1,0 +1,37 @@
+[package]
+name = "projection-demo-domain"
+version = "0.1.0"
+edition = "2021"
+
+# projection-demo domain: an event-sourced account ledger. ONE log table
+# (`ledger_log`, `#[projection_row]`), ONE append command (`PostEntry`,
+# `#[rpc_command(append_to = LedgerLog)]`), ONE fold projection
+# (`BalanceFold`, `#[projection]`) that maintains the derived `balance`
+# table. This is the first end-to-end showcase of the projection engine.
+#
+# NO `feature = "server"`: the demo server only echoes/confirms (it flips
+# `committed`, no domain execution), so this crate stays wasm-friendly
+# with no MySQL/SeaORM transitive deps — like render-test-domain.
+
+[features]
+default = []
+
+[dependencies]
+sync = { workspace = true }
+database = { workspace = true, features = ["borsh"] }
+sql-engine = { workspace = true, features = ["borsh", "serde"] }
+tables = { workspace = true }
+tables-storage = { workspace = true }
+database-projection = { workspace = true }
+rpc-command = { workspace = true }
+borsh = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+ts-rs = { version = "12", features = ["serde-compat"] }
+
+# Dev-only: a runtime test that drives the fold through the real
+# projection engine. Not compiled into the wasm cdylib.
+[dev-dependencies]
+database = { workspace = true, features = ["borsh"] }
+database-projection = { workspace = true }
+sql-engine = { workspace = true, features = ["borsh", "serde"] }
+sync = { workspace = true }

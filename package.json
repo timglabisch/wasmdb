@@ -11,7 +11,10 @@
     "examples/render-test/frontend/apps/ui",
     "examples/render-test/frontend/apps/wasm/pkg",
     "examples/render-test/frontend/packages/generated",
-    "examples/render-test/tests"
+    "examples/render-test/tests",
+    "examples/projection-demo/frontend/apps/ui",
+    "examples/projection-demo/frontend/apps/wasm/pkg",
+    "examples/projection-demo/frontend/packages/generated"
   ],
   "devDependencies": {
     "turbo": "^2"
@@ -23,6 +26,9 @@
     "build:render-test": "turbo run build --filter=render-test-ui",
     "dev:render-test": "turbo run dev --filter=render-test-ui",
     "typecheck:render-test": "turbo run typecheck --filter=render-test-ui",
-    "test:render-test": "turbo run test:e2e --filter=render-test-tests"
+    "test:render-test": "turbo run test:e2e --filter=render-test-tests",
+    "build:projection-demo": "turbo run build --filter=projection-demo-ui",
+    "dev:projection-demo": "turbo run dev --filter=projection-demo-ui",
+    "typecheck:projection-demo": "turbo run typecheck --filter=projection-demo-ui"
   }
 }

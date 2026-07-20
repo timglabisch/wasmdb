@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use database_projection::{
-    Inputs, PartitionedSource, OutputRow, Projection, ProjectionEngine, ProjectionHost, ProjectionSpec,
-    ReadCtx, RowReader,
+    FoldCache, Inputs, OutputRow, PartitionedSource, Projection, ProjectionEngine,
+    ProjectionHost, ProjectionSpec, ReadCtx, RowReader,
 };
 use sql_engine::storage::{CellValue, ZSet};
 
@@ -97,6 +97,7 @@ impl Projection for DraftProjection {
         key: &CellValue,
         inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let mut events = inputs.rows("events").to_vec();
         events.sort_by_key(|r| r[1].clone());
@@ -132,6 +133,7 @@ impl Projection for DoubledProjection {
         key: &CellValue,
         inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let mut out = Vec::new();
         for r in inputs.rows("totals") {
@@ -314,6 +316,7 @@ impl Projection for AdHoc {
         _key: &CellValue,
         _inputs: &Inputs,
         _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         Ok(vec![])
     }
@@ -456,6 +459,7 @@ impl Projection for LabelProjection {
         key: &CellValue,
         inputs: &Inputs,
         ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
     ) -> Result<Vec<OutputRow>, String> {
         let customers = ctx.rows("customers")?;
         let mut out = Vec::new();
@@ -508,6 +512,7 @@ fn undeclared_read_is_a_failure_and_output_untouched() {
             _key: &CellValue,
             _inputs: &Inputs,
             ctx: &ReadCtx<'_>,
+            _cache: &mut FoldCache,
         ) -> Result<Vec<OutputRow>, String> {
             ctx.rows("customers")?; // not declared → must error
             Ok(vec![])
@@ -542,6 +547,7 @@ fn undeclared_output_is_a_failure_and_output_untouched() {
             key: &CellValue,
             _inputs: &Inputs,
             _ctx: &ReadCtx<'_>,
+            _cache: &mut FoldCache,
         ) -> Result<Vec<OutputRow>, String> {
             Ok(vec![("elsewhere".to_string(), vec![key.clone()])])
         }
@@ -575,6 +581,7 @@ fn failure_keeps_previous_output() {
             key: &CellValue,
             inputs: &Inputs,
             _ctx: &ReadCtx<'_>,
+            _cache: &mut FoldCache,
         ) -> Result<Vec<OutputRow>, String> {
             let n = inputs.rows("events").len();
             if n >= 3 {
@@ -624,4 +631,89 @@ fn reset_and_rederive_rebuilds_from_sources() {
     assert!(outcome.failures.is_empty());
     assert_eq!(host.rows("totals"), vec![vec![i64v(2), i64v(33)]]);
     assert_eq!(host.rows("lines").len(), 2);
+}
+
+// ── Fold-cache lifecycle (§9.3 execution memo) ───────────────────────────
+
+/// Emits `probe(key, had_memo)` and stamps the cache — makes memo
+/// survival observable from outside. Deliberately violates the
+/// "cache never changes the result" rule; that is the point of the
+/// probe, and these tests assert the ENGINE's lifecycle, not a render.
+struct CacheProbe;
+
+impl Projection for CacheProbe {
+    fn spec(&self) -> ProjectionSpec {
+        ProjectionSpec {
+            id: "cache_probe".into(),
+            sources: vec![PartitionedSource { table: "events".into(), partition_column: 0 }],
+            reads: vec![],
+            outputs: vec!["probe".into()],
+        }
+    }
+
+    fn project(
+        &self,
+        key: &CellValue,
+        _inputs: &Inputs,
+        _ctx: &ReadCtx<'_>,
+        cache: &mut FoldCache,
+    ) -> Result<Vec<OutputRow>, String> {
+        let had = cache.get::<u8>().is_some();
+        cache.put(1u8);
+        Ok(vec![("probe".into(), vec![key.clone(), i64v(had as i64)])])
+    }
+}
+
+#[test]
+fn fold_cache_dies_with_the_partition() {
+    let mut host = FakeHost::default();
+    let mut engine = ProjectionEngine::new();
+    engine.register(Box::new(CacheProbe)).unwrap();
+
+    let first = vec![i64v(1), i64v(0), i64v(5)];
+    let b = host.insert("events", first.clone());
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    assert_eq!(host.rows("probe"), vec![vec![i64v(1), i64v(0)]], "first run: no memo");
+
+    let second = vec![i64v(1), i64v(1), i64v(7)];
+    let b = host.insert("events", second.clone());
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    assert_eq!(host.rows("probe"), vec![vec![i64v(1), i64v(1)]], "memo survives per partition");
+
+    // Last source row gone → partition dies → memo must die with it.
+    let mut b = host.remove("events", first);
+    b.extend(host.remove("events", second));
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    assert!(host.rows("probe").is_empty(), "no rows → no output");
+
+    let b = host.insert("events", vec![i64v(1), i64v(2), i64v(9)]);
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    assert_eq!(
+        host.rows("probe"),
+        vec![vec![i64v(1), i64v(0)]],
+        "reborn partition starts without a memo"
+    );
+}
+
+#[test]
+fn reset_and_rederive_clears_fold_caches() {
+    let mut host = FakeHost::default();
+    let mut engine = ProjectionEngine::new();
+    engine.register(Box::new(CacheProbe)).unwrap();
+
+    let b = host.insert("events", vec![i64v(1), i64v(0), i64v(5)]);
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    let b = host.insert("events", vec![i64v(1), i64v(1), i64v(6)]);
+    assert!(engine.derive(&b, &mut host).failures.is_empty());
+    assert_eq!(host.rows("probe"), vec![vec![i64v(1), i64v(1)]], "memo present");
+
+    // Wholesale replacement: seq lists could match the new reality by
+    // coincidence — every memo must go.
+    let outcome = engine.reset_and_rederive(&mut host);
+    assert!(outcome.failures.is_empty());
+    assert_eq!(
+        host.rows("probe"),
+        vec![vec![i64v(1), i64v(0)]],
+        "replacement drops every memo"
+    );
 }

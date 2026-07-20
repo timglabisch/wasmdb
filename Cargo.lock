@@ -1463,6 +1463,57 @@ dependencies = [
 ]
 
 [[package]]
+name = "projection-demo-domain"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-projection",
+ "rpc-command",
+ "serde",
+ "sql-engine",
+ "sync",
+ "tables",
+ "tables-storage",
+ "ts-rs",
+]
+
+[[package]]
+name = "projection-demo-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "borsh",
+ "projection-demo-domain",
+ "sql-engine",
+ "sync",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
+name = "projection-demo-wasm"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-projection",
+ "js-sys",
+ "projection-demo-domain",
+ "requirements",
+ "serde",
+ "serde-wasm-bindgen",
+ "sql-engine",
+ "sql-parser",
+ "sync-client",
+ "tables",
+ "tables-client",
+ "tables-codegen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

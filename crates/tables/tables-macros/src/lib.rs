@@ -313,11 +313,15 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
 /// Exactly one source: the log row type from `apply`'s parameter; the
 /// partition comes from its `tables::ProjectionLog` impl (which
 /// `#[projection_row]` generates). The state must be `Default + Clone`
-/// (§9.4 — the M6b snapshot ring will clone it). Execution today is the
-/// recompute node: fold from `Default::default()` on every derive; the
-/// incremental strategy (M6b snapshot ring) can replace that later
-/// WITHOUT touching this contract — same fold, executed from a snapshot
-/// instead of from zero.
+/// (§9.4 — the snapshot below clones it). Execution (§9.3): the shim
+/// memoizes the state folded over the partition's COMMITTED prefix in
+/// the engine-owned `FoldCache`; a later derive resumes there and folds
+/// only new committed rows plus the pendings (never memoized — they
+/// reorder). A read-table change therefore re-renders without folding
+/// anything. If the committed seq list stops extending the memoized one
+/// (backfill, deletes, replaced data), the shim folds from zero —
+/// determinism makes both paths identical in result. This relies on
+/// committed log rows being immutable per (partition, seq).
 ///
 /// `id` defaults to the snake_case struct name. The consuming crate
 /// needs `database-projection`, `sql-engine` and `tables` deps.
@@ -720,11 +724,12 @@ fn expand_projection(
                 _partition: &::sql_engine::storage::CellValue,
                 inputs: &::database_projection::Inputs,
                 ctx: &::database_projection::ReadCtx<'_>,
+                cache: &mut ::database_projection::FoldCache,
             ) -> ::core::result::Result<
                 ::std::vec::Vec<::database_projection::OutputRow>,
                 ::std::string::String,
             > {
-                // §9.4 contract bound: the M6b snapshot ring clones states.
+                // §9.4 contract bound: the snapshot below clones the state.
                 fn __state_contract<T: ::core::default::Default + ::core::clone::Clone>() {}
                 __state_contract::<#name>();
 
@@ -732,8 +737,39 @@ fn expand_projection(
                     ::database_projection::typed::decode_rows(
                         inputs.rows(<#row_ty as ::sql_engine::DbTable>::TABLE),
                     )?;
-                let mut __state: #name = ::core::default::Default::default();
-                for __row in <#row_ty as ::tables::ProjectionLog>::in_fold_order(&__rows) {
+                let __ordered = <#row_ty as ::tables::ProjectionLog>::in_fold_order(&__rows);
+                let __committed_len = __ordered
+                    .iter()
+                    .take_while(|__r| <#row_ty as ::tables::ProjectionLog>::is_committed(__r))
+                    .count();
+                let __seqs: ::std::vec::Vec<i64> = __ordered[..__committed_len]
+                    .iter()
+                    .map(|__r| <#row_ty as ::tables::ProjectionLog>::seq(__r))
+                    .collect();
+
+                // §9.3 execution: resume from the committed-prefix memo when
+                // the current committed seq list still extends it; anything
+                // else (backfill, delete, first run) folds from zero.
+                let (mut __state, __start): (#name, usize) = match cache
+                    .get::<::database_projection::typed::FoldSnapshot<#name>>()
+                {
+                    ::core::option::Option::Some(__snap)
+                        if __seqs.starts_with(&__snap.seqs) =>
+                    {
+                        (__snap.state.clone(), __snap.seqs.len())
+                    }
+                    _ => (::core::default::Default::default(), 0),
+                };
+                for __row in &__ordered[__start..__committed_len] {
+                    __state.apply(__row)?;
+                }
+                if __start < __committed_len {
+                    cache.put(::database_projection::typed::FoldSnapshot {
+                        seqs: __seqs,
+                        state: __state.clone(),
+                    });
+                }
+                for __row in &__ordered[__committed_len..] {
                     __state.apply(__row)?;
                 }
                 let __ctx = ::database_projection::typed::RenderCtx::new(ctx);

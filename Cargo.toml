@@ -45,6 +45,9 @@ members = [
     "examples/render-test/server",
     "examples/render-test/frontend/apps/wasm",
     "examples/render-test/shared/domain",
+    "examples/projection-demo/server",
+    "examples/projection-demo/frontend/apps/wasm",
+    "examples/projection-demo/shared/domain",
 ]
 resolver = "2"
 

@@ -4,10 +4,10 @@ Status: M1, M1b, wasm-Registrierung, M2 (Requirements-Slot) und M3
 (`#[projection]`, `append_to`, `register_all_projections`) sind
 UMGESETZT (siehe Status-Abschnitt am Ende); M4 (Demo-Vertical) und M5
 (README) offen; M6a (generiertes Event-Schema), die
-Partition-Konsolidierung (§9.6) und der M6b-PRODUKT-CONTRACT
-(der Fold `apply`/`render`, §9.4 — der EINE Contract der Impl-Form,
-ausgeführt auf dem Recompute-Knoten) UMGESETZT; offen an M6b ist nur noch die
-inkrementelle Ausführungsstrategie (Snapshot-Ring, §9.3) nach Messung.
+Partition-Konsolidierung (§9.6) und M6b KOMPLETT UMGESETZT — der
+Produkt-Contract (der Fold `apply`/`render` auf dem State-Typ, §9.4)
+UND die inkrementelle Ausführung (EIN Committed-Frontier-Snapshot pro
+live Partition statt des §9.3-Rings — bewusst einfachste Form, siehe §8).
 Anlass: `heyrechnung/docs/wasmdb-derived-streams.md` (Handoff-Doc des Produkt-Repos).
 Dieses Dokument ist selbsttragend — es enthält Problem, Entscheidung, Contracts
 und die konkreten Arbeitspakete. Das Handoff-Doc ist nur noch Hintergrund.
@@ -94,6 +94,14 @@ Lifecycle = Datenpräsenz + Refcount.
    `project(aktueller Quell-Inhalt)` — egal, wie die Quelle sich geändert hat
    (Append, UPDATE, DELETE, Compaction). Append-only auf der Log-Tabelle ist
    Produkt-Konvention, die Performance kauft, nicht Korrektheit.
+   (Eine Ausnahme seit der M6b-Snapshot-Ausführung: der Fold-Shim
+   memoisiert per committed-seq-Präfix — eine committete Log-Row, die
+   bei UNVERÄNDERTER seq inhaltlich mutiert, wird nicht erkannt und
+   servierte einen veralteten State. Inserts, Deletes und der
+   Pending→Committed-Übergang ändern die seq-Liste und invalidieren
+   korrekt; `replace_data` leert alle Memos. Für den Fold-Knoten ist
+   die Unveränderlichkeit committeter Rows pro (Partition, seq) damit
+   tragend, nicht mehr nur Konvention.)
 3. **Same-Batch-Atomarität.** Ableitung läuft im selben apply-Batch wie das
    auslösende Delta, VOR dem Notify. Subscriber sehen nie Quelle-neu /
    Ableitung-alt (kein Mischbild; Konsistenz-Einheit = ein Zustand).
@@ -168,8 +176,10 @@ Dies ist bewusst KEIN inkrementeller Fold: kein State-Cache, keine
 Wasserlinie im Framework. Fastpath-Optimierungen (Memoisierung) sind
 Produkt-Sache innerhalb der puren Funktion (Chain-Hash als Memo-Schlüssel).
 (Der Produkt-Contract ist trotzdem ALS Fold formuliert — `apply`/`render`,
-§4.3 — nur seine AUSFÜHRUNG ist dieser Recompute: Fold ab
-`Default::default()` pro Derive, §9.1.)
+§4.3. Seine Ausführung war zunächst exakt dieser Recompute — Fold ab
+`Default::default()` pro Derive; inzwischen memoisiert der Fold-Shim den
+Committed-Präfix-State im engine-eigenen `FoldCache` und foldet nur noch
+Neues, §9.3/§8 — dank Determinismus ergebnisgleich, §9.1.)
 
 ### 4.2 Requirements-Integration: `SlotKind::Projected`
 
@@ -211,10 +221,12 @@ impl InvoiceDraft {
 Der State muss `Default + Clone` sein (im Shim erzwungen); genau eine
 Quelle — der Row-Typ aus `apply` —, ihre Partition kommt aus
 `tables::ProjectionLog` (kein `key = ...`, kein Attribut-Rauschen).
-Ausgeführt wird heute als Recompute (Fold ab `Default::default()` pro
-Derive); die inkrementelle Strategie (Snapshot-Ring, §9.3) ersetzt
-später NUR die Ausführung, nie den Contract — derselbe Fold,
-verschieden weit ausgeführt (§9.1).
+Ausgeführt wird inkrementell (§9.3/§8): der Shim memoisiert den State
+des committed Präfixes pro Partition (engine-eigener `FoldCache`) und
+foldet pro Derive nur neue committete Rows plus die Pendings;
+Read-Dirty re-rendert ohne jeden Fold. Ungültiger Präfix (Backfill,
+Delete, `replace_data`) ⇒ Fold ab null — derselbe Fold, verschieden
+weit ausgeführt, per Determinismus ergebnisgleich (§9.1).
 
 Der Macro emittiert die dyn-Registrierung (Quelle, Partitionsspalte,
 Outputs, Aufruf-Shim: Rows decodieren → `in_fold_order` → Fold →
@@ -396,15 +408,15 @@ Ein-Schreiber-Regel, Abgrenzung zu kommendem SQL-IVM.
 - M6a-Konsolidierung (§9.6): Partition-Terminologie,
   `#[partition]`-Marker bzw. Inferenz aus der strikten Log-Form,
   generierte Fold-Helfer. UMGESETZT (siehe §8).
-- M6b: Fold-Knotensorte. Der PRODUKT-CONTRACT (`apply(&mut self, row)` /
-  `render(&self, ...)` auf dem State-Typ) ist UMGESETZT — als DER
-  Contract der `#[projection]`-Impl-Form, ausgeführt auf dem
-  Recompute-Knoten (Fold ab `Default::default()` pro Derive; siehe §8).
-  Offen ist nur die
-  inkrementelle AUSFÜHRUNG (periodische State-Snapshots alle X
-  committeten Events, Fold ab dem letzten gültigen Snapshot).
-  Bau-Kriterium: erst wenn Messung zeigt, dass Recompute+Memo nicht
-  reicht.
+- M6b: Fold-Knotensorte. KOMPLETT UMGESETZT: der PRODUKT-CONTRACT
+  (`apply(&mut self, row)` / `render(&self, ...)` auf dem State-Typ)
+  als DER Contract der `#[projection]`-Impl-Form, UND die
+  inkrementelle AUSFÜHRUNG — in der einfachsten Form (EIN
+  Committed-Frontier-Snapshot pro live Partition, Gültigkeit per
+  seq-Präfix; siehe §8), nicht als §9.3-Ring. Der Ring bleibt
+  ungebaut; sein Mehrwert (schnellere Erholung nach Backfill hinter
+  der Frontier) griffe nur in einem seltenen Fall, der heute schlicht
+  auf den immer korrekten Fold-ab-null zurückfällt.
 
 Migration im Produkt-Repo (NICHT Teil dieses Auftrags, nur Erwartung):
 pro Command Hand-`execute_optimistic` löschen → `append_to`; ein
@@ -586,6 +598,32 @@ Implementiert und getestet (Workspace: 943 Tests grün, wasm32 baut):
   `projection_log.rs` (Partition-Inferenz), tables-codegen
   (Scan/Registrierung).
 
+- **M6b — inkrementelle Ausführung (Committed-Frontier-Snapshot,
+  bewusst einfachste Form)**: KEIN Ring, KEIN X-Intervall — pro
+  (Projektion, live Partition) genau EIN Memo: der State des kompletten
+  committed Präfixes plus dessen seq-Liste
+  (`typed::FoldSnapshot { seqs, state }`). Ablage im engine-eigenen
+  `FoldCache` (opak, `dyn Any`), den `Projection::project` als neuen
+  Parameter bekommt — die Engine besitzt ihn, weil NUR sie den
+  Partition-Lifecycle kennt: Memo stirbt mit der Partition (letzte
+  Quell-Row weg), `reset_and_rederive`/`replace_data` leert alle
+  (seq-Listen könnten die neue Realität zufällig treffen). Der Shim:
+  committed-seq-Liste bauen → `starts_with(memo.seqs)` ⇒ Resume per
+  `clone()`, sonst Fold ab null → nur neue committete Rows folden →
+  Memo fortschreiben (nur wenn neue committete Rows kamen; ein
+  apply-Fehler im Pending-Tail lässt das gültige Memo stehen) →
+  Pendings folden (nie memoisiert — sie reordnen und wandern beim
+  Confirm) → einmal rendern. Konsequenz: Read-Dirty foldet NICHTS
+  mehr, es rendert nur; der Fanout aus §7 kostet damit nur noch Render.
+  `cache` ist per Contract Memo, nie Input — leerer Cache muss dasselbe
+  Ergebnis liefern (im Trait dokumentiert). Neu tragend: committete
+  Rows sind pro (Partition, seq) unveränderlich (§3(2)-Einschub).
+  Hand-Impls ignorieren den Parameter. Tests:
+  `projection_fold_incremental.rs` (apply-Zähler: nur neue committete
+  Rows folden; Read-Dirty ohne Fold; Pendings ab Snapshot; Backfill
+  hinter der Frontier ⇒ Fold ab null), kernel.rs (Memo stirbt mit der
+  Partition, Reset leert alle Memos).
+
 Entschieden (vormals §7 offen): Payload als JSON-String (`payload_json`);
 Slot-Fehler-Sichtbarkeit via `FetchError::Projection` (DebugEvent
 weiterhin offen). Bewusst NICHT umgesetzt: Slot-Drop-getriebene GC des
@@ -598,16 +636,15 @@ Fetched-Slots kommt, ist der Hook der Slot-Drop in
 
 Offen: M4 (Demo-Vertical im invoice-demo), M5 (README-Doku),
 TS-Builder für `{projection, partition, requires}`-Einträge im
-Frontend-Layer; an M6b (§9) nur noch die inkrementelle
-AUSFÜHRUNGSSTRATEGIE (Snapshot-Ring) nach Messung — M6a inkl.
-Konsolidierung und der Fold-Contract sind umgesetzt. Produkte
+Frontend-Layer — M6 ist komplett (Contract + inkrementelle
+Ausführung; nur der §9.3-Ring bleibt Ausbaustufe nach Messung). Produkte
 können Projektionen heute vollständig nutzen: `#[projection_row]`-Log +
 `#[rpc_command(append_to = ...)]`-Commands mit `#[partition]`-Feld +
 `#[projection]`-Impl (`apply`/`render`) + `.projections_path(...)` im
 build.rs + `projections = generated::register_all_projections` in
 `define_wasm_api!`.
 
-## 9. M6 — Fold-Knotensorte (Contract UMGESETZT; inkrementelle Ausführung geplant, opt-in)
+## 9. M6 — Fold-Knotensorte (UMGESETZT; Ausführung als Frontier-Snapshot, §9.3-Ring bleibt Ausbaustufe)
 
 Ergebnis der Design-Diskussion (Juli 2026, nach M3): eine ZWEITE
 Knotensorte im selben DAG für event-geförmte Quellen — inkrementeller
@@ -663,6 +700,16 @@ drei Gründen anders:
 
 ### 9.3 Mechanik (v1: periodische Snapshots — bewusst stumpf)
 
+UMGESETZT IN NOCH EINFACHERER FORM (siehe §8): statt eines Rings alle
+X Events hält die Engine pro (Projektion, Partition) genau EINEN
+Snapshot — den State des kompletten committed Präfixes, gültig solange
+die aktuelle committed-seq-Liste die memoisierte fortsetzt
+(`starts_with`). Kosten pro Derive damit O(neue committete + Pendings);
+jede Invalidierung fällt auf Fold-ab-null zurück (die Ring-Erholung
+entfiele nur in diesem seltenen Fall). Der Rest dieses Abschnitts
+dokumentiert das ursprüngliche Ring-Design als Ausbaustufe, falls
+Messung den Fold-ab-null-Rückfall je als Problem zeigt.
+
 Entscheidung (Design-Diskussion): KEINE exakte Wasserlinien-/Loch-
 Buchhaltung, kein `S_committed`/`S_optimistic`-Doppelbuffer (frühere
 Skizze). Stattdessen hält die Engine pro (Projektion, Key) einen Ring
@@ -715,8 +762,8 @@ die Knotensorte ist nur eine andere Strategie, `neu` zu berechnen.
   ursprüngliche `key = ...`-Argument ist durch die
   Partition-Konsolidierung abgelöst — §9.6: die Partition wird aus der
   strikten Form inferiert.)
-- **M6b — Fold-Contract (UMGESETZT als DER Contract der Impl-Form,
-  siehe §8; offen ist nur die inkrementelle Ausführung §9.3):**
+- **M6b — Fold-Contract (UMGESETZT als DER Contract der Impl-Form;
+  Ausführung inkrementell per Frontier-Snapshot, siehe §8):**
   Das Impl-Target ist der State selbst, `Default + Clone` (im Shim
   erzwungen);
   `apply(&mut self, &LogRow) -> Result<(), String>`;
@@ -756,15 +803,14 @@ die Knotensorte ist nur eine andere Strategie, `neu` zu berechnen.
   Multi-Source-Interleaving), sind kein Macro-Fall — falls je
   gebraucht: Hand-Implementierung des row-level `Projection`-Traits
   (Engine-Schnittstelle) oder später die SQL-IVM-Knotensorte.
-- Preis des Snapshot-Rings (M6b): ein Ring pro Live-Partition
-  zusätzlich zu `last_render` (Speicher steuerbar über X und
-  Ring-Tiefe).
-- Bau-Kriterium: MESSEN (gleiche Haltung wie beim Read-Dirty-Fanout,
-  §7). Produkte erreichen dieselbe Asymptotik heute per
-  Chain-Hash-Memo INNERHALB der puren Funktion (§4.1); die
-  Snapshot-Konvention deckelt N ohnehin, weil auch der Ladepfad keine
-  unbeschränkten Logs verträgt. M6b lohnt erst, wenn das nachweislich
-  nicht reicht.
+- Preis der umgesetzten Frontier-Snapshot-Ausführung: EIN geklonter
+  State + die committed-seq-Liste pro live Partition, zusätzlich zu
+  `last_render` — Speicher folgt der Datenpräsenz, kein Tuning-Knopf.
+- Bau-Kriterium für MEHR (der §9.3-Ring, per-Partition-Read-Tracking):
+  MESSEN (gleiche Haltung wie beim Read-Dirty-Fanout, §7). Der Ring
+  lohnt erst, wenn der Fold-ab-null-Rückfall nach Backfill nachweislich
+  wehtut; die Snapshot-Konvention deckelt N ohnehin, weil auch der
+  Ladepfad keine unbeschränkten Logs verträgt.
 
 ### 9.6 Partition statt Key — DX-Konsolidierung (UMGESETZT)
 
