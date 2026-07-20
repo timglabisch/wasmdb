@@ -21,6 +21,13 @@ use tables::{FetchRequest, Fetcher};
 /// crate's `build.rs`.
 pub use tables_macros::{query, row};
 
+/// `#[projection]` macro — turns a typed impl block into a registered
+/// `database_projection::Projection`. Client-side counterpart of
+/// `#[query]`; the consuming crate needs `database-projection`.
+/// `#[projection_row]` declares the projection's event log — mirrors
+/// `#[row]` for tables.
+pub use tables_macros::{projection, projection_row};
+
 #[derive(Debug)]
 pub enum StorageError {
     NotRegistered,

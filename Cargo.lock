@@ -355,10 +355,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "database-projection"
+version = "0.1.0"
+dependencies = [
+ "database",
+ "sql-engine",
+]
+
+[[package]]
 name = "database-reactive"
 version = "0.1.0"
 dependencies = [
  "database",
+ "database-projection",
  "dirty-set",
  "fnv",
  "sql-engine",
@@ -1694,9 +1703,12 @@ name = "rpc-command"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "database",
  "rpc-command-derive",
  "serde",
  "serde_json",
+ "sql-engine",
+ "sync",
  "ts-rs",
 ]
 
@@ -2393,6 +2405,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-projection",
  "database-reactive",
  "futures",
  "js-sys",
@@ -2454,6 +2467,8 @@ name = "tables"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2485,14 +2500,19 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-projection",
  "pollster 0.4.0",
  "requirements",
+ "rpc-command",
  "serde",
+ "serde_json",
  "sql-engine",
  "sql-parser",
+ "sync",
  "tables",
  "tables-codegen",
  "tables-storage",
+ "ts-rs",
 ]
 
 [[package]]

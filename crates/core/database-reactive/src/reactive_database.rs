@@ -4,6 +4,8 @@ use dirty_set::{DirtySet, DirtySlotId};
 use fnv::{FnvHashMap, FnvHashSet};
 
 use database::{Database, DbError, MutResult};
+use database_projection::db_host::DatabaseHost;
+use database_projection::{DeriveFailure, DeriveOutcome, ProjectionEngine};
 use sql_engine::execute::{Columns, Params, Span};
 use sql_engine::reactive::execute::on_zset;
 use sql_engine::reactive::registry::SubscriptionRegistry;
@@ -72,6 +74,39 @@ pub struct ReactiveDatabase {
     /// empty → non-empty; stays silent while marks pile up before the next
     /// drain.
     wake: Option<Box<dyn Fn()>>,
+
+    /// Projection engine (materialized views as Rust functions). When
+    /// installed, every `notify` runs a derive pass FIRST: affected
+    /// partitions are recomputed, derived deltas applied to the database, and the
+    /// combined change set is what subscribers are notified with —
+    /// same-batch atomicity, no torn reads between source and derived
+    /// tables. See `database-projection` / docs/wasmdb-projections-design.md.
+    projections: Option<ProjectionEngine>,
+    /// Failure/recovery bookkeeping events in derive-pass order. ONE
+    /// ordered stream (not separate failure/recovery lists) because
+    /// multiple derive passes can run between two drains — the last event
+    /// per partition must win at the consumer. Drained via
+    /// `take_projection_events`.
+    projection_events: Vec<ProjectionEvent>,
+    /// `(projection id, display partition)` → message of the reported,
+    /// not-yet-recovered failure. Bounds the event stream: an unchanged
+    /// repeat failure records no new event, and successes are only
+    /// recorded for partitions present here.
+    failed_projection_partitions: FnvHashMap<(String, String), String>,
+}
+
+/// One failure/recovery bookkeeping event from a derive pass. Consumers
+/// (e.g. the wasm requirements drain) must apply events in order: a
+/// `Failed` followed by a `Recovered` for the same partition means the
+/// partition is healthy now, and vice versa.
+#[derive(Debug, Clone)]
+pub enum ProjectionEvent {
+    /// A partition's recompute errored; its previous output stays in
+    /// place. Repeated failures with an unchanged message are recorded once.
+    Failed(DeriveFailure),
+    /// A previously-failed partition re-derived successfully. Never
+    /// emitted for partitions without a prior `Failed` event.
+    Recovered { projection: String, partition: String },
 }
 
 impl ReactiveDatabase {
@@ -93,6 +128,93 @@ impl ReactiveDatabase {
             free_slots: Vec::new(),
             drain_buffer: VecDeque::new(),
             wake: None,
+            projections: None,
+            projection_events: Vec::new(),
+            failed_projection_partitions: FnvHashMap::default(),
+        }
+    }
+
+    // ── Projections ──────────────────────────────────────────────────
+
+    /// Install the projection engine. Runs an initial full derive so
+    /// pre-existing source rows are materialized; call `notify_all` after
+    /// if subscribers should see the initial state.
+    pub fn install_projections(&mut self, mut engine: ProjectionEngine) {
+        if !engine.is_empty() {
+            let outcome = {
+                let mut host = DatabaseHost::new(&mut self.db);
+                engine.reset_and_rederive(&mut host)
+            };
+            self.absorb_outcome_bookkeeping(outcome);
+        }
+        self.projections = Some(engine);
+    }
+
+    /// Drain the failure/recovery events accumulated by derive passes, in
+    /// derive order. Embedders route them to their error surfaces (e.g.
+    /// pin/unpin `SlotKind::Projected` slots) by applying them in order.
+    pub fn take_projection_events(&mut self) -> Vec<ProjectionEvent> {
+        std::mem::take(&mut self.projection_events)
+    }
+
+    /// Fold a derive outcome into failure/recovery bookkeeping. Returns the
+    /// outcome's delta for the caller.
+    fn absorb_outcome_bookkeeping(&mut self, outcome: DeriveOutcome) -> ZSet {
+        for pair in outcome.succeeded {
+            if self.failed_projection_partitions.remove(&pair).is_some() {
+                let (projection, partition) = pair;
+                self.projection_events
+                    .push(ProjectionEvent::Recovered { projection, partition });
+            }
+        }
+        for f in outcome.failures {
+            match &f.partition {
+                Some(partition) => {
+                    let pair = (f.projection.clone(), partition.clone());
+                    let unchanged = self
+                        .failed_projection_partitions
+                        .get(&pair)
+                        .is_some_and(|prev| *prev == f.message);
+                    if unchanged {
+                        continue;
+                    }
+                    self.failed_projection_partitions.insert(pair, f.message.clone());
+                    self.projection_events.push(ProjectionEvent::Failed(f));
+                }
+                // Not tied to a partition (e.g. reset teardown) — always surface.
+                None => self.projection_events.push(ProjectionEvent::Failed(f)),
+            }
+        }
+        outcome.delta
+    }
+
+    /// Derive pass for one external change set (already applied to the
+    /// database). Returns the combined zset (external + derived deltas) if
+    /// anything was derived.
+    fn derive_pass(&mut self, zset: &ZSet) -> Option<ZSet> {
+        let engine = self.projections.as_mut()?;
+        if engine.is_empty() || zset.is_empty() {
+            return None;
+        }
+        // Batches from `apply_zset` are pre-guarded; a violation here means
+        // a raw write path (SQL / db_mut_raw) touched an owned table —
+        // a programming error, surfaced in debug builds.
+        debug_assert!(
+            engine.guard_external(zset).is_ok(),
+            "write to projection-owned table reached notify: {}",
+            engine.guard_external(zset).unwrap_err(),
+        );
+        let outcome = {
+            let mut host = DatabaseHost::new(&mut self.db);
+            engine.derive(zset, &mut host)
+        };
+        let delta = self.absorb_outcome_bookkeeping(outcome);
+        if delta.is_empty() {
+            None
+        } else {
+            let mut combined = zset.clone();
+            combined.extend(delta);
+            Some(combined)
         }
     }
 
@@ -172,6 +294,13 @@ impl ReactiveDatabase {
     }
 
     pub fn apply_zset(&mut self, zset: &ZSet) -> Result<(), DbError> {
+        // Ownership guard: derived tables are written exclusively by the
+        // projection engine. Rejected BEFORE anything is applied.
+        if let Some(engine) = self.projections.as_ref() {
+            if let Err(v) = engine.guard_external(zset) {
+                return Err(DbError::OwnedByProjection { table: v.table, owner: v.owner });
+            }
+        }
         self.db.apply_zset(zset)?;
         self.notify(zset);
         Ok(())
@@ -290,13 +419,21 @@ impl ReactiveDatabase {
 
     // ── Notify ───────────────────────────────────────────────────────
 
-    /// Dispatch a ZSet to subscribers. Marks affected subscriptions dirty,
-    /// accumulates their triggered-condition indices, and fires the
-    /// edge-triggered wake signal if the dirty-set transitions from empty
-    /// to non-empty.
+    /// Dispatch a ZSet to subscribers. If a projection engine is installed,
+    /// a derive pass runs FIRST (recompute affected partitions, apply derived
+    /// deltas) and subscribers are notified with the combined change set —
+    /// source and derived tables always appear as ONE consistent update.
+    /// Then marks affected subscriptions dirty, accumulates their
+    /// triggered-condition indices, and fires the edge-triggered wake
+    /// signal if the dirty-set transitions from empty to non-empty.
     ///
     /// Consumers drain via [`Self::next_dirty`] when ready.
     pub fn notify(&mut self, zset: &ZSet) {
+        // Derivation must run even with zero subscribers — derived tables
+        // stay consistent regardless of who is watching.
+        let combined = self.derive_pass(zset);
+        let zset = combined.as_ref().unwrap_or(zset);
+
         if self.subscriptions.is_empty() {
             return;
         }
@@ -380,8 +517,23 @@ impl ReactiveDatabase {
     /// the subscription registry, requirement registry, and fetcher runtime
     /// intact. Used by sync-client to rebuild optimistic from confirmed
     /// without losing subscriptions or registered fetchers.
+    ///
+    /// With projections installed, the wholesale swap invalidates the
+    /// engine's `last_render` bookkeeping — derived state is dropped and
+    /// rebuilt from the new source contents (derived tables are cache,
+    /// always reconstructible). Callers are expected to `notify_all` after,
+    /// as before.
     pub fn replace_data(&mut self, other: &Database) {
         self.db.replace_tables(other);
+        if let Some(engine) = self.projections.as_mut() {
+            if !engine.is_empty() {
+                let outcome = {
+                    let mut host = DatabaseHost::new(&mut self.db);
+                    engine.reset_and_rederive(&mut host)
+                };
+                self.absorb_outcome_bookkeeping(outcome);
+            }
+        }
     }
 
     // ── Introspection ────────────────────────────────────────────────

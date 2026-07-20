@@ -5,8 +5,13 @@ edition = "2021"
 
 [dependencies]
 rpc-command-derive = { workspace = true }
+serde = { version = "1" }
+serde_json = "1"
 
 [dev-dependencies]
+sync = { workspace = true }
+database = { workspace = true }
+sql-engine = { workspace = true }
 borsh = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

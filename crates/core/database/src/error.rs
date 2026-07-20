@@ -8,6 +8,9 @@ pub enum DbError {
     Execute(ExecuteError),
     TableAlreadyExists(String),
     TableNotFound(String),
+    /// The table is owned by a projection (derived table) — external
+    /// writes are rejected; only the projection engine may write it.
+    OwnedByProjection { table: String, owner: String },
 }
 
 impl std::fmt::Display for DbError {
@@ -18,6 +21,10 @@ impl std::fmt::Display for DbError {
             DbError::Execute(e) => write!(f, "execute error: {e}"),
             DbError::TableAlreadyExists(t) => write!(f, "table already exists: {t}"),
             DbError::TableNotFound(t) => write!(f, "table not found: {t}"),
+            DbError::OwnedByProjection { table, owner } => write!(
+                f,
+                "table '{table}' is owned by projection '{owner}' — external writes are not allowed"
+            ),
         }
     }
 }

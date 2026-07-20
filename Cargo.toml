@@ -7,6 +7,7 @@ members = [
     "crates/core/sql-parser",
     "crates/core/sql-engine",
     "crates/core/database",
+    "crates/core/database-projection",
     "crates/core/database-reactive",
     "crates/core/dirty-set",
 
@@ -54,6 +55,7 @@ resolver = "2"
 sql-parser            = { path = "crates/core/sql-parser" }
 sql-engine            = { path = "crates/core/sql-engine" }
 database              = { path = "crates/core/database" }
+database-projection   = { path = "crates/core/database-projection" }
 database-reactive     = { path = "crates/core/database-reactive" }
 dirty-set             = { path = "crates/core/dirty-set" }
 

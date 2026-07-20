@@ -17,6 +17,6 @@ pub use registry::{Requirement, RequirementRegistry};
 pub use requirement::DbRequirement;
 pub use runtime::{RequirementFn, RequirementFuture};
 pub use store::{
-    make_derived_key, make_fetched_key, FetchDispatcher, FetchError, RequirementKey,
-    RequirementStore, Slot, SlotKind, SlotState, SubscriberId,
+    make_derived_key, make_fetched_key, make_projected_key, FetchDispatcher, FetchError,
+    RequirementKey, RequirementStore, Slot, SlotKind, SlotState, SubscriberId,
 };

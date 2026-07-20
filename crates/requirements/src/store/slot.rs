@@ -17,6 +17,7 @@ use sql_parser::ast::Value;
 /// Canonical form (built by store helpers, not enforced here):
 /// - Fetched: `"fetched:<registered_id>:<canonicalJson(args)>"`
 /// - Derived: `"derived:<canonical(sql)>|{params}|[upstream_keys]"`
+/// - Projected: `"projected:<projection_id>:<partition_repr>"`
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RequirementKey(pub Arc<str>);
 
@@ -57,6 +58,20 @@ pub enum SlotKind {
         /// participate in identity.
         name: Option<Arc<str>>,
     },
+    /// One partition of a registered projection (derived table maintained
+    /// by the projection engine). Never fetched — the engine materializes
+    /// it at the apply/notify chokepoint. The slot only tracks loading
+    /// status (aggregated from the upstream log requirement, like
+    /// `Derived`) and per-partition `project()` failures reported via
+    /// `RequirementStore::report_projection_failure`.
+    Projected {
+        /// `ProjectionSpec::id` of the registered projection.
+        projection_id: Arc<str>,
+        /// Canonical display form of the partition (decimal for I64, raw
+        /// for Str, hyphenated lowercase for Uuid) — must match the
+        /// engine's `DeriveFailure::partition` formatting.
+        partition_repr: Arc<str>,
+    },
 }
 
 /// Loading-status tag. Independent of `inflight` — the combination
@@ -86,6 +101,11 @@ pub enum FetchError {
     /// Fetch was aborted — typically because a later `invalidate`
     /// bumped the generation while this fetch was in flight.
     Cancelled,
+    /// A projection's `project()` failed for this slot's key. The key's
+    /// previous output stays materialized; the error pins the slot to
+    /// `Error` until the key re-derives successfully or `invalidate`
+    /// clears it.
+    Projection(String),
 }
 
 /// Per-identity record in the requirement store. See module docs.
@@ -206,18 +226,67 @@ impl Slot {
         self.last_error = None;
     }
 
-    /// Recompute Derived status from upstream slot states. No-op for
-    /// `Fetched` (its state is owned by its own fetch path).
+    /// Recompute Derived/Projected status from upstream slot states.
+    /// No-op for `Fetched` (its state is owned by its own fetch path).
     ///
     /// Aggregation rule: any `Error` wins; else any `Loading`/`Idle`
     /// keeps it loading; else all `Ready` → `Ready`. Empty upstream
     /// list → `Ready` (Derived with no requirements is trivially ready
     /// once subscribed — its SQL can run immediately).
+    ///
+    /// A Projected slot with a recorded projection failure stays pinned
+    /// to `Error` regardless of upstream states — the failure is a
+    /// property of the key's own render, not of its inputs. Cleared via
+    /// [`Self::clear_projection_error`] or [`Self::invalidate`].
     pub fn recompute_status_from_upstream(&mut self, upstream_states: &[SlotState]) {
-        if !matches!(self.kind, SlotKind::Derived { .. }) {
-            return;
+        match self.kind {
+            SlotKind::Fetched { .. } => {}
+            SlotKind::Derived { .. } => {
+                self.state = aggregate_status(upstream_states);
+            }
+            SlotKind::Projected { .. } => {
+                if matches!(self.last_error, Some(FetchError::Projection(_))) {
+                    self.state = SlotState::Error;
+                } else {
+                    self.state = aggregate_status(upstream_states);
+                }
+            }
         }
-        self.state = aggregate_status(upstream_states);
+    }
+
+    /// Record a `project()` failure for this Projected slot's key. Pins
+    /// the state to `Error` until the key re-derives successfully
+    /// ([`Self::clear_projection_error`]) or `invalidate` resets it.
+    /// Returns `false` when the identical failure is already pinned — the
+    /// caller then skips change notifications.
+    pub fn apply_projection_error(&mut self, message: String) -> bool {
+        debug_assert!(
+            matches!(self.kind, SlotKind::Projected { .. }),
+            "apply_projection_error on non-Projected slot {}",
+            self.key.as_str()
+        );
+        if self.state == SlotState::Error {
+            if let Some(FetchError::Projection(prev)) = &self.last_error {
+                if *prev == message {
+                    return false;
+                }
+            }
+        }
+        self.last_error = Some(FetchError::Projection(message));
+        self.state = SlotState::Error;
+        true
+    }
+
+    /// Clear a recorded projection failure (the key re-derived
+    /// successfully). Returns `true` iff a projection error was present —
+    /// the caller then recomputes the state from upstream.
+    pub fn clear_projection_error(&mut self) -> bool {
+        if matches!(self.last_error, Some(FetchError::Projection(_))) {
+            self.last_error = None;
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -471,6 +540,70 @@ mod tests {
             SlotState::Error,
         ]);
         assert_eq!(s.state, SlotState::Error);
+    }
+
+    // ── Projected status ─────────────────────────────────────────────
+
+    fn projected_slot(upstream: Vec<RequirementKey>) -> Slot {
+        Slot::new(
+            RequirementKey::new("projected:totals:1"),
+            SlotKind::Projected {
+                projection_id: Arc::from("totals"),
+                partition_repr: Arc::from("1"),
+            },
+            upstream,
+        )
+    }
+
+    #[test]
+    fn projected_aggregates_from_upstream_like_derived() {
+        let mut s = projected_slot(vec![RequirementKey::new("a")]);
+        s.recompute_status_from_upstream(&[SlotState::Loading]);
+        assert_eq!(s.state, SlotState::Loading);
+        s.recompute_status_from_upstream(&[SlotState::Ready]);
+        assert_eq!(s.state, SlotState::Ready);
+    }
+
+    #[test]
+    fn projection_error_pins_state_until_cleared() {
+        let mut s = projected_slot(vec![RequirementKey::new("a")]);
+        s.recompute_status_from_upstream(&[SlotState::Ready]);
+        s.apply_projection_error("bad payload".into());
+        assert_eq!(s.state, SlotState::Error);
+
+        // Upstream flapping does NOT unpin — the failure belongs to the
+        // key's own render.
+        s.recompute_status_from_upstream(&[SlotState::Ready]);
+        assert_eq!(s.state, SlotState::Error);
+
+        assert!(s.clear_projection_error());
+        s.recompute_status_from_upstream(&[SlotState::Ready]);
+        assert_eq!(s.state, SlotState::Ready);
+    }
+
+    #[test]
+    fn invalidate_unpins_projection_error() {
+        let mut s = projected_slot(vec![RequirementKey::new("a")]);
+        s.apply_projection_error("bad payload".into());
+        s.invalidate();
+        assert!(s.last_error.is_none());
+        s.recompute_status_from_upstream(&[SlotState::Ready]);
+        assert_eq!(s.state, SlotState::Ready);
+    }
+
+    #[test]
+    fn clear_projection_error_without_error_is_false() {
+        let mut s = projected_slot(Vec::new());
+        assert!(!s.clear_projection_error());
+    }
+
+    #[test]
+    fn identical_repeat_failure_reports_no_change() {
+        let mut s = projected_slot(vec![RequirementKey::new("a")]);
+        assert!(s.apply_projection_error("bad payload".into()));
+        assert!(!s.apply_projection_error("bad payload".into()));
+        // A different message IS a change — it surfaces to the UI.
+        assert!(s.apply_projection_error("other".into()));
     }
 
     #[test]

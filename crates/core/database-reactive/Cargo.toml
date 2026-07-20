@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 database = { workspace = true }
+database-projection = { workspace = true }
 sql-engine = { workspace = true }
 sql-parser = { workspace = true }
 dirty-set = { workspace = true }

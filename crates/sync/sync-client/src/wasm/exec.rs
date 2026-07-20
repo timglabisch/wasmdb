@@ -55,6 +55,9 @@ where
             .execute(StreamId(stream_id_val), cmd)
             .map_err(|e| JsError::new(&e.to_string()))
     })?;
+    // The optimistic execute ran a derive pass — route any projection
+    // failure/recovery events to their requirement slots.
+    crate::wasm::req_bindings::drain_projection_events();
 
     wasmdb_debug::log_event(DebugEvent::Execute {
         timestamp_ms: now_ms(),

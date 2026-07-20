@@ -283,6 +283,9 @@ fn process_batch_response<C: Command + 'static>(
         }
         first_reject
     });
+    // Confirm/reject reconciliation ran derive passes — route projection
+    // failure/recovery events to their requirement slots.
+    crate::wasm::req_bindings::drain_projection_events();
 
     let result = js_sys::Object::new();
     match &first_reject {
