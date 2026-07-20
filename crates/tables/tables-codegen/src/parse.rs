@@ -23,6 +23,14 @@ pub struct Module {
     pub path: Vec<String>,
     pub rows: Vec<Row>,
     pub queries: Vec<Query>,
+    pub projections: Vec<Projection>,
+}
+
+/// A `#[projection]` impl block. The macro emits the struct + Projection
+/// impl in the source crate; codegen only needs the type name to emit
+/// `register_all_projections`.
+pub struct Projection {
+    pub name: String,
 }
 
 pub struct Row {
@@ -90,26 +98,37 @@ fn walk_items(
 ) -> Result<(), CodegenError> {
     let mut rows = vec![];
     let mut queries = vec![];
+    let mut projections = vec![];
 
     for item in items {
         match item {
             Item::Struct(s) if has_attr(&s.attrs, "row") => {
                 rows.push(parse_row(s)?);
             }
+            // #[projection_row] (M6a): expands to a #[row] with generated
+            // bookkeeping columns — scanned as a row so client mode
+            // re-emits the FULL shape.
+            Item::Struct(s) if has_attr(&s.attrs, "projection_row") => {
+                rows.push(parse_projection_row(s)?);
+            }
             Item::Fn(f) => {
                 if let Some(attr) = find_attr(&f.attrs, "query") {
                     queries.push(parse_query(f, attr, mod_path)?);
                 }
             }
+            Item::Impl(imp) if has_attr(&imp.attrs, "projection") => {
+                projections.push(parse_projection(imp)?);
+            }
             _ => {}
         }
     }
 
-    if !rows.is_empty() || !queries.is_empty() {
+    if !rows.is_empty() || !queries.is_empty() || !projections.is_empty() {
         model.modules.push(Module {
             path: mod_path.to_vec(),
             rows,
             queries,
+            projections,
         });
     }
 
@@ -167,6 +186,77 @@ fn has_attr(attrs: &[Attribute], name: &str) -> bool {
 
 fn find_attr<'a>(attrs: &'a [Attribute], name: &str) -> Option<&'a Attribute> {
     attrs.iter().find(|a| a.path().is_ident(name))
+}
+
+fn parse_projection(imp: &syn::ItemImpl) -> Result<Projection, CodegenError> {
+    let Type::Path(TypePath { path, .. }) = imp.self_ty.as_ref() else {
+        return Err(CodegenError::Parse(
+            "#[projection] impl type must be a plain identifier".into(),
+        ));
+    };
+    let name = path
+        .get_ident()
+        .map(|i| i.to_string())
+        .ok_or_else(|| {
+            CodegenError::Parse("#[projection] impl type must be a plain identifier".into())
+        })?;
+    Ok(Projection { name })
+}
+
+/// Parse a `#[projection_row]` struct into a [`Row`], mirroring the
+/// macro's expansion: the source declares `command_id` (PK) and the
+/// partition column; the two-parent-link bookkeeping
+/// `client_parent_id`/`server_parent_id`/`payload` is appended here
+/// exactly like the macro appends it (design §11), so the client-mode row
+/// duplicate matches the expanded original.
+fn parse_projection_row(s: &ItemStruct) -> Result<Row, CodegenError> {
+    let name = s.ident.to_string();
+    let Fields::Named(named) = &s.fields else {
+        return Err(CodegenError::Parse(format!(
+            "#[projection_row] on `{name}`: needs named fields"
+        )));
+    };
+
+    let mut fields: Vec<(String, Type)> = vec![];
+    let mut pk: Option<(String, Type)> = None;
+    for f in &named.named {
+        let Some(ident) = &f.ident else {
+            return Err(CodegenError::Parse(format!(
+                "#[projection_row] on `{name}`: unnamed field"
+            )));
+        };
+        let fname = ident.to_string();
+        if fname == "command_id" {
+            pk = Some((fname.clone(), f.ty.clone()));
+        }
+        fields.push((fname, f.ty.clone()));
+    }
+    let (pk_name, pk_ty) = pk.ok_or_else(|| {
+        CodegenError::Parse(format!(
+            "#[projection_row] on `{name}`: missing `command_id` field"
+        ))
+    })?;
+
+    let uuid_ty: Type = syn::parse_str("Uuid")
+        .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
+    let opt_uuid_ty: Type = syn::parse_str("Option<Uuid>")
+        .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
+    let string_ty: Type = syn::parse_str("String")
+        .map_err(|e| CodegenError::Parse(format!("internal: {e}")))?;
+    fields.push(("client_parent_id".into(), uuid_ty));
+    fields.push(("server_parent_id".into(), opt_uuid_ty));
+    fields.push(("payload".into(), string_ty));
+
+    let n = fields.len();
+    Ok(Row {
+        name,
+        fields,
+        pk_name,
+        pk_ty,
+        table_name: None,
+        field_groups: vec![Vec::new(); n],
+        exports: Vec::new(),
+    })
 }
 
 fn parse_row(s: &ItemStruct) -> Result<Row, CodegenError> {

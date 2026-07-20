@@ -194,3 +194,42 @@ fn contact_uuid_pk_uniqueness_via_upsert() {
     assert_eq!(t.get(live, 1), CellValue::Str("B".into()));
 }
 
+
+#[test]
+fn from_cells_roundtrips_all_field_kinds() {
+    // Uuid + Option<Uuid> (Some and None).
+    for contact in [
+        Contact { id: contact_uuid(1), name: "Alice".into(), external_id: Some(contact_uuid(101)) },
+        Contact { id: contact_uuid(2), name: "Bob".into(), external_id: None },
+    ] {
+        let cells = contact.clone().into_cells();
+        let back = Contact::from_cells(&cells).unwrap();
+        assert_eq!(back.id, contact.id);
+        assert_eq!(back.name, contact.name);
+        assert_eq!(back.external_id, contact.external_id);
+    }
+
+    // String pk + Option<i64> (Some and None).
+    for product in [
+        Product { sku: "gadget".into(), name: "Gadget".into(), price: Some(100) },
+        Product { sku: "freebie".into(), name: "Freebie".into(), price: None },
+    ] {
+        let cells = product.clone().into_cells();
+        let back = Product::from_cells(&cells).unwrap();
+        assert_eq!(back.sku, product.sku);
+        assert_eq!(back.price, product.price);
+    }
+}
+
+#[test]
+fn from_cells_reports_table_column_and_offender() {
+    // Wrong type in column 1 (customer.name is Str).
+    let cells = vec![CellValue::I64(1), CellValue::I64(42), CellValue::I64(1)];
+    let err = Customer::from_cells(&cells).unwrap_err();
+    assert!(err.contains("customer.name"), "got: {err}");
+    assert!(err.contains("expected Str"), "got: {err}");
+
+    // Truncated row: missing cells surface as `None`.
+    let err = Customer::from_cells(&[CellValue::I64(1)]).unwrap_err();
+    assert!(err.contains("customer.name"), "got: {err}");
+}

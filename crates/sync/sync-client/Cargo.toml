@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sync = { workspace = true, features = ["serde"] }
 database = { workspace = true, features = ["borsh"] }
+database-projection = { workspace = true, features = ["borsh"] }
 database-reactive = { workspace = true, features = ["borsh"] }
 sql-engine = { workspace = true, features = ["borsh"] }
 borsh = { version = "1", features = ["derive"] }

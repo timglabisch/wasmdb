@@ -28,6 +28,7 @@ pub struct Builder {
     ctx_ty: Option<String>,
     ts_requirements_out: Option<PathBuf>,
     ts_rows_out: Option<PathBuf>,
+    projections_path: String,
 }
 
 #[derive(Clone, Copy)]
@@ -53,6 +54,7 @@ impl Builder {
             ctx_ty: None,
             ts_requirements_out: None,
             ts_rows_out: None,
+            projections_path: "crate".into(),
         }
     }
 
@@ -116,6 +118,18 @@ impl Builder {
         self
     }
 
+    /// Client-mode only: path prefix under which the scanned crate's
+    /// `#[projection]` types are reachable FROM the including crate —
+    /// `register_all_projections` references them (function bodies can't
+    /// be re-emitted like rows). Default `"crate"` fits scanning the own
+    /// crate; when the generated file lands in a different crate (the
+    /// typical wasm build), pass the domain crate's name, e.g.
+    /// `"::invoice_demo_domain"`.
+    pub fn projections_path(mut self, path: impl Into<String>) -> Self {
+        self.projections_path = path.into();
+        self
+    }
+
     pub fn compile(self) -> Result<(), CodegenError> {
         let (first, rest) = self
             .source_roots
@@ -142,7 +156,12 @@ impl Builder {
         let out_path = PathBuf::from(out_dir).join(&self.out_file);
 
         let tokens = match self.mode {
-            Mode::Client => emit::emit_client(&model, &self.url, self.wasm_bindings)?,
+            Mode::Client => emit::emit_client(
+                &model,
+                &self.url,
+                self.wasm_bindings,
+                &self.projections_path,
+            )?,
             Mode::Server => {
                 let ctx = self.ctx_ty.as_deref().unwrap_or("crate::AppCtx");
                 emit::emit_server(&model, ctx)?
@@ -200,5 +219,88 @@ impl std::error::Error for CodegenError {}
 impl From<io::Error> for CodegenError {
     fn from(e: io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    fn fixture_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixture")
+    }
+
+    #[test]
+    fn scan_collects_projection_impls() {
+        let model = crate::parse::scan(&fixture_root()).unwrap();
+        let projections: Vec<&str> = model
+            .modules
+            .iter()
+            .flat_map(|m| m.projections.iter().map(|p| p.name.as_str()))
+            .collect();
+        // The #[projection_row] struct (the log) must NOT land here —
+        // it is a row, not a registrable projection.
+        assert_eq!(projections, vec!["DraftFoldView"]);
+    }
+
+    /// `#[projection_row]` scans as a row with the generated bookkeeping
+    /// columns appended, exactly mirroring the macro expansion.
+    #[test]
+    fn scan_expands_projection_row_to_full_row() {
+        let model = crate::parse::scan(&fixture_root()).unwrap();
+        let log = model
+            .modules
+            .iter()
+            .flat_map(|m| m.rows.iter())
+            .find(|r| r.name == "DraftLog")
+            .expect("DraftLog scanned as row");
+        let field_names: Vec<&str> = log.fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            field_names,
+            vec!["command_id", "doc_id", "client_parent_id", "server_parent_id", "payload"]
+        );
+        assert_eq!(log.pk_name, "command_id");
+        assert!(log.exports.is_empty());
+    }
+
+    #[test]
+    fn client_emit_duplicates_projection_log_with_generated_columns() {
+        let model = crate::parse::scan(&fixture_root()).unwrap();
+        let tokens = crate::emit::emit_client(&model, "/table-fetch", false, "crate")
+            .unwrap()
+            .to_string();
+        assert!(tokens.contains("struct DraftLog"), "{tokens}");
+        assert!(tokens.contains("server_parent_id"), "{tokens}");
+        assert!(tokens.contains("payload"), "{tokens}");
+    }
+
+    #[test]
+    fn client_emit_registers_projections_under_the_given_path() {
+        let model = crate::parse::scan(&fixture_root()).unwrap();
+        let tokens = crate::emit::emit_client(&model, "/table-fetch", false, "::my_domain")
+            .unwrap()
+            .to_string();
+        assert!(tokens.contains("register_all_projections"), "{tokens}");
+        assert!(
+            tokens.contains(":: my_domain :: DraftFoldView"),
+            "projection referenced in its source crate: {tokens}"
+        );
+        // Rows are still re-emitted as usual.
+        assert!(tokens.contains("struct DraftEvent"), "{tokens}");
+    }
+
+    #[test]
+    fn client_emit_without_projections_emits_no_register_fn() {
+        let mut model = crate::parse::scan(&fixture_root()).unwrap();
+        for m in &mut model.modules {
+            m.projections.clear();
+        }
+        let tokens = crate::emit::emit_client(&model, "/table-fetch", false, "crate")
+            .unwrap()
+            .to_string();
+        assert!(
+            !tokens.contains("register_all_projections"),
+            "no projections → no fn (and no database-projection dep): {tokens}"
+        );
     }
 }

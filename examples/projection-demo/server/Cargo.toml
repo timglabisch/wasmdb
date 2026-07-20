@@ -1,0 +1,20 @@
+[package]
+name = "projection-demo-server"
+version = "0.1.0"
+edition = "2021"
+
+# Confirm-server: no SQL DB. It mirrors render-test's echo-server but adds
+# domain-aware steps over a tiny in-memory `ServerLog` (heads + row store,
+# design §11): `/command` stamps the appended log row's authoritative
+# `server_parent_id` in the returned `server_zset` (pending → committed,
+# advancing the fold's committed-frontier memo), and `/fetch` serves
+# committed rows by PK so a client can backward-refetch a chain gap
+# (§11.4). Seeded with a `carol` history to make that gap reproducible.
+[dependencies]
+sync = { workspace = true }
+sql-engine = { workspace = true, features = ["borsh"] }
+projection-demo-domain = { path = "../shared/domain" }
+borsh = { version = "1", features = ["derive"] }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }

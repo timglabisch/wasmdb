@@ -19,7 +19,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::parse::{Parse, ParseStream};
+use syn::parse::{Parse, ParseStream, Parser};
 use syn::{
     parse_macro_input, Data, DeriveInput, Error, Fields, FnArg, Ident, ItemFn, LitStr, PatType,
     ReturnType, Token, Type, TypePath, Visibility,
@@ -174,6 +174,60 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
 
     let n_fields = fields.len();
 
+    let cell_reads = fields.iter().enumerate().map(|(i, f)| {
+        let ident = &f.ident;
+        let expected = match f.kind {
+            FieldKind::I64 => "I64",
+            FieldKind::Str => "Str",
+            FieldKind::Uuid => "Uuid",
+            FieldKind::OptI64 => "I64 or Null",
+            FieldKind::OptStr => "Str or Null",
+            FieldKind::OptUuid => "Uuid or Null",
+        };
+        let err_lit = LitStr::new(
+            &format!("{table_lit}.{ident}: expected {expected}, got {{:?}}"),
+            proc_macro2::Span::call_site(),
+        );
+        let arms = match f.kind {
+            FieldKind::I64 => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::I64(v)) => *v,
+            },
+            FieldKind::Str => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Str(v)) =>
+                    ::core::clone::Clone::clone(v),
+            },
+            FieldKind::Uuid => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Uuid(b)) =>
+                    ::sql_engine::storage::Uuid(*b),
+            },
+            FieldKind::OptI64 => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::I64(v)) =>
+                    ::core::option::Option::Some(*v),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+            FieldKind::OptStr => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Str(v)) =>
+                    ::core::option::Option::Some(::core::clone::Clone::clone(v)),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+            FieldKind::OptUuid => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Uuid(b)) =>
+                    ::core::option::Option::Some(::sql_engine::storage::Uuid(*b)),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+        };
+        quote! {
+            let #ident = match cells.get(#i) {
+                #arms
+                other => return ::core::result::Result::Err(::std::format!(#err_lit, other)),
+            };
+        }
+    });
+    let field_idents = fields.iter().map(|f| &f.ident);
+
     Ok(quote! {
         #[derive(
             ::core::fmt::Debug,
@@ -209,8 +263,762 @@ fn expand_row(mut input: DeriveInput, args: RowArgs) -> syn::Result<TokenStream2
                 #(#cell_pushes)*
                 out
             }
+
+            fn from_cells(
+                cells: &[::sql_engine::storage::CellValue],
+            ) -> ::core::result::Result<Self, ::std::string::String> {
+                #(#cell_reads)*
+                ::core::result::Result::Ok(Self { #(#field_idents),* })
+            }
         }
     })
+}
+
+// ============================================================
+// #[projection] / #[projection_row]
+// ============================================================
+
+/// `#[projection(outputs(RowA, ...), reads(RowB, ...), id = "...")]`
+/// on an inherent impl block declares a projection (design doc
+/// §4.3 / §9.4). The impl target IS the fold state — a struct the
+/// product declares with `#[derive(Default, Clone)]`; its fields are
+/// the accumulator, one value per partition. The macro emits the user
+/// impl unchanged plus an `impl database_projection::Projection` shim.
+/// THE contract is the fold (§9.4): `apply` gets ONE typed log row at
+/// a time — the shim feeds the partition's rows in fold order (the
+/// committed server-parent chain, then the pending client-parent tail —
+/// `tables::ProjectionLog::in_fold_order`, §11.3) into a
+/// `Default::default()` value — and `render` then emits the outputs once.
+/// Reads ONLY in `render`; `apply` must stay a pure function of the rows:
+///
+/// ```ignore
+/// #[derive(Default, Clone)]
+/// pub struct DraftTotals { doc_id: i64, amount: i64 }
+///
+/// #[projection(outputs(DraftTotal), reads(Customer))]
+/// impl DraftTotals {
+///     fn apply(&mut self, row: &DraftLog) -> Result<(), String> {
+///         let cmd: SetLinePrice = row.decode()?;   // decode policy is product code
+///         self.amount += cmd.price_cents;
+///         ...
+///     }
+///     fn render(
+///         &self,
+///         ctx: &database_projection::RenderCtx<'_>,
+///         out: &mut database_projection::Out,
+///     ) -> Result<(), String> { ... }
+/// }
+/// ```
+///
+/// Exactly one source: the log row type from `apply`'s parameter; the
+/// partition comes from its `tables::ProjectionLog` impl (which
+/// `#[projection_row]` generates). The state must be `Default + Clone`
+/// (§9.4 — the snapshot below clones it). Execution (§9.3): the shim
+/// memoizes the state folded over the partition's COMMITTED prefix in
+/// the engine-owned `FoldCache`; a later derive resumes there and folds
+/// only new committed rows plus the pendings (never memoized — they
+/// reorder). A read-table change therefore re-renders without folding
+/// anything. If the committed id list stops extending the memoized one
+/// (a server reorder/drift, deletes, replaced data), the shim folds from
+/// zero — determinism makes both paths identical in result. This relies on
+/// a committed log row being immutable at its server-chain position.
+///
+/// `id` defaults to the snake_case struct name. The consuming crate
+/// needs `database-projection`, `sql-engine` and `tables` deps.
+///
+/// The event LOG the projection folds is declared separately with
+/// `#[projection_row]` on a struct — mirroring `#[row]` for tables.
+#[proc_macro_attribute]
+pub fn projection(args: TokenStream, input: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(input as syn::Item);
+    let result = match item {
+        syn::Item::Impl(imp) => match syn::parse::<ProjectionArgs>(args) {
+            Ok(a) => expand_projection(imp, a),
+            Err(e) => Err(e),
+        },
+        syn::Item::Struct(s) => Err(Error::new_spanned(
+            &s.ident,
+            "#[projection] goes on an inherent impl block (the projection) — \
+             the event log is declared with #[projection_row] on the struct",
+        )),
+        other => Err(Error::new_spanned(
+            &other,
+            "#[projection] goes on an inherent impl block (the projection)",
+        )),
+    };
+    match result {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// `#[dynamic_projection(outputs(RowA, ...), bind(col = comp, ...),
+/// reads(RowB, ...), id = "...")]` on an inherent impl block declares a
+/// demand-driven projection TEMPLATE (design doc §12) — the dynamic
+/// counterpart of `#[projection]`, with the SAME fold contract: the impl
+/// target is the state, `apply(&mut self, row: &LogRow)` replays one row,
+/// `render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` emits the outputs.
+/// The shim (committed-prefix memo, fold order, pending tail) is shared
+/// with `#[projection]`; only the lifecycle differs — an instance
+/// `(id, name)` materializes on `activate` and is evicted by the last
+/// `deactivate`, not by data presence.
+///
+/// `bind(col = comp, ...)` declares the instance footprint: source rows
+/// belong to the instance `name` iff `row[col] == name[comp]` for every
+/// binding (`col` is a column of the log row, `comp` an index into the
+/// compound instance name). An empty/omitted `bind` means every row of
+/// the source belongs to every instance (table scan).
+///
+/// ```ignore
+/// #[derive(Default, Clone)]
+/// pub struct ActivityFold { account: String, deposits: i64 }
+///
+/// #[dynamic_projection(id = "activity", outputs(AccountActivity), bind(account = 1))]
+/// impl ActivityFold {
+///     fn apply(&mut self, row: &LedgerLog) -> Result<(), String> { ... }
+///     fn render(&self, ctx: &RenderCtx<'_>, out: &mut Out) -> Result<(), String> { ... }
+/// }
+/// ```
+///
+/// Unlike `#[projection]`, codegen does NOT auto-register templates —
+/// pass them by hand next to the generated statics:
+/// `engine.register_dynamic(Box::new(ActivityFold::default()))`.
+#[proc_macro_attribute]
+pub fn dynamic_projection(args: TokenStream, input: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(input as syn::Item);
+    let result = match item {
+        syn::Item::Impl(imp) => match syn::parse::<DynamicProjectionArgs>(args) {
+            Ok(a) => expand_dynamic_projection(imp, a),
+            Err(e) => Err(e),
+        },
+        other => Err(Error::new_spanned(
+            &other,
+            "#[dynamic_projection] goes on an inherent impl block (the fold state)",
+        )),
+    };
+    match result {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// `#[projection_row]` on a struct declares a projection's event LOG —
+/// the row shape behind it, mirroring `#[row]` for tables (M6a/§9.6/§11).
+/// The struct declares only `command_id` (`Uuid` — becomes the PK, the
+/// target the parent links reference) and ONE further field: the partition
+/// column, the log's stream identity. The macro appends the two-parent-link
+/// bookkeeping columns `client_parent_id: Uuid`, `server_parent_id:
+/// Option<Uuid>` and `payload: String` (the event's RPC form), expands to a
+/// full `#[row]`, and implements `tables::ProjectionLog` (PARTITION_COLUMN +
+/// the fold helpers `decode`/`is_committed`/`in_fold_order`). Event content
+/// lives in the payload, not in columns:
+///
+/// ```ignore
+/// #[projection_row]
+/// pub struct DraftLog {
+///     pub command_id: Uuid,
+///     pub doc_id: i64,     // the partition — inferred, no attribute
+/// }
+/// // expands to a #[row] with columns:
+/// //   command_id (PK), doc_id, client_parent_id, server_parent_id, payload
+/// ```
+///
+/// A command hand-writes `execute_optimistic` and fills exactly this
+/// shape through `sync::append::{client_head, append_row}` +
+/// `rpc_command::payload_json` — appending an event is an effect the
+/// command performs, not the command's identity.
+#[proc_macro_attribute]
+pub fn projection_row(args: TokenStream, input: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(input as syn::Item);
+    let result = match item {
+        syn::Item::Struct(s) => match check_projection_row_args(args) {
+            Ok(()) => expand_projection_row(s),
+            Err(e) => Err(e),
+        },
+        other => Err(Error::new_spanned(
+            &other,
+            "#[projection_row] goes on a struct (the event log declaration)",
+        )),
+    };
+    match result {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// The log declaration takes no arguments — the partition is inferred
+/// from the strict shape (§9.6). Pointed error for the retired
+/// `key = ...`.
+fn check_projection_row_args(args: TokenStream) -> syn::Result<()> {
+    let args = TokenStream2::from(args);
+    if args.is_empty() {
+        return Ok(());
+    }
+    let msg = if args.to_string().starts_with("key") {
+        "#[projection_row]: the partition is inferred from the struct shape \
+         (the one field besides `command_id`) — drop `key = ...`"
+    } else {
+        "#[projection_row]: takes no arguments"
+    };
+    Err(Error::new_spanned(&args, msg))
+}
+
+/// Expand `#[projection_row]`: validate the declared shape
+/// (`command_id` plus ONE partition column), mark `command_id` as PK,
+/// append the generated bookkeeping columns, reuse the `#[row]`
+/// expansion for derives and the `DbTable`/`Row` impls, and implement
+/// `tables::ProjectionLog`.
+fn expand_projection_row(mut s: syn::ItemStruct) -> syn::Result<TokenStream2> {
+    let Fields::Named(named) = &mut s.fields else {
+        return Err(Error::new_spanned(
+            &s,
+            "#[projection_row] needs named fields",
+        ));
+    };
+
+    let mut command_id_ty: Option<Type> = None;
+    let mut partition: Option<Ident> = None;
+    for field in &named.named {
+        let Some(ident) = &field.ident else { continue };
+        if field.attrs.iter().any(|a| a.path().is_ident("pk")) {
+            return Err(Error::new_spanned(
+                field,
+                "#[projection_row]: the primary key is always `command_id` — drop the #[pk]",
+            ));
+        }
+        match ident.to_string().as_str() {
+            "command_id" => command_id_ty = Some(field.ty.clone()),
+            "client_parent_id" | "server_parent_id" | "payload" => {
+                return Err(Error::new_spanned(
+                    field,
+                    format!("#[projection_row]: `{ident}` is generated — do not declare it"),
+                ));
+            }
+            _ => {
+                if let Some(first) = &partition {
+                    return Err(Error::new_spanned(
+                        field,
+                        format!(
+                            "#[projection_row]: unexpected field `{ident}` — the log \
+                             declares only `command_id` and ONE partition column \
+                             (here: `{first}`); event content lives in the \
+                             generated `payload` (RPC form)"
+                        ),
+                    ));
+                }
+                partition = Some(ident.clone());
+            }
+        }
+    }
+    let Some(command_id_ty) = command_id_ty else {
+        return Err(Error::new_spanned(
+            &s.ident,
+            "#[projection_row]: needs a `command_id` field (Uuid) — it becomes the PK",
+        ));
+    };
+    // v2 (§11): the parent links are `Uuid` and reference `command_id`, so
+    // the identity itself must be `Uuid` — a numeric id could not be the
+    // target of a `client_parent_id`/`server_parent_id` link.
+    if !matches!(classify(&command_id_ty), Some(FieldKind::Uuid)) {
+        return Err(Error::new_spanned(
+            &command_id_ty,
+            "#[projection_row]: `command_id` must be `Uuid` — the parent-link \
+             chain (`client_parent_id`/`server_parent_id`) references it (§11)",
+        ));
+    }
+    let Some(partition) = partition else {
+        return Err(Error::new_spanned(
+            &s.ident,
+            "#[projection_row]: needs a partition column — exactly one field \
+             besides `command_id` (the log's stream identity)",
+        ));
+    };
+
+    for field in named.named.iter_mut() {
+        if field.ident.as_ref().is_some_and(|i| i == "command_id") {
+            field.attrs.push(syn::parse_quote!(#[pk]));
+        }
+    }
+    for tokens in [
+        quote! { pub client_parent_id: ::sql_engine::storage::Uuid },
+        quote! { pub server_parent_id: ::core::option::Option<::sql_engine::storage::Uuid> },
+        quote! { pub payload: String },
+    ] {
+        named.named.push(syn::Field::parse_named.parse2(tokens)?);
+    }
+
+    let name = s.ident.clone();
+    let partition_lit = LitStr::new(&partition.to_string(), proc_macro2::Span::call_site());
+    let derive_input: DeriveInput = syn::parse2(quote! { #s })?;
+    let row = expand_row(derive_input, RowArgs { table: None })?;
+    Ok(quote! {
+        #row
+
+        impl ::tables::ProjectionLog for #name {
+            const PARTITION_COLUMN: &'static str = #partition_lit;
+
+            fn command_id(&self) -> ::sql_engine::storage::Uuid {
+                self.command_id
+            }
+            fn client_parent_id(&self) -> ::sql_engine::storage::Uuid {
+                self.client_parent_id
+            }
+            fn server_parent_id(&self) -> ::core::option::Option<::sql_engine::storage::Uuid> {
+                self.server_parent_id
+            }
+            fn payload(&self) -> &str {
+                &self.payload
+            }
+        }
+    })
+}
+
+struct ProjectionArgs {
+    id: Option<String>,
+    outputs: Vec<syn::Path>,
+    reads: Vec<syn::Path>,
+}
+
+impl Parse for ProjectionArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut id: Option<String> = None;
+        let mut outputs: Option<Vec<syn::Path>> = None;
+        let mut reads: Option<Vec<syn::Path>> = None;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "id" => {
+                    let _: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    id = Some(lit.value());
+                }
+                "key" => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "projection: `key = ...` was removed — the partition \
+                         comes from the log row type (`tables::ProjectionLog`)",
+                    ));
+                }
+                "outputs" => outputs = Some(parse_path_list(input)?),
+                "reads" => reads = Some(parse_path_list(input)?),
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "projection: unknown key `{other}` — expected \
+                             `id`, `outputs`, `reads`"
+                        ),
+                    ));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            let _: Token![,] = input.parse()?;
+        }
+
+        let outputs = outputs
+            .filter(|o| !o.is_empty())
+            .ok_or_else(|| {
+                syn::Error::new(input.span(), "projection: missing `outputs(RowType, ...)`")
+            })?;
+        Ok(Self { id, outputs, reads: reads.unwrap_or_default() })
+    }
+}
+
+fn parse_path_list(input: ParseStream) -> syn::Result<Vec<syn::Path>> {
+    let content;
+    syn::parenthesized!(content in input);
+    let paths = content.parse_terminated(syn::Path::parse, Token![,])?;
+    Ok(paths.into_iter().collect())
+}
+
+struct DynamicProjectionArgs {
+    id: Option<String>,
+    outputs: Vec<syn::Path>,
+    reads: Vec<syn::Path>,
+    /// Footprint bindings `(source column name, name component index)`.
+    bind: Vec<(String, usize)>,
+}
+
+impl Parse for DynamicProjectionArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut id: Option<String> = None;
+        let mut outputs: Option<Vec<syn::Path>> = None;
+        let mut reads: Option<Vec<syn::Path>> = None;
+        let mut bind: Option<Vec<(String, usize)>> = None;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "id" => {
+                    let _: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    id = Some(lit.value());
+                }
+                "outputs" => outputs = Some(parse_path_list(input)?),
+                "reads" => reads = Some(parse_path_list(input)?),
+                "bind" => bind = Some(parse_bind_list(input)?),
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "dynamic_projection: unknown key `{other}` — expected \
+                             `id`, `outputs`, `reads`, `bind`"
+                        ),
+                    ));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            let _: Token![,] = input.parse()?;
+        }
+
+        let outputs = outputs.filter(|o| !o.is_empty()).ok_or_else(|| {
+            syn::Error::new(
+                input.span(),
+                "dynamic_projection: missing `outputs(RowType, ...)`",
+            )
+        })?;
+        Ok(Self {
+            id,
+            outputs,
+            reads: reads.unwrap_or_default(),
+            bind: bind.unwrap_or_default(),
+        })
+    }
+}
+
+/// `bind(account = 1, region = 0)` — `column = name component index`.
+fn parse_bind_list(input: ParseStream) -> syn::Result<Vec<(String, usize)>> {
+    let content;
+    syn::parenthesized!(content in input);
+    let mut out = Vec::new();
+    while !content.is_empty() {
+        let col: Ident = content.parse()?;
+        let _: Token![=] = content.parse()?;
+        let comp: syn::LitInt = content.parse()?;
+        out.push((col.to_string(), comp.base10_parse::<usize>()?));
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(out)
+}
+
+fn expand_projection(
+    input: syn::ItemImpl,
+    args: ProjectionArgs,
+) -> syn::Result<TokenStream2> {
+    let (name, row_ty) = fold_impl_parts(&input, "projection")?;
+
+    let id_lit = LitStr::new(
+        &args.id.unwrap_or_else(|| pascal_to_snake(&name.to_string())),
+        proc_macro2::Span::call_site(),
+    );
+    let outputs = &args.outputs;
+    let reads = &args.reads;
+    let shim = fold_shim_body(&name, &row_ty);
+
+    Ok(quote! {
+        #input
+
+        impl ::database_projection::Projection for #name {
+            fn spec(&self) -> ::database_projection::ProjectionSpec {
+                ::database_projection::ProjectionSpec {
+                    id: #id_lit.into(),
+                    sources: ::std::vec![
+                        ::database_projection::PartitionedSource {
+                            table: <#row_ty as ::sql_engine::DbTable>::TABLE.into(),
+                            partition_column: ::database_projection::typed::partition_column_index::<#row_ty>(
+                                <#row_ty as ::tables::ProjectionLog>::PARTITION_COLUMN,
+                            ),
+                        }
+                    ],
+                    reads: ::std::vec![
+                        #( <#reads as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                    outputs: ::std::vec![
+                        #( <#outputs as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                }
+            }
+
+            fn project(
+                &self,
+                _partition: &::sql_engine::storage::CellValue,
+                inputs: &::database_projection::Inputs,
+                ctx: &::database_projection::ReadCtx<'_>,
+                cache: &mut ::database_projection::FoldCache,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<::database_projection::OutputRow>,
+                ::std::string::String,
+            > {
+                #shim
+            }
+        }
+    })
+}
+
+/// `#[dynamic_projection]` (§12): same fold contract and shim as
+/// `#[projection]`, but the emitted trait is
+/// `database_projection::DynamicProjection` and the spec carries the
+/// instance footprint (`bind`) instead of a partition column.
+fn expand_dynamic_projection(
+    input: syn::ItemImpl,
+    args: DynamicProjectionArgs,
+) -> syn::Result<TokenStream2> {
+    let (name, row_ty) = fold_impl_parts(&input, "dynamic_projection")?;
+
+    let id_lit = LitStr::new(
+        &args.id.unwrap_or_else(|| pascal_to_snake(&name.to_string())),
+        proc_macro2::Span::call_site(),
+    );
+    let outputs = &args.outputs;
+    let reads = &args.reads;
+    let bind_cols: Vec<LitStr> = args
+        .bind
+        .iter()
+        .map(|(col, _)| LitStr::new(col, proc_macro2::Span::call_site()))
+        .collect();
+    let bind_comps: Vec<usize> = args.bind.iter().map(|&(_, comp)| comp).collect();
+    let shim = fold_shim_body(&name, &row_ty);
+
+    Ok(quote! {
+        #input
+
+        impl ::database_projection::DynamicProjection for #name {
+            fn spec(&self) -> ::database_projection::DynamicSpec {
+                ::database_projection::DynamicSpec {
+                    id: #id_lit.into(),
+                    sources: ::std::vec![
+                        ::database_projection::FootprintSource {
+                            table: <#row_ty as ::sql_engine::DbTable>::TABLE.into(),
+                            bind: ::std::vec![
+                                #( (
+                                    ::database_projection::typed::column_index::<#row_ty>(#bind_cols),
+                                    #bind_comps
+                                ) ),*
+                            ],
+                        }
+                    ],
+                    reads: ::std::vec![
+                        #( <#reads as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                    outputs: ::std::vec![
+                        #( <#outputs as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                }
+            }
+
+            fn project(
+                &self,
+                _name: &[::sql_engine::storage::CellValue],
+                inputs: &::database_projection::Inputs,
+                ctx: &::database_projection::ReadCtx<'_>,
+                cache: &mut ::database_projection::FoldCache,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<::database_projection::OutputRow>,
+                ::std::string::String,
+            > {
+                #shim
+            }
+        }
+    })
+}
+
+/// Validate the shared `#[projection]`/`#[dynamic_projection]` impl shape
+/// and return `(state type, log row type)`. THE contract is the fold: the
+/// impl target is the state, `apply(&mut self, row: &LogRow)` replays one
+/// row, `render(&self, ctx, out)` emits the outputs.
+fn fold_impl_parts(input: &syn::ItemImpl, attr: &str) -> syn::Result<(Ident, Type)> {
+    if input.trait_.is_some() {
+        return Err(Error::new_spanned(
+            input,
+            format!("#[{attr}] goes on an inherent impl block, not a trait impl"),
+        ));
+    }
+    if !input.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &input.generics,
+            format!("#[{attr}] does not support generics"),
+        ));
+    }
+    let Type::Path(TypePath { path, .. }) = input.self_ty.as_ref() else {
+        return Err(Error::new_spanned(
+            &input.self_ty,
+            format!("#[{attr}] impl type must be a plain identifier"),
+        ));
+    };
+    let name = path.get_ident().cloned().ok_or_else(|| {
+        Error::new_spanned(path, format!("#[{attr}] impl type must be a plain identifier"))
+    })?;
+
+    if input
+        .items
+        .iter()
+        .any(|item| matches!(item, syn::ImplItem::Fn(f) if f.sig.ident == "project"))
+    {
+        return Err(Error::new_spanned(
+            input,
+            format!(
+                "#[{attr}]: `project` is reserved (the generated shim) — THE \
+                 contract is the fold: `apply(&mut self, row: &LogRow)` + \
+                 `render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` \
+                 on the state type"
+            ),
+        ));
+    }
+
+    let find_fn = |fn_name: &str| {
+        input.items.iter().find_map(|item| match item {
+            syn::ImplItem::Fn(f) if f.sig.ident == fn_name => Some(f),
+            _ => None,
+        })
+    };
+    let (apply_fn, render_fn) = match (find_fn("apply"), find_fn("render")) {
+        (Some(apply), Some(render)) => (apply, render),
+        (Some(_), None) => {
+            return Err(Error::new_spanned(
+                input,
+                format!("#[{attr}]: `apply` without `render` — a projection needs both"),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(Error::new_spanned(
+                input,
+                format!("#[{attr}]: `render` without `apply` — a projection needs both"),
+            ));
+        }
+        (None, None) => {
+            return Err(Error::new_spanned(
+                input,
+                format!(
+                    "#[{attr}] impl needs \
+                     `fn apply(&mut self, row: &LogRow)` + \
+                     `fn render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` — \
+                     the impl target is the fold state"
+                ),
+            ));
+        }
+    };
+
+    // The impl target IS the state; `apply` carries the log row type.
+    let apply_err = || {
+        Error::new_spanned(
+            &apply_fn.sig,
+            format!(
+                "#[{attr}]: `apply` must take `&mut self, row: &LogRow` — \
+                 `self` is the fold state, the row is the generated log row \
+                 (the parent-link chain is fold input, §11)"
+            ),
+        )
+    };
+    let mut apply_args = apply_fn.sig.inputs.iter();
+    let row_ty = match (apply_args.next(), apply_args.next(), apply_args.next()) {
+        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(row)), None) => {
+            if recv.reference.is_none() || recv.mutability.is_none() {
+                return Err(apply_err());
+            }
+            shared_ref_elem(&row.ty).ok_or_else(apply_err)?
+        }
+        _ => return Err(apply_err()),
+    };
+
+    // `render`'s param types are enforced by rustc at the shim's call
+    // site; check the shape here for a pointed message.
+    let render_err = || {
+        Error::new_spanned(
+            &render_fn.sig,
+            format!("#[{attr}]: `render` must take `&self, ctx: &RenderCtx<'_>, out: &mut Out`"),
+        )
+    };
+    let mut render_args = render_fn.sig.inputs.iter();
+    match (
+        render_args.next(),
+        render_args.next(),
+        render_args.next(),
+        render_args.next(),
+    ) {
+        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(_)), Some(FnArg::Typed(_)), None) => {
+            if recv.reference.is_none() || recv.mutability.is_some() {
+                return Err(render_err());
+            }
+        }
+        _ => return Err(render_err()),
+    }
+
+    Ok((name, row_ty))
+}
+
+/// The shared fold shim (§9.3/§11.3), emitted as the `project` body of
+/// both trait impls: decode → fold order → committed-prefix memo →
+/// apply committed tail-first-resume + pendings → render.
+fn fold_shim_body(name: &Ident, row_ty: &Type) -> TokenStream2 {
+    quote! {
+        // §9.4 contract bound: the snapshot below clones the state.
+        fn __state_contract<T: ::core::default::Default + ::core::clone::Clone>() {}
+        __state_contract::<#name>();
+
+        let __rows: ::std::vec::Vec<#row_ty> =
+            ::database_projection::typed::decode_rows(
+                inputs.rows(<#row_ty as ::sql_engine::DbTable>::TABLE),
+            )?;
+        let __ordered = <#row_ty as ::tables::ProjectionLog>::in_fold_order(&__rows);
+        let __committed_len = __ordered
+            .iter()
+            .take_while(|__r| <#row_ty as ::tables::ProjectionLog>::is_committed(__r))
+            .count();
+        let __committed_ids: ::std::vec::Vec<::sql_engine::storage::Uuid> =
+            __ordered[..__committed_len]
+                .iter()
+                .map(|__r| <#row_ty as ::tables::ProjectionLog>::command_id(__r))
+                .collect();
+
+        // §9.3/§11 execution: resume from the committed-prefix memo
+        // when the current committed id list still extends it; a
+        // reorder/drift, delete or first run folds from zero.
+        let (mut __state, __start): (#name, usize) = match cache
+            .get::<::database_projection::typed::FoldSnapshot<#name>>()
+        {
+            ::core::option::Option::Some(__snap)
+                if __committed_ids.starts_with(&__snap.committed_ids) =>
+            {
+                (__snap.state.clone(), __snap.committed_ids.len())
+            }
+            _ => (::core::default::Default::default(), 0),
+        };
+        for __row in &__ordered[__start..__committed_len] {
+            __state.apply(__row)?;
+        }
+        if __start < __committed_len {
+            cache.put(::database_projection::typed::FoldSnapshot {
+                committed_ids: __committed_ids,
+                state: __state.clone(),
+            });
+        }
+        for __row in &__ordered[__committed_len..] {
+            __state.apply(__row)?;
+        }
+        let __ctx = ::database_projection::typed::RenderCtx::new(ctx);
+        let mut __out = ::database_projection::typed::Out::new();
+        __state.render(&__ctx, &mut __out)?;
+        ::core::result::Result::Ok(__out.into_rows())
+    }
+}
+
+/// `&T` (shared) → `Some(T)`, anything else → `None`.
+fn shared_ref_elem(ty: &Type) -> Option<Type> {
+    let Type::Reference(r) = ty else {
+        return None;
+    };
+    if r.mutability.is_some() {
+        return None;
+    }
+    Some((*r.elem).clone())
 }
 
 // ============================================================

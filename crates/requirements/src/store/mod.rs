@@ -18,7 +18,7 @@ use fnv::{FnvHashMap, FnvHashSet};
 use sql_engine::execute::ParamValue;
 use sql_parser::ast::Value;
 
-pub use key::{make_derived_key, make_fetched_key};
+pub use key::{make_derived_key, make_fetched_key, make_projected_key};
 pub use slot::{FetchError, RequirementKey, Slot, SlotKind, SlotState, SubscriberId};
 
 /// Side-effect interface for starting / cancelling fetches. The store
@@ -126,6 +126,52 @@ impl RequirementStore {
         key
     }
 
+    /// Get or create a Projected slot — one partition of a registered
+    /// projection. Upstream is typically the Fetched log requirement of
+    /// the partition (plus requirements covering the projection's read
+    /// tables). Idempotent; identity is `(projection_id, partition_repr)`
+    /// only, so the first registration's upstream set wins.
+    ///
+    /// Never dispatched: the projection engine materializes the data at
+    /// the apply/notify chokepoint. The slot tracks loading status
+    /// (aggregated from upstream, like Derived) and per-partition
+    /// `project()` failures.
+    pub fn upsert_projected(
+        &mut self,
+        projection_id: &str,
+        partition_repr: &str,
+        upstream: Vec<RequirementKey>,
+    ) -> RequirementKey {
+        let key = make_projected_key(projection_id, partition_repr);
+        if self.slots.contains_key(&key) {
+            return key;
+        }
+        for u in &upstream {
+            assert!(
+                self.slots.contains_key(u),
+                "upsert_projected: upstream not registered: {}",
+                u.as_str()
+            );
+        }
+        for u in &upstream {
+            self.slots
+                .get_mut(u)
+                .expect("checked above")
+                .downstream
+                .push(key.clone());
+        }
+        let slot = Slot::new(
+            key.clone(),
+            SlotKind::Projected {
+                projection_id: Arc::from(projection_id),
+                partition_repr: Arc::from(partition_repr),
+            },
+            upstream,
+        );
+        self.slots.insert(key.clone(), slot);
+        key
+    }
+
     // ── Subscribe / unsubscribe ──────────────────────────────────────
 
     /// Subscribe to `key`. Walks `upstream` transitively, increments
@@ -169,7 +215,7 @@ impl RequirementStore {
                     self.slots.get_mut(k).unwrap().start_fetch();
                     dispatcher.dispatch(k, &kind, generation);
                 }
-                SlotKind::Derived { .. } => {
+                SlotKind::Derived { .. } | SlotKind::Projected { .. } => {
                     let states: Vec<SlotState> = upstream_keys
                         .iter()
                         .map(|u| self.slots[u].state)
@@ -239,7 +285,10 @@ impl RequirementStore {
             let was_inflight = std::mem::replace(&mut slot.inflight, false);
             let kind = slot.kind.clone();
             let refcount = slot.refcount;
-            let is_fetched = matches!(slot.kind, SlotKind::Fetched { .. });
+            let is_fetched = match slot.kind {
+                SlotKind::Fetched { .. } => true,
+                SlotKind::Derived { .. } | SlotKind::Projected { .. } => false,
+            };
             (old_gen, new_gen, was_inflight, kind, refcount, is_fetched)
         };
 
@@ -287,6 +336,58 @@ impl RequirementStore {
         if !applied {
             return Vec::new();
         }
+        let mut changed = vec![key.clone()];
+        self.propagate_status_to_downstream(key, &mut changed);
+        changed
+    }
+
+    // ── Projection failure routing ───────────────────────────────────
+
+    /// Record a per-partition `project()` failure on its Projected slot.
+    /// Pins the slot to `Error` and propagates the change downstream.
+    /// Unknown keys and non-Projected slots are a no-op — failures
+    /// routinely reference partitions nobody currently subscribes to.
+    pub fn report_projection_failure(
+        &mut self,
+        key: &RequirementKey,
+        message: String,
+    ) -> Vec<RequirementKey> {
+        let Some(slot) = self.slots.get_mut(key) else {
+            return Vec::new();
+        };
+        match slot.kind {
+            SlotKind::Projected { .. } => {}
+            SlotKind::Fetched { .. } | SlotKind::Derived { .. } => return Vec::new(),
+        }
+        if !slot.apply_projection_error(message) {
+            // Identical failure already pinned — nothing changed.
+            return Vec::new();
+        }
+        let mut changed = vec![key.clone()];
+        self.propagate_status_to_downstream(key, &mut changed);
+        changed
+    }
+
+    /// Clear a recorded projection failure (the key re-derived
+    /// successfully); the slot's state falls back to the upstream
+    /// aggregate. No-op for unknown keys or slots without a pinned
+    /// projection error.
+    pub fn clear_projection_failure(&mut self, key: &RequirementKey) -> Vec<RequirementKey> {
+        let Some(slot) = self.slots.get_mut(key) else {
+            return Vec::new();
+        };
+        if !slot.clear_projection_error() {
+            return Vec::new();
+        }
+        let upstream_keys: Vec<RequirementKey> = self.slots[key].upstream.clone();
+        let states: Vec<SlotState> = upstream_keys
+            .iter()
+            .map(|u| self.slots[u].state)
+            .collect();
+        self.slots
+            .get_mut(key)
+            .expect("checked above")
+            .recompute_status_from_upstream(&states);
         let mut changed = vec![key.clone()];
         self.propagate_status_to_downstream(key, &mut changed);
         changed
@@ -763,6 +864,158 @@ mod tests {
         assert_eq!(d.dispatched.len(), dispatched_before);
         assert_eq!(d.cancelled.len(), cancelled_before);
         assert_eq!(store.get(&der).unwrap().generation, 1);
+    }
+
+    // ── Projected slots ──────────────────────────────────────────────
+
+    /// F (log) → P (projection partition) → D (SQL over the derived table):
+    /// the full status chain of a draft view. Subscribe dispatches only
+    /// the log fetch; readiness flows through both local layers.
+    #[test]
+    fn projected_chains_between_fetched_and_derived() {
+        let mut store = RequirementStore::new();
+        let mut d = MockDispatcher::default();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log.clone()]);
+        let der = store.upsert_derived(
+            Arc::from("SELECT 1"),
+            HashMap::new(),
+            vec![proj.clone()],
+            None,
+        );
+
+        store.subscribe(&der, &mut d);
+
+        // Only the log leaf is dispatched; Projected is never fetched.
+        assert_eq!(d.dispatched, vec![(log.clone(), 0)]);
+        assert_eq!(state_of(&store, &proj), SlotState::Loading);
+        assert_eq!(state_of(&store, &der), SlotState::Loading);
+        check_invariants(&store);
+
+        store.apply_ready(&log, 0);
+        assert_eq!(state_of(&store, &proj), SlotState::Ready);
+        assert_eq!(state_of(&store, &der), SlotState::Ready);
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn upsert_projected_is_idempotent() {
+        let mut store = RequirementStore::new();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let a = store.upsert_projected("invoice_draft", "1", vec![log.clone()]);
+        let b = store.upsert_projected("invoice_draft", "1", vec![log]);
+        assert_eq!(a, b);
+        assert_eq!(store.slot_count(), 2);
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn projection_failure_pins_error_and_propagates_downstream() {
+        let mut store = RequirementStore::new();
+        let mut d = MockDispatcher::default();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log.clone()]);
+        let der = store.upsert_derived(
+            Arc::from("SELECT 1"),
+            HashMap::new(),
+            vec![proj.clone()],
+            None,
+        );
+        store.subscribe(&der, &mut d);
+        store.apply_ready(&log, 0);
+        assert_eq!(state_of(&store, &der), SlotState::Ready);
+
+        let changed = store.report_projection_failure(&proj, "bad payload".into());
+        assert!(changed.contains(&proj));
+        assert!(changed.contains(&der));
+        assert_eq!(state_of(&store, &proj), SlotState::Error);
+        assert_eq!(state_of(&store, &der), SlotState::Error);
+
+        // Upstream re-fetch does NOT unpin the projection failure.
+        store.invalidate(&log, &mut d);
+        store.apply_ready(&log, 1);
+        assert_eq!(state_of(&store, &proj), SlotState::Error);
+
+        // Successful re-derivation clears it; the chain recovers.
+        let changed = store.clear_projection_failure(&proj);
+        assert!(changed.contains(&proj));
+        assert!(changed.contains(&der));
+        assert_eq!(state_of(&store, &proj), SlotState::Ready);
+        assert_eq!(state_of(&store, &der), SlotState::Ready);
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn projection_failure_on_unknown_or_foreign_key_is_no_op() {
+        let mut store = RequirementStore::new();
+        let unknown = RequirementKey::new("projected:invoice_draft:99");
+        assert!(store
+            .report_projection_failure(&unknown, "x".into())
+            .is_empty());
+        assert!(store.clear_projection_failure(&unknown).is_empty());
+
+        // Reporting onto a Fetched slot is refused.
+        let f = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        assert!(store.report_projection_failure(&f, "x".into()).is_empty());
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn clear_without_pinned_failure_is_no_op() {
+        let mut store = RequirementStore::new();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log]);
+        assert!(store.clear_projection_failure(&proj).is_empty());
+    }
+
+    /// A still-failing key re-reports the same failure on every derive
+    /// pass; only the FIRST report (and message changes) count as a
+    /// change — repeats must not re-ping subscribers.
+    #[test]
+    fn repeat_identical_failure_yields_no_changes() {
+        let mut store = RequirementStore::new();
+        let mut d = MockDispatcher::default();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log.clone()]);
+        store.subscribe(&proj, &mut d);
+        store.apply_ready(&log, 0);
+
+        assert!(!store.report_projection_failure(&proj, "bad".into()).is_empty());
+        assert!(store.report_projection_failure(&proj, "bad".into()).is_empty());
+        assert!(!store.report_projection_failure(&proj, "worse".into()).is_empty());
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn unsubscribe_drops_projected_and_cleans_backlinks() {
+        let mut store = RequirementStore::new();
+        let mut d = MockDispatcher::default();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log.clone()]);
+        let s = store.subscribe(&proj, &mut d);
+
+        store.unsubscribe(s);
+        assert!(store.get(&proj).is_none());
+        assert!(store.get(&log).is_none());
+        assert_eq!(store.slot_count(), 0);
+        check_invariants(&store);
+    }
+
+    #[test]
+    fn invalidate_on_projected_only_bumps_gen_and_unpins() {
+        let mut store = RequirementStore::new();
+        let mut d = MockDispatcher::default();
+        let log = upsert_fetched_int(&mut store, "drafts.log_by_doc", 1);
+        let proj = store.upsert_projected("invoice_draft", "1", vec![log]);
+        store.subscribe(&proj, &mut d);
+        let dispatched_before = d.dispatched.len();
+        store.report_projection_failure(&proj, "x".into());
+
+        store.invalidate(&proj, &mut d);
+
+        assert_eq!(d.dispatched.len(), dispatched_before);
+        assert_eq!(store.get(&proj).unwrap().generation, 1);
+        assert!(store.get(&proj).unwrap().last_error.is_none());
     }
 
     // ── churn / invariants under load ────────────────────────────────

@@ -44,8 +44,11 @@ impl WasmDispatcher {
 
 impl FetchDispatcher for WasmDispatcher {
     fn dispatch(&mut self, key: &RequirementKey, kind: &SlotKind, generation: u64) {
-        let SlotKind::Fetched { registered_id, args } = kind else {
-            return;
+        let (registered_id, args) = match kind {
+            SlotKind::Fetched { registered_id, args } => (registered_id, args),
+            // Never HTTP-fetched: Derived runs local SQL, Projected is
+            // materialized by the projection engine.
+            SlotKind::Derived { .. } | SlotKind::Projected { .. } => return,
         };
         let Some(fetcher) = self.registry.fetchers.get(registered_id.as_ref()) else {
             return;

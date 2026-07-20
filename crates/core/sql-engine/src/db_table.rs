@@ -25,4 +25,10 @@ pub trait DbTable: Sized {
     /// Project one instance into a cell row in `schema().columns`
     /// order.
     fn into_cells(self) -> Vec<CellValue>;
+
+    /// Decode one cell row (in `schema().columns` order) back into the
+    /// typed struct. Inverse of [`Self::into_cells`]; used by typed
+    /// projections to hand storage rows to product code. Errors name the
+    /// offending `table.column`.
+    fn from_cells(cells: &[CellValue]) -> Result<Self, String>;
 }

@@ -75,6 +75,20 @@ pub fn make_derived_key(
     RequirementKey::new(s)
 }
 
+/// Build the canonical key for a Projected requirement — one partition of
+/// a registered projection. `partition_repr` is the canonical display form
+/// of the partition (decimal for I64, raw for Str, hyphenated lowercase
+/// for Uuid), matching the projection engine's `DeriveFailure::partition`
+/// format so failures can be routed back to the slot.
+pub fn make_projected_key(projection_id: &str, partition_repr: &str) -> RequirementKey {
+    let mut s = String::with_capacity(11 + projection_id.len() + 1 + partition_repr.len());
+    s.push_str("projected:");
+    s.push_str(projection_id);
+    s.push(':');
+    s.push_str(partition_repr);
+    RequirementKey::new(s)
+}
+
 fn write_value(out: &mut String, v: &Value) {
     match v {
         Value::Null => out.push_str("null"),

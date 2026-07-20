@@ -5,6 +5,6 @@ mod subscription;
 
 pub use dirty_notification::DirtyNotification;
 pub use error::SubscribeError;
-pub use reactive_database::ReactiveDatabase;
+pub use reactive_database::{ProjectionEvent, ReactiveDatabase};
 
 pub use sql_engine::reactive::{SubscriptionHandle, SubscriptionId, SubscriptionKey};

@@ -69,6 +69,24 @@ pub enum CellValue {
     Null,
 }
 
+impl From<i64> for CellValue {
+    fn from(v: i64) -> Self {
+        CellValue::I64(v)
+    }
+}
+
+impl From<String> for CellValue {
+    fn from(v: String) -> Self {
+        CellValue::Str(v)
+    }
+}
+
+impl From<Uuid> for CellValue {
+    fn from(v: Uuid) -> Self {
+        CellValue::Uuid(v.0)
+    }
+}
+
 #[cfg(feature = "serde")]
 mod uuid_serde {
     use serde::{Deserialize, Deserializer, Serializer};

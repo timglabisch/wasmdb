@@ -21,6 +21,20 @@ use tables::{FetchRequest, Fetcher};
 /// crate's `build.rs`.
 pub use tables_macros::{query, row};
 
+/// `#[projection]` macro — turns a typed impl block into a registered
+/// `database_projection::Projection`. Client-side counterpart of
+/// `#[query]`; the consuming crate needs `database-projection`.
+/// `#[projection_row]` declares the projection's event log — mirrors
+/// `#[row]` for tables.
+pub use tables_macros::{projection, projection_row};
+
+/// `#[dynamic_projection]` — the demand-driven counterpart (design §12):
+/// same `apply`/`render` fold contract as `#[projection]`, but the emitted
+/// impl is a `database_projection::DynamicProjection` template whose
+/// instances are activated per compound name. Registered by hand
+/// (`register_dynamic`), not by codegen.
+pub use tables_macros::dynamic_projection;
+
 #[derive(Debug)]
 pub enum StorageError {
     NotRegistered,

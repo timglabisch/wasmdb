@@ -82,6 +82,7 @@ pub fn emit_client(
     model: &Model,
     url: &str,
     wasm_bindings: bool,
+    projections_path: &str,
 ) -> Result<TokenStream, CodegenError> {
     let row_index = build_row_path_index(model);
     let mut tree = ModNode::default();
@@ -103,11 +104,65 @@ pub fn emit_client(
     };
     let register_all = emit_register_all_requirements(model, url, &row_index)?;
     let register_tables = emit_register_all_tables(model);
+    let register_projections = emit_register_all_projections(model, projections_path)?;
     Ok(quote! {
         #modules
         #wasm
         #register_all
         #register_tables
+        #register_projections
+    })
+}
+
+/// Emit `register_all_projections() -> ProjectionEngine` covering every
+/// scanned `#[projection]` impl — pass it as `projections = ...` in
+/// `define_wasm_api!`. Nothing is emitted when no projections exist, so
+/// crates without projections need no `database-projection` dependency.
+///
+/// Unlike rows (re-emitted duplicates), projection types carry function
+/// bodies and are REFERENCED in their source crate: `projections_path`
+/// is the path prefix to that crate as seen from the including crate
+/// (`"crate"` when scanning the own crate, `"::my_domain"` otherwise).
+fn emit_register_all_projections(
+    model: &Model,
+    projections_path: &str,
+) -> Result<TokenStream, CodegenError> {
+    if model.modules.iter().all(|m| m.projections.is_empty()) {
+        return Ok(quote! {});
+    }
+    let prefix: TokenStream = syn::parse_str(projections_path).map_err(|e| {
+        CodegenError::Emit(format!("projections_path `{projections_path}`: {e}"))
+    })?;
+    let mut registrations = Vec::new();
+    for module in &model.modules {
+        for p in &module.projections {
+            let mod_path = module_path_tokens(&module.path);
+            let ty = format_ident!("{}", p.name);
+            let full_path = if module.path.is_empty() {
+                quote! { #prefix::#ty }
+            } else {
+                quote! { #prefix::#mod_path::#ty }
+            };
+            // The projection type IS its fold state — a Default value
+            // serves as the registration handle (spec/dispatch only).
+            registrations.push(quote! {
+                engine
+                    .register(::std::boxed::Box::new(
+                        <#full_path as ::core::default::Default>::default(),
+                    ))
+                    .expect(concat!(
+                        "register projection failed for ",
+                        stringify!(#full_path),
+                    ));
+            });
+        }
+    }
+    Ok(quote! {
+        pub fn register_all_projections() -> ::database_projection::ProjectionEngine {
+            let mut engine = ::database_projection::ProjectionEngine::new();
+            #(#registrations)*
+            engine
+        }
     })
 }
 
@@ -304,6 +359,7 @@ fn emit_dbtable_impl(
 
     let mut column_defs = Vec::with_capacity(fields.len());
     let mut cell_pushes = Vec::with_capacity(fields.len());
+    let mut cell_reads = Vec::with_capacity(fields.len());
     let mut pk_idx: Option<usize> = None;
 
     for (idx, (field_name, ty)) in fields.iter().enumerate() {
@@ -352,6 +408,53 @@ fn emit_dbtable_impl(
             },
         });
 
+        let expected = match kind {
+            FieldKind::I64 => "I64",
+            FieldKind::Str => "Str",
+            FieldKind::Uuid => "Uuid",
+            FieldKind::OptI64 => "I64 or Null",
+            FieldKind::OptStr => "Str or Null",
+            FieldKind::OptUuid => "Uuid or Null",
+        };
+        let err_lit = format!("{table_lit}.{field_name}: expected {expected}, got {{:?}}");
+        let arms = match kind {
+            FieldKind::I64 => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::I64(v)) => *v,
+            },
+            FieldKind::Str => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Str(v)) =>
+                    ::core::clone::Clone::clone(v),
+            },
+            FieldKind::Uuid => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Uuid(b)) =>
+                    ::sql_engine::storage::Uuid(*b),
+            },
+            FieldKind::OptI64 => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::I64(v)) =>
+                    ::core::option::Option::Some(*v),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+            FieldKind::OptStr => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Str(v)) =>
+                    ::core::option::Option::Some(::core::clone::Clone::clone(v)),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+            FieldKind::OptUuid => quote! {
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Uuid(b)) =>
+                    ::core::option::Option::Some(::sql_engine::storage::Uuid(*b)),
+                ::core::option::Option::Some(::sql_engine::storage::CellValue::Null) =>
+                    ::core::option::Option::None,
+            },
+        };
+        cell_reads.push(quote! {
+            let #ident = match cells.get(#idx) {
+                #arms
+                other => return ::core::result::Result::Err(::std::format!(#err_lit, other)),
+            };
+        });
+
         if field_name == pk_name {
             pk_idx = Some(idx);
         }
@@ -363,6 +466,10 @@ fn emit_dbtable_impl(
         ))
     })?;
     let n_fields = fields.len();
+    let field_idents: Vec<_> = fields
+        .iter()
+        .map(|(n, _)| format_ident!("{n}"))
+        .collect();
 
     Ok(quote! {
         impl ::sql_engine::DbTable for #name {
@@ -381,6 +488,13 @@ fn emit_dbtable_impl(
                 let mut out = ::std::vec::Vec::with_capacity(#n_fields);
                 #(#cell_pushes)*
                 out
+            }
+
+            fn from_cells(
+                cells: &[::sql_engine::storage::CellValue],
+            ) -> ::core::result::Result<Self, ::std::string::String> {
+                #(#cell_reads)*
+                ::core::result::Result::Ok(Self { #(#field_idents),* })
             }
         }
     })

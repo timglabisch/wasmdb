@@ -17,12 +17,19 @@ pub use exec::{
 pub use req_bindings::{install_requirements, no_register_requirements};
 pub use state::{install_client, with_client, with_client_dyn, DynClient};
 
+/// No-op projections builder for apps without derived tables. Pass as
+/// `projections = ...` in [`define_wasm_api!`], or omit the parameter.
+pub fn no_projections() -> database_projection::ProjectionEngine {
+    database_projection::ProjectionEngine::new()
+}
+
 /// Generate the `#[wasm_bindgen]` exports that depend on the app's
 /// command type. Place this once at the top level of the app's
 /// `cdylib` crate. The macro emits:
 ///
 /// - `init` — install client, register tables (via the user-supplied
-///   setup fn), install streams, install requirements
+///   setup fn), install streams, install requirements, install
+///   projections (optional)
 /// - `create_stream`
 /// - `execute` / `execute_on_stream`
 /// - `flush_stream`
@@ -40,10 +47,17 @@ pub use state::{install_client, with_client, with_client_dyn, DynClient};
 ///     // ...
 /// }
 ///
+/// fn projections() -> sync_client::database_projection::ProjectionEngine {
+///     let mut engine = sync_client::database_projection::ProjectionEngine::new();
+///     engine.register(Box::new(MyDraftProjection)).unwrap();
+///     engine
+/// }
+///
 /// sync_client::define_wasm_api!(
 ///     command = MyCommand,
 ///     setup_db = setup_db,
 ///     register_requirements = my_codegen::register_all_requirements,
+///     projections = projections,
 /// );
 /// ```
 #[macro_export]
@@ -56,6 +70,7 @@ macro_rules! define_wasm_api {
             command = $cmd,
             setup_db = $setup_db,
             register_requirements = $crate::wasm::no_register_requirements,
+            projections = $crate::wasm::no_projections,
         );
     };
     (
@@ -63,12 +78,31 @@ macro_rules! define_wasm_api {
         setup_db = $setup_db:path,
         register_requirements = $register_req:path $(,)?
     ) => {
+        $crate::define_wasm_api!(
+            command = $cmd,
+            setup_db = $setup_db,
+            register_requirements = $register_req,
+            projections = $crate::wasm::no_projections,
+        );
+    };
+    (
+        command = $cmd:ty,
+        setup_db = $setup_db:path,
+        register_requirements = $register_req:path,
+        projections = $projections:path $(,)?
+    ) => {
         #[::wasm_bindgen::prelude::wasm_bindgen]
         pub fn init() {
             let mut db = ::database::Database::new();
             $setup_db(&mut db);
             let client: $crate::SyncClient<$cmd> = $crate::SyncClient::new(db);
             $crate::wasm::install_client::<$cmd>(client);
+            let engine: $crate::database_projection::ProjectionEngine = $projections();
+            if !engine.is_empty() {
+                $crate::wasm::with_client::<$cmd, _>(move |client| {
+                    client.db_mut().install_projections(engine);
+                });
+            }
             $crate::wasm::init_for::<$cmd>();
             $crate::wasm::install_requirements(
                 |zset| {
@@ -77,6 +111,13 @@ macro_rules! define_wasm_api {
                     })
                 },
                 $register_req,
+            );
+            $crate::wasm::req_bindings::set_projection_event_source(
+                ::std::boxed::Box::new(|| {
+                    $crate::wasm::with_client::<$cmd, _>(|client| {
+                        client.db_mut().take_projection_events()
+                    })
+                }),
             );
         }
 

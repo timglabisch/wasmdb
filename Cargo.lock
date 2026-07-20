@@ -355,10 +355,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "database-projection"
+version = "0.1.0"
+dependencies = [
+ "database",
+ "sql-engine",
+ "sql-parser",
+]
+
+[[package]]
 name = "database-reactive"
 version = "0.1.0"
 dependencies = [
  "database",
+ "database-projection",
  "dirty-set",
  "fnv",
  "sql-engine",
@@ -1454,6 +1464,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "projection-demo-domain"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-projection",
+ "database-reactive",
+ "rpc-command",
+ "serde",
+ "sql-engine",
+ "sync",
+ "sync-client",
+ "tables",
+ "tables-storage",
+ "ts-rs",
+]
+
+[[package]]
+name = "projection-demo-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "borsh",
+ "projection-demo-domain",
+ "sql-engine",
+ "sync",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
+name = "projection-demo-wasm"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "database",
+ "database-projection",
+ "js-sys",
+ "projection-demo-domain",
+ "requirements",
+ "serde",
+ "serde-wasm-bindgen",
+ "sql-engine",
+ "sql-parser",
+ "sync-client",
+ "tables",
+ "tables-client",
+ "tables-codegen",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "proptest"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1694,9 +1757,12 @@ name = "rpc-command"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "database",
  "rpc-command-derive",
  "serde",
  "serde_json",
+ "sql-engine",
+ "sync",
  "ts-rs",
 ]
 
@@ -2393,6 +2459,7 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-projection",
  "database-reactive",
  "futures",
  "js-sys",
@@ -2454,6 +2521,9 @@ name = "tables"
 version = "0.1.0"
 dependencies = [
  "borsh",
+ "serde",
+ "serde_json",
+ "sql-engine",
 ]
 
 [[package]]
@@ -2485,14 +2555,19 @@ version = "0.1.0"
 dependencies = [
  "borsh",
  "database",
+ "database-projection",
  "pollster 0.4.0",
  "requirements",
+ "rpc-command",
  "serde",
+ "serde_json",
  "sql-engine",
  "sql-parser",
+ "sync",
  "tables",
  "tables-codegen",
  "tables-storage",
+ "ts-rs",
 ]
 
 [[package]]

@@ -12,24 +12,27 @@
 //! and are picked up automatically by the downstream cdylib build.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use database_reactive::ProjectionEvent;
 use requirements::{
-    FetchError, RequirementKey, RequirementRegistry, RequirementStore, SlotState, SubscriberId,
+    make_projected_key, FetchError, RequirementKey, RequirementRegistry, RequirementStore,
+    SlotState, SubscriberId,
 };
 use serde::{Deserialize, Serialize};
 use sql_engine::storage::ZSet;
 use sql_parser::ast::Value;
 use wasm_bindgen::prelude::*;
 
-use crate::wasm::req_dispatcher::WasmDispatcher;
+use crate::wasm::req_dispatcher::{OnChanged, WasmDispatcher};
 
 struct ReqState {
     store: Rc<RefCell<RequirementStore>>,
     dispatcher: Rc<RefCell<WasmDispatcher>>,
     subscribers: Rc<RefCell<HashMap<u64, SubscriberEntry>>>,
     key_index: Rc<RefCell<HashMap<RequirementKey, Vec<SubscriberId>>>>,
+    on_changed: OnChanged,
 }
 
 struct SubscriberEntry {
@@ -39,6 +42,66 @@ struct SubscriberEntry {
 
 thread_local! {
     static REQ: RefCell<Option<ReqState>> = const { RefCell::new(None) };
+    /// Pull source for projection failure/recovery events — a closure over
+    /// the typed client (`take_projection_events`). Registered by
+    /// `define_wasm_api!`'s `init` since this module cannot name the app's
+    /// command type.
+    static PROJECTION_SOURCE: RefCell<Option<ProjectionSource>> = const { RefCell::new(None) };
+}
+
+type ProjectionSource = Box<dyn Fn() -> Vec<ProjectionEvent>>;
+
+/// Register the pull source for projection event draining.
+pub fn set_projection_event_source(source: ProjectionSource) {
+    PROJECTION_SOURCE.with(|s| *s.borrow_mut() = Some(source));
+}
+
+/// Drain projection failure/recovery events from the client and apply
+/// them IN ORDER to the matching `projected:<id>:<partition>` slots: a
+/// failure pins `Error`, a recovery clears the pin. Order matters —
+/// multiple derive passes can run between two drains (e.g. invert + apply
+/// during reconcile) and the last event per partition must win. Changed
+/// slots ping their JS callbacks once. Events for partitions without a
+/// slot are dropped — nobody subscribes to them. The requirements runtime
+/// is checked BEFORE pulling so events are not consumed (and lost)
+/// without a runtime to route them to.
+pub fn drain_projection_events() {
+    let installed = REQ.with(|r| r.borrow().is_some());
+    if !installed {
+        return;
+    }
+    let Some(events) = PROJECTION_SOURCE.with(|s| s.borrow().as_ref().map(|source| source()))
+    else {
+        return;
+    };
+    if events.is_empty() {
+        return;
+    }
+    with_state(|state| {
+        let mut changed = Vec::new();
+        {
+            let mut store = state.store.borrow_mut();
+            for event in events {
+                match event {
+                    ProjectionEvent::Failed(f) => {
+                        let Some(partition) = f.partition else { continue };
+                        let slot_key = make_projected_key(&f.projection, &partition);
+                        changed.extend(store.report_projection_failure(&slot_key, f.message));
+                    }
+                    ProjectionEvent::Recovered { projection, partition } => {
+                        let slot_key = make_projected_key(&projection, &partition);
+                        changed.extend(store.clear_projection_failure(&slot_key));
+                    }
+                }
+            }
+        }
+        let mut seen: HashSet<&RequirementKey> = HashSet::new();
+        for key in &changed {
+            if seen.insert(key) {
+                (state.on_changed)(key);
+            }
+        }
+    });
 }
 
 /// No-op `register_fn` for apps that don't use the requirements
@@ -63,7 +126,14 @@ pub fn install_requirements<ApplyFn, RegisterFn>(
     RegisterFn: FnOnce(Rc<dyn Fn(&ZSet) -> Result<(), String>>, &mut RequirementRegistry),
 {
     let mut registry = RequirementRegistry::new();
-    let apply: Rc<dyn Fn(&ZSet) -> Result<(), String>> = Rc::new(apply_zset);
+    // Every requirement apply runs the derive pass (apply_zset → notify);
+    // drain any resulting projection events right after so slot states
+    // stay in step with the data they describe.
+    let apply: Rc<dyn Fn(&ZSet) -> Result<(), String>> = Rc::new(move |zset: &ZSet| {
+        let result = apply_zset(zset);
+        drain_projection_events();
+        result
+    });
     register_fn(apply, &mut registry);
 
     let store = Rc::new(RefCell::new(RequirementStore::new()));
@@ -98,7 +168,7 @@ pub fn install_requirements<ApplyFn, RegisterFn>(
     let dispatcher = Rc::new(RefCell::new(WasmDispatcher::new(
         Rc::new(registry),
         store.clone(),
-        on_changed,
+        on_changed.clone(),
     )));
 
     REQ.with(|r| {
@@ -107,6 +177,7 @@ pub fn install_requirements<ApplyFn, RegisterFn>(
             dispatcher,
             subscribers,
             key_index,
+            on_changed,
         });
     });
 }
@@ -121,11 +192,67 @@ fn with_state<T>(f: impl FnOnce(&ReqState) -> T) -> T {
     })
 }
 
+/// One entry of the `requires` array. Untagged: the presence of
+/// `projection` selects the Projected form, `id` the Fetched form.
+///
+/// - Fetched: `{"id": "drafts.log_by_doc", "args": [..]}`
+/// - Projected: `{"projection": "invoice_draft", "partition": "<value>",
+///   "requires": [..upstream entries..]}` — `partition` in the engine's
+///   canonical display form (decimal for I64, raw string, hyphenated
+///   lowercase UUID). Upstream is typically the partition's log fetch.
 #[derive(Deserialize)]
-struct RequiresEntry {
-    id: String,
-    #[serde(default)]
-    args: Vec<serde_json::Value>,
+#[serde(untagged)]
+enum RequiresEntry {
+    Projected {
+        projection: String,
+        partition: serde_json::Value,
+        #[serde(default)]
+        requires: Vec<RequiresEntry>,
+    },
+    Fetched {
+        id: String,
+        #[serde(default)]
+        args: Vec<serde_json::Value>,
+    },
+}
+
+/// Canonical partition repr for a Projected slot from its JSON form.
+/// Strings pass through (UUIDs must arrive hyphenated lowercase),
+/// integers render decimal — matching `DeriveFailure::partition` / the
+/// engine's display form. Non-integer numbers are rejected: engine
+/// partitions are I64/Str/Uuid, so a float repr could never match a
+/// reported failure and would fail silently.
+fn json_partition_repr(partition: &serde_json::Value) -> Result<String, String> {
+    match partition {
+        serde_json::Value::String(s) => Ok(s.clone()),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(|v| v.to_string())
+            .ok_or_else(|| format!("projection partition: number must be an i64, got {n}")),
+        other => Err(format!("projection partition: unsupported JSON type {other:?}")),
+    }
+}
+
+/// Register one `requires` entry (and, for Projected, its upstream
+/// subtree) in the store; returns the entry's slot key.
+fn upsert_requires_entry(
+    store: &mut RequirementStore,
+    entry: &RequiresEntry,
+) -> Result<RequirementKey, String> {
+    match entry {
+        RequiresEntry::Fetched { id, args } => {
+            let args = json_args_to_values(args)?;
+            Ok(store.upsert_fetched(id, args))
+        }
+        RequiresEntry::Projected { projection, partition, requires } => {
+            let mut upstream = Vec::with_capacity(requires.len());
+            for r in requires {
+                upstream.push(upsert_requires_entry(store, r)?);
+            }
+            let partition_repr = json_partition_repr(partition)?;
+            Ok(store.upsert_projected(projection, &partition_repr, upstream))
+        }
+    }
 }
 
 fn json_args_to_values(args: &[serde_json::Value]) -> Result<Vec<Value>, String> {
@@ -164,8 +291,7 @@ pub fn requirements_subscribe(
 
         let mut upstream = Vec::with_capacity(entries.len());
         for entry in &entries {
-            let args = json_args_to_values(&entry.args).map_err(|e| JsError::new(&e))?;
-            let key = store.upsert_fetched(&entry.id, args);
+            let key = upsert_requires_entry(&mut store, entry).map_err(|e| JsError::new(&e))?;
             upstream.push(key);
         }
         let derived_key = store.upsert_derived(
@@ -233,6 +359,7 @@ fn fetch_error_str(err: &FetchError) -> String {
         FetchError::Server { status, body } => format!("server {status}: {body}"),
         FetchError::Decode(s) => format!("decode: {s}"),
         FetchError::Cancelled => "cancelled".into(),
+        FetchError::Projection(s) => format!("projection: {s}"),
     }
 }
 
