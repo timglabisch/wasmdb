@@ -27,9 +27,11 @@ automatically from an append-only event log.
   `apply` replays one log row, `render` projects the accumulated state
   into the derived `balance` table. The engine folds each account's
   committed prefix once and memoizes it (design §9.3).
-- **Optimistic → committed** — the confirm-server (`server/src/lib.rs`)
-  flips the appended row's `committed` flag; the UI shows entries as
-  `pending` until the server confirms them.
+- **`ServerCommand`** (`shared/domain/src/lib.rs`) — the server-side, DB-less
+  counterpart of `Command`. `PostEntry::execute_server` *approves* the
+  client's delta by flipping the appended row's `committed` flag; the
+  confirm-server (`server/src/lib.rs`) just dispatches it. The UI shows
+  entries as `pending` until that confirmation arrives.
 
 The derived `balance` table is a normal reactive table: the React UI just
 `useQuery`s it and re-renders when the projection writes to it.

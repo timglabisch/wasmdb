@@ -1,11 +1,11 @@
 //! Confirm-server for projection-demo.
 //!
-//! Like render-test's echo-server, every command is `Confirmed` with
-//! `server_zset` derived from `client_zset` — no database, no
-//! server-authoritative domain execution. The ONE addition: the appended
-//! `ledger_log` row is returned with `committed = 1` (design §4.7). The
-//! existing invert+apply reconcile finalizes the row from optimistic
-//! (`committed = 0`) to committed, which
+//! No database, no server-authoritative store: every command approves its
+//! own delta through `ServerCommand::execute_server`, and the result is
+//! broadcast back as `server_zset`. `PostEntry` approves by echoing the
+//! client's delta with the `ledger_log` row flipped to `committed = 1`
+//! (design §4.7); the client's invert+apply reconcile then finalizes the row
+//! from optimistic (`committed = 0`) to committed, which
 //!
 //!   1. lets `BalanceFold`'s committed-frontier memo advance (the fold no
 //!      longer re-applies confirmed rows), and
@@ -20,34 +20,11 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::post;
 use borsh::BorshDeserialize;
-use projection_demo_domain::ledger::ledger_log::LedgerLog;
-use projection_demo_domain::ProjectionDemoCommand;
-use sql_engine::storage::{CellValue, ZSet};
-use sql_engine::DbTable;
+use projection_demo_domain::{ProjectionDemoCommand, ServerCommand};
 use sync::protocol::{
     BatchCommandRequest, BatchCommandResponse, CommandResponse, Verdict,
 };
 use tower_http::services::ServeDir;
-
-/// Index of the `committed` column in `ledger_log`, resolved once from the
-/// row schema so this stays correct if the column order ever changes.
-fn committed_column_index() -> usize {
-    LedgerLog::schema()
-        .columns
-        .iter()
-        .position(|c| c.name == "committed")
-        .expect("ledger_log has a `committed` column")
-}
-
-/// Return `client_zset` with every `ledger_log` row marked committed.
-fn confirm_zset(mut zset: ZSet, committed_idx: usize) -> ZSet {
-    for entry in &mut zset.entries {
-        if entry.table == LedgerLog::TABLE {
-            entry.row[committed_idx] = CellValue::I64(1);
-        }
-    }
-    zset
-}
 
 async fn handle_command(body: Bytes) -> impl IntoResponse {
     let batch = match BatchCommandRequest::<ProjectionDemoCommand>::try_from_slice(&body) {
@@ -55,16 +32,19 @@ async fn handle_command(body: Bytes) -> impl IntoResponse {
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string().into_bytes()),
     };
 
-    let committed_idx = committed_column_index();
     let responses: Vec<CommandResponse> = batch
         .requests
         .into_iter()
-        .map(|r| CommandResponse {
-            stream_id: r.stream_id,
-            seq_no: r.seq_no,
-            verdict: Verdict::Confirmed {
-                server_zset: confirm_zset(r.client_zset, committed_idx),
-            },
+        .map(|r| {
+            let verdict = match r.command.execute_server(&r.client_zset) {
+                Ok(server_zset) => Verdict::Confirmed { server_zset },
+                Err(e) => Verdict::Rejected { reason: e.to_string() },
+            };
+            CommandResponse {
+                stream_id: r.stream_id,
+                seq_no: r.seq_no,
+                verdict,
+            }
         })
         .collect();
 

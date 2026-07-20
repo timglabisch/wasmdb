@@ -20,8 +20,10 @@
 //!   running balance and writes the derived `balance` table. The engine
 //!   maintains it at the notify chokepoint, incrementally (design §9.3).
 //!
-//! No `feature = "server"`: the demo server confirms without executing
-//! domain logic, so this crate stays wasm-friendly.
+//! Server-side confirmation lives on the command too: `ServerCommand::
+//! execute_server` approves the client's delta in-memory (a pure `ZSet`
+//! transform, no SQL backend). No `feature = "server"` — the crate stays
+//! wasm-friendly.
 
 pub mod ledger;
 
@@ -53,6 +55,30 @@ impl Command for ProjectionDemoCommand {
     fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
         match self {
             ProjectionDemoCommand::PostEntry(c) => c.execute_optimistic(db),
+        }
+    }
+}
+
+// ============================================================
+// Server-side approval (in-memory, no store)
+// ============================================================
+
+/// Server-side, store-less counterpart of [`Command`]. The confirm-server
+/// owns no database: a command *approves* the client's optimistic
+/// `client_zset` and returns the delta to broadcast back to peers.
+///
+/// This is the in-memory analog of `sync-server-mysql`'s `ServerCommand`
+/// (which runs authoritative SQL in a `DatabaseTransaction`). The demo needs
+/// no SQL backend, so the trait lives here — a pure `ZSet -> ZSet` transform,
+/// wasm-friendly, no `feature = "server"`.
+pub trait ServerCommand {
+    fn execute_server(&self, client_zset: &ZSet) -> Result<ZSet, CommandError>;
+}
+
+impl ServerCommand for ProjectionDemoCommand {
+    fn execute_server(&self, client_zset: &ZSet) -> Result<ZSet, CommandError> {
+        match self {
+            ProjectionDemoCommand::PostEntry(c) => c.execute_server(client_zset),
         }
     }
 }

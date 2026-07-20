@@ -1,10 +1,13 @@
 use database::Database;
 use rpc_command::{payload_json, rpc_command};
 use sql_engine::storage::{CellValue, Uuid};
+use sql_engine::DbTable;
 use sync::append::{append_row, next_seq};
 use sync::command::{Command, CommandError};
 use sync::zset::ZSet;
 use tables::ProjectionLog;
+
+use crate::ServerCommand;
 
 use super::super::ledger_log::{EntryPosted, LedgerLog};
 
@@ -49,5 +52,27 @@ impl Command for PostEntry {
                 payload,
             },
         )
+    }
+}
+
+impl ServerCommand for PostEntry {
+    /// Approve the append. The demo confirm-server holds no store, so this is
+    /// a pure transform: echo the client's delta back with the `ledger_log`
+    /// row flipped to `committed = 1` (design §4.7). The client's invert+apply
+    /// reconcile then finalizes the optimistic row — advancing the fold's
+    /// committed frontier and flipping the UI from pending to confirmed.
+    fn execute_server(&self, client_zset: &ZSet) -> Result<ZSet, CommandError> {
+        let committed_idx = LedgerLog::schema()
+            .columns
+            .iter()
+            .position(|c| c.name == "committed")
+            .expect("ledger_log has a `committed` column");
+        let mut zset = client_zset.clone();
+        for entry in &mut zset.entries {
+            if entry.table == LedgerLog::TABLE {
+                entry.row[committed_idx] = CellValue::I64(1);
+            }
+        }
+        Ok(zset)
     }
 }
