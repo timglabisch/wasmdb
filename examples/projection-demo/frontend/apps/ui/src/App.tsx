@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useWasm } from '@wasmdb/client';
 import { DebugToolbar } from '@wasmdb/debug-toolbar';
-import type { Balance } from 'projection-demo-generated/tables/Balance';
 import { post } from './commands';
 import { seed } from './seed';
 import './index.css';
@@ -18,7 +17,12 @@ function useBalances(): BalanceRow[] {
   return useQuery<BalanceRow>(
     'SELECT REACTIVE(balance.account), balance.account, balance.balance_cents, balance.entries' +
       ' FROM balance ORDER BY balance.account',
-    (r) => ({ account: r[1] as string, balanceCents: r[2] as number, entries: r[3] as number }),
+    // col 0 is the REACTIVE(...) marker that binds the subscription; skip it.
+    ([, account, balanceCents, entries]) => ({
+      account: account as string,
+      balanceCents: balanceCents as number,
+      entries: entries as number,
+    }),
   );
 }
 
@@ -36,12 +40,13 @@ function useLedger(): LedgerRow[] {
     'SELECT REACTIVE(ledger_log.command_id), ledger_log.account, ledger_log.seq,' +
       ' ledger_log.committed, ledger_log.payload' +
       ' FROM ledger_log ORDER BY ledger_log.account, ledger_log.seq',
-    (r) => ({
-      account: r[1] as string,
-      seq: r[2] as number,
-      committed: (r[3] as number) !== 0,
+    // col 0 is the REACTIVE(...) marker that binds the subscription; skip it.
+    ([, account, seq, committed, payload]) => ({
+      account: account as string,
+      seq: seq as number,
+      committed: (committed as number) !== 0,
       // The payload IS the event: the RPC form of the PostEntry command.
-      amountCents: (JSON.parse(r[4] as string) as { amount_cents: number }).amount_cents,
+      amountCents: (JSON.parse(payload as string) as { amount_cents: number }).amount_cents,
     }),
   );
 }
@@ -194,12 +199,10 @@ function Controls() {
 
 // ── App ──────────────────────────────────────────────────────────────
 
-// The reactive body lives in its own component so its `useQuery`
-// subscriptions first mount *after* wasm is ready. `useQuery` bails (and
-// never re-subscribes) if it first runs while the wasm boot is still in
-// flight — so a hook called above the ready-gate would silently stay
-// empty forever.
-function Ledgers() {
+// The reactive body is its own component so its `useQuery` hooks first mount
+// *after* wasm is ready — a subscription created before the boot completes
+// never binds (and never retries).
+function Dashboard() {
   const balances = useBalances();
   const ledger = useLedger();
 
@@ -235,9 +238,5 @@ export default function App() {
 
   if (!ready) return <div className="loading">loading wasm…</div>;
 
-  return <Ledgers />;
+  return <Dashboard />;
 }
-
-// Keep the generated `Balance` type referenced so the row shape and the
-// SQL projection above stay in lock-step (the mapper reads by position).
-export type _BalanceRowShape = Balance;
