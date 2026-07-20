@@ -334,6 +334,9 @@ strukturell ausgeschlossen, durch zwei Regeln:
    Log-Rows tragen die Server-Chain: autoritative `seq`, `parent`-Kette,
    optional `chain_hash` über die kanonischen RPC-Bytes. Bestätigt = Row hat
    Chain-Position; pending = Off-Chain (provisorische seq, `committed=false`).
+   (v2 → §11: `committed`-Flag & `seq`-Order werden durch zwei Parent-Links
+   `client_parent_id`/`server_parent_id` ersetzt; Bestätigt =
+   `server_parent_id.is_some()`, Drift = client- ≠ server-Link.)
    Daraus folgt:
    - **Rollback des Unbestätigten ist eine Datenoperation:** alle
      Off-Chain-Rows eines Keys löschen ⇒ Projektion leitet auf den
@@ -912,3 +915,138 @@ unverändert.
 - `crates/sync/sync-client/src/wasm/mod.rs` — `define_wasm_api!`.
 - `examples/invoice-demo/` — Referenz-DX (BlurInput → patch → execute;
   `shared/domain/*/command/*.rs`; `frontend/apps/wasm/src/lib.rs`).
+
+## 11. Commit-Chain v2: Zwei Parent-Links — `committed`-Flag & `seq`-Order entfallen
+
+**Status:** DESIGN (noch nicht umgesetzt). Verfeinert §4.6 Punkt 2
+(„Bestätigt-Sein ist eine Daten-Eigenschaft") zur präzisen Form.
+Umsetzungsreihenfolge: erst Framework (`tables`/`tables-macros` + e2e), dann
+Demo-Prototyp (`examples/projection-demo`); Backward-Refetch/Rebuild als
+Stufe 2.
+
+### 11.1 Kernidee
+
+Die committed-Ordnung war bisher implizit: client-vergebene `seq` + ein
+`committed`-Flag (0/1), Fold-Order = `(committed, seq)`. Das ersetzen wir
+durch ZWEI explizite Parent-Links pro Log-Row:
+
+- **`client_parent_id: Uuid`** — der Vorgänger, den der Client beim Posten
+  optimistisch annimmt (sein lokaler Ketten-Kopf der Partition). IMMER
+  gesetzt; erste Row = `ROOT`-Sentinel.
+- **`server_parent_id: Option<Uuid>`** — der Vorgänger, den der Server
+  autoritativ zuweist. `None` = pending (off-chain); `ROOT` = erste
+  committete Row; `Some(x)` = committed nach `x`.
+
+Daraus fällt alles ab:
+- **Bestätigt** = `server_parent_id.is_some()`. Das `committed: i64`-Flag
+  entfällt — es ist redundant.
+- **Client-Order** (pending Tail) = die `client_parent_id`-Kette. `seq`
+  entfällt als Order-Mechanismus (bei Bedarf als reiner Anzeige-Index aus
+  der Kette ableitbar, nie Wahrheit).
+- **Server-Order** (committed) = die `server_parent_id`-Kette ab `ROOT`.
+- **Drift** = `client_parent_id != server_parent_id` einer committeten Row:
+  der Server hat anders einsortiert als der Client optimistisch annahm.
+  Per-Row, direkt ablesbar.
+
+Invariante, damit `server_parent_id.is_some() ⟺ committed` hält:
+**`server_parent_id` vergibt AUSSCHLIESSLICH der Server.** Der Client fasst
+es nie an; würde er optimistisch selbst verlinken, verlöre `is_some()` seine
+Bedeutung und das Flag käme durch die Hintertür zurück.
+
+### 11.2 Row-Schema
+
+```
+command_id       : Uuid          (PK)
+<partition>      : ...           (Partitionsspalte, z.B. account/doc_id)
+client_parent_id : Uuid          (Client: ROOT | vorherige lokale Row der Partition)
+server_parent_id : Option<Uuid>  (Server: None=pending · ROOT=erste · Some(x)=nach x)
+payload          : String        (serialisiertes Event, unverändert)
+```
+
+Weg gegenüber v1: `seq: i64`, `committed: i64`. `#[projection_row]`
+generiert die neuen beiden Spalten statt der alten beiden (§11.5).
+`chain_hash` (§4.6) bleibt orthogonal (Integrität über kanonische
+RPC-Bytes), nicht Teil des v2-Kerns.
+
+### 11.3 Fold-Order
+
+```
+fold_order = [ server_parent_id-Kette ab ROOT ]        // committed, autoritativ
+          ++ [ client_parent_id-Kette ab Client-Head ] // pending Tail, optimistisch
+```
+
+- Committed-Teil: von `ROOT` den `server_parent_id`-Zeigern folgen
+  (Rows mit `server_parent_id = Some`, per Kette geordnet).
+- Pending-Teil: Rows mit `server_parent_id = None`, geordnet über ihre
+  `client_parent_id`-Kette, die am Client-Head (letzte committete bzw.
+  letzte pending Row) ansetzt.
+
+`ProjectionLog::in_fold_order` wird damit ein Ketten-Traversal statt
+`sort_by_key((!committed, seq))`.
+
+### 11.4 Drift-Erkennung & Repair
+
+**Beim Confirm** vergleicht der Client die vom Server zugewiesene
+`server_parent_id` mit der eigenen `client_parent_id` derselben Row:
+
+- **gleich** → Optimistik lag richtig, happy path: Row nur finalisieren
+  (`server_parent_id` setzen), kein Reorder, Memo bleibt gültig.
+- **ungleich (Drift)** → Server hat umsortiert → ab dieser Kettenposition
+  die Projektion neu ableiten (Memo-Suffix invalidieren, §11.5).
+
+**Gap / Kettenbruch:** Trifft eine committete Row ein, deren
+`server_parent_id` der Client nicht kennt (der Server hat Rows verkettet,
+die der Client nie fetchte), fehlt ein Ancestor → **Backward-Refetch:** den
+Parent per PK holen, dann dessen Parent … bis die Kette lückenlos ab `ROOT`
+steht, dann Projektion neu ableiten. Verallgemeinert §4.6 („Off-Chain-Rows
+löschen, Tail refetchen, neu ableiten") zum gezielten Rückwärtslauf entlang
+der Parent-Zeiger. — **Stufe 2**, braucht einen Fetch-by-PK-Endpoint +
+Repair-Loop im Client; der heutige Confirm-Server liefert noch nicht aus.
+
+### 11.5 Auswirkungen auf das Framework
+
+- **`#[projection_row]`** (`tables-macros`): generiert `client_parent_id:
+  Uuid` + `server_parent_id: Option<Uuid>` statt `seq: i64` +
+  `committed: i64`.
+- **`ProjectionLog`** (`tables/src/lib.rs`):
+  - `is_committed()` = `server_parent_id().is_some()` (statt
+    `committed() != 0`).
+  - `in_fold_order` = Ketten-Traversal (§11.3) statt seq-Sort.
+  - `seq()`/`committed()` entfallen; neu `client_parent_id()` /
+    `server_parent_id()`.
+- **Fold-Memo** (§9.3, `FoldSnapshot`): Schlüssel wird die **server-chain
+  als PK-Liste** (ab ROOT) statt der committed-seq-Liste; `starts_with`-
+  Resume analog — eine committete Kette ist immutable per Position, gleiche
+  PK-Präfixliste ⇒ gleicher Fold. Drift/Reorder = die neue PK-Liste setzt
+  die alte nicht fort ⇒ Invalidierung ab Divergenzpunkt (dieselbe eine Regel
+  wie heute).
+- **`execute_server`** (§4.7): der `server_zset` trägt die Row mit gesetztem
+  `server_parent_id` (statt `committed = true`). Der Server hält dafür pro
+  Partition den **Ketten-Kopf** (`HashMap<partition, head_PK>`) — minimaler
+  State, kein DB. *Out-of-order* = der Server verkettet Bestätigungen in
+  einer anderen Reihenfolge als der Ankunft (setzt `server_parent_id =
+  aktueller Kopf`, Kopf = neue Row).
+
+### 11.6 Warum das besser ist
+
+- **`committed`-Flag weg:** ein Zustand weniger, der auseinanderlaufen kann
+  — Bestätigt-Sein ist jetzt strukturell (`server_parent_id.is_some()`),
+  nicht gebucht.
+- **Order server-autoritativ & explizit:** nicht mehr eine client-`seq`,
+  der der Server nachträglich widerspricht, sondern ein expliziter Link, den
+  der Server vergibt.
+- **Drift ist erste-Klasse:** `client_parent_id` vs `server_parent_id` zeigt
+  per-Row und sofort, WO Optimistik und Wahrheit divergieren — happy path
+  bleibt billig (Gleichheit), Reorder/Repair wird explizit statt implizit
+  über Neusortierung.
+
+### 11.7 Umsetzungsreihenfolge
+
+1. **Framework:** `#[projection_row]` + `ProjectionLog` + Fold-Shim/Memo auf
+   das Zwei-Link-Modell umstellen; `tables-e2e`-Tests (`projection_log.rs`,
+   `projection_fold*.rs`) nachziehen.
+2. **Demo-Prototyp** (`examples/projection-demo`): `LedgerLog` auf die neuen
+   Spalten, `PostEntry`/`ServerCommand` + Server-Head-Map, UI zeigt
+   pending/committed via `server_parent_id` und den Drift.
+3. **Stufe 2:** Backward-Refetch/Rebuild (Fetch-by-PK-Endpoint +
+   Client-Repair-Loop).
