@@ -9,11 +9,11 @@ use sql_engine::reactive::registry::SubscriptionRegistry;
 use sql_engine::reactive::SubscriptionId;
 use sql_engine::storage::{CellValue, ZSet};
 
+use crate::demand::{compile_footprint, display_name, InstanceName};
 use crate::diff::multiset_diff;
-use crate::dynamic::{compile_footprint, display_name, DynamicProjection, DynamicSpec, InstanceName};
 use crate::spec::{
-    FoldCache, Inputs, OutputRow, OwnershipViolation, Projection, ProjectionHost, ProjectionSpec,
-    ReadCtx,
+    FoldCache, Inputs, Lifecycle, OutputRow, OwnershipViolation, Projection, ProjectionHost,
+    ProjectionSpec, ReadCtx,
 };
 
 /// Registration-time errors. All of them are programming errors in the
@@ -26,10 +26,14 @@ pub enum RegisterError {
     OutputIsOwnInput { projection: String, table: String },
     /// The projection graph would contain a cycle (ids in no particular order).
     Cycle(Vec<String>),
-    /// A dynamic template's output would be consumed as a source/read —
-    /// dynamic outputs are DAG leaves (v1, §12). `projection` is the
-    /// template owning the output.
-    DynamicOutputConsumed { projection: String, table: String },
+    /// An on-demand projection's output would be consumed as a source/read —
+    /// on-demand outputs are DAG leaves (v1, §12). `projection` is the
+    /// projection owning the output.
+    DemandOutputConsumed { projection: String, table: String },
+    /// A data-presence spec whose source does not bind exactly its
+    /// partition column to key component 0 — that shape IS the partition
+    /// contract (§9); compound keys need [`Lifecycle::OnDemand`].
+    InvalidPartitionBind { projection: String, table: String },
 }
 
 impl std::fmt::Display for RegisterError {
@@ -43,10 +47,16 @@ impl std::fmt::Display for RegisterError {
                 write!(f, "projection '{projection}' uses its own output table '{table}' as input")
             }
             RegisterError::Cycle(ids) => write!(f, "projection graph has a cycle among: {ids:?}"),
-            RegisterError::DynamicOutputConsumed { projection, table } => write!(
+            RegisterError::DemandOutputConsumed { projection, table } => write!(
                 f,
-                "dynamic output table '{table}' of '{projection}' may not be consumed — \
-                 dynamic projections are DAG leaves"
+                "on-demand output table '{table}' of '{projection}' may not be consumed — \
+                 on-demand projections are DAG leaves"
+            ),
+            RegisterError::InvalidPartitionBind { projection, table } => write!(
+                f,
+                "data-presence projection '{projection}': source '{table}' must bind \
+                 exactly one column to key component 0 (the partition) — compound \
+                 keys need Lifecycle::OnDemand"
             ),
         }
     }
@@ -85,13 +95,8 @@ struct Node {
     imp: Box<dyn Projection>,
 }
 
-struct DynNode {
-    spec: DynamicSpec,
-    imp: Box<dyn DynamicProjection>,
-}
-
-/// Bookkeeping of one ACTIVE dynamic instance (§12). Exists from the first
-/// `activate` to the `deactivate` that drops the refcount to 0.
+/// Bookkeeping of one ACTIVE on-demand instance (§12). Exists from the
+/// first `activate` to the `deactivate` that drops the refcount to 0.
 struct InstanceState {
     refcount: u32,
     /// Registration in the engine's own `instance_registry`.
@@ -124,19 +129,19 @@ pub struct ProjectionEngine {
     /// cleared on `reset_and_rederive`.
     fold_caches: Vec<HashMap<CellValue, FoldCache>>,
 
-    // ── Dynamic templates & instances (§12) ──────────────────────────
-    dyn_nodes: Vec<DynNode>,
-    /// Output table → owning dynamic node index.
-    dyn_owner_by_table: HashMap<String, usize>,
-    /// Read table → dynamic node indices (coarse re-render trigger).
-    dyn_reads_by_table: HashMap<String, Vec<usize>>,
+    // ── On-demand projections & their instances (§12) ────────────────
+    demand_nodes: Vec<Node>,
+    /// Output table → owning demand node index.
+    demand_owner_by_table: HashMap<String, usize>,
+    /// Read table → demand node indices (coarse re-render trigger).
+    demand_reads_by_table: HashMap<String, Vec<usize>>,
     /// The engine's OWN registry for instance footprints — identification
     /// shares the candidates→verify machinery with query subscriptions,
     /// but the registry instance (and thus the id namespace) is private.
     instance_registry: SubscriptionRegistry,
-    /// Registry id → (dynamic node index, instance name).
+    /// Registry id → (demand node index, instance name).
     sub_to_instance: HashMap<SubscriptionId, (usize, InstanceName)>,
-    /// Per dynamic node: name → state of the active instance.
+    /// Per demand node: name → state of the active instance.
     instances: Vec<HashMap<InstanceName, InstanceState>>,
 }
 
@@ -151,9 +156,9 @@ impl Default for ProjectionEngine {
             last_render: Vec::new(),
             live_partitions: Vec::new(),
             fold_caches: Vec::new(),
-            dyn_nodes: Vec::new(),
-            dyn_owner_by_table: HashMap::new(),
-            dyn_reads_by_table: HashMap::new(),
+            demand_nodes: Vec::new(),
+            demand_owner_by_table: HashMap::new(),
+            demand_reads_by_table: HashMap::new(),
             instance_registry: SubscriptionRegistry::new(),
             sub_to_instance: HashMap::new(),
             instances: Vec::new(),
@@ -167,14 +172,14 @@ impl ProjectionEngine {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty() && self.dyn_nodes.is_empty()
+        self.nodes.is_empty() && self.demand_nodes.is_empty()
     }
 
     pub fn projection_ids(&self) -> impl Iterator<Item = &str> {
         self.nodes
             .iter()
             .map(|n| n.spec.id.as_str())
-            .chain(self.dyn_nodes.iter().map(|n| n.spec.id.as_str()))
+            .chain(self.demand_nodes.iter().map(|n| n.spec.id.as_str()))
     }
 
     /// Tables owned by any projection (exclusively engine-written).
@@ -182,16 +187,25 @@ impl ProjectionEngine {
         self.owner_by_table
             .keys()
             .map(|t| t.as_str())
-            .chain(self.dyn_owner_by_table.keys().map(|t| t.as_str()))
+            .chain(self.demand_owner_by_table.keys().map(|t| t.as_str()))
     }
 
-    /// Register a projection. Validates id uniqueness, output ownership
-    /// and graph acyclicity BEFORE mutating any state.
+    /// Register a projection; its spec's [`Lifecycle`] decides the
+    /// machinery. Validation runs BEFORE any mutation, both ways:
+    /// id uniqueness, output ownership, own-input use, then
+    ///
+    /// - [`Lifecycle::DataPresence`]: partition bind shape, graph
+    ///   acyclicity (the projection joins the topo DAG), and the leaf
+    ///   rule — it may not consume an on-demand projection's output.
+    /// - [`Lifecycle::OnDemand`]: outputs are DAG leaves — nothing may
+    ///   consume them (either direction). Its sources MAY be
+    ///   data-presence outputs; instances run after the topo pass over
+    ///   the accumulated delta (§12).
     pub fn register(&mut self, imp: Box<dyn Projection>) -> Result<(), RegisterError> {
         let spec = imp.spec();
 
         if self.nodes.iter().any(|n| n.spec.id == spec.id)
-            || self.dyn_nodes.iter().any(|n| n.spec.id == spec.id)
+            || self.demand_nodes.iter().any(|n| n.spec.id == spec.id)
         {
             return Err(RegisterError::DuplicateId(spec.id));
         }
@@ -202,10 +216,10 @@ impl ProjectionEngine {
                     owner: self.nodes[owner].spec.id.clone(),
                 });
             }
-            if let Some(&owner) = self.dyn_owner_by_table.get(out) {
+            if let Some(&owner) = self.demand_owner_by_table.get(out) {
                 return Err(RegisterError::OutputAlreadyOwned {
                     table: out.clone(),
-                    owner: self.dyn_nodes[owner].spec.id.clone(),
+                    owner: self.demand_nodes[owner].spec.id.clone(),
                 });
             }
             let is_own_input = spec.sources.iter().any(|s| &s.table == out)
@@ -217,13 +231,33 @@ impl ProjectionEngine {
                 });
             }
         }
-        // Leaf rule (§12): a static projection may not consume a dynamic
-        // template's output.
+        // Leaf rule (§12): nothing may consume an on-demand output — here
+        // the new projection (either lifecycle) as the consumer.
         for input in spec.sources.iter().map(|s| &s.table).chain(spec.reads.iter()) {
-            if let Some(&owner) = self.dyn_owner_by_table.get(input) {
-                return Err(RegisterError::DynamicOutputConsumed {
-                    projection: self.dyn_nodes[owner].spec.id.clone(),
+            if let Some(&owner) = self.demand_owner_by_table.get(input) {
+                return Err(RegisterError::DemandOutputConsumed {
+                    projection: self.demand_nodes[owner].spec.id.clone(),
                     table: input.clone(),
+                });
+            }
+        }
+
+        match spec.lifecycle {
+            Lifecycle::DataPresence => self.register_data_presence(spec, imp),
+            Lifecycle::OnDemand => self.register_on_demand(spec, imp),
+        }
+    }
+
+    fn register_data_presence(
+        &mut self,
+        spec: ProjectionSpec,
+        imp: Box<dyn Projection>,
+    ) -> Result<(), RegisterError> {
+        for s in &spec.sources {
+            if s.partition_column().is_none() {
+                return Err(RegisterError::InvalidPartitionBind {
+                    projection: spec.id.clone(),
+                    table: s.table.clone(),
                 });
             }
         }
@@ -242,10 +276,11 @@ impl ProjectionEngine {
             self.owner_by_table.insert(out.clone(), idx);
         }
         for s in &spec.sources {
+            let partition_column = s.partition_column().expect("validated above");
             self.sources_by_table
                 .entry(s.table.clone())
                 .or_default()
-                .push((idx, s.partition_column));
+                .push((idx, partition_column));
         }
         for r in &spec.reads {
             self.reads_by_table.entry(r.clone()).or_default().push(idx);
@@ -258,86 +293,44 @@ impl ProjectionEngine {
         Ok(())
     }
 
-    /// Register a dynamic template (§12). Like [`Self::register`] the
-    /// validation runs BEFORE any mutation. Dynamic outputs are DAG
-    /// leaves: nothing (static or dynamic) may consume them, and the
-    /// template itself may not consume another dynamic template's output.
-    /// Its sources MAY be static outputs — instances run after the static
-    /// topo pass over the accumulated delta.
-    pub fn register_dynamic(&mut self, imp: Box<dyn DynamicProjection>) -> Result<(), RegisterError> {
-        let spec = imp.spec();
-
-        if self.nodes.iter().any(|n| n.spec.id == spec.id)
-            || self.dyn_nodes.iter().any(|n| n.spec.id == spec.id)
-        {
-            return Err(RegisterError::DuplicateId(spec.id));
-        }
+    fn register_on_demand(
+        &mut self,
+        spec: ProjectionSpec,
+        imp: Box<dyn Projection>,
+    ) -> Result<(), RegisterError> {
+        // Leaf rule, consumer side: no existing projection may already
+        // consume the new projection's output tables.
         for out in &spec.outputs {
-            if let Some(&owner) = self.owner_by_table.get(out) {
-                return Err(RegisterError::OutputAlreadyOwned {
-                    table: out.clone(),
-                    owner: self.nodes[owner].spec.id.clone(),
-                });
-            }
-            if let Some(&owner) = self.dyn_owner_by_table.get(out) {
-                return Err(RegisterError::OutputAlreadyOwned {
-                    table: out.clone(),
-                    owner: self.dyn_nodes[owner].spec.id.clone(),
-                });
-            }
-            let is_own_input = spec.sources.iter().any(|s| &s.table == out)
-                || spec.reads.iter().any(|r| r == out);
-            if is_own_input {
-                return Err(RegisterError::OutputIsOwnInput {
-                    projection: spec.id.clone(),
-                    table: out.clone(),
-                });
-            }
-            // Leaf rule: no existing projection may already consume the
-            // new template's output tables.
             let consumed = self
                 .nodes
                 .iter()
-                .map(|n| (&n.spec.sources, &n.spec.reads))
-                .any(|(sources, reads)| {
-                    sources.iter().any(|s| &s.table == out) || reads.iter().any(|r| r == out)
-                })
-                || self.dyn_nodes.iter().any(|n| {
+                .chain(self.demand_nodes.iter())
+                .any(|n| {
                     n.spec.sources.iter().any(|s| &s.table == out)
                         || n.spec.reads.iter().any(|r| r == out)
                 });
             if consumed {
-                return Err(RegisterError::DynamicOutputConsumed {
+                return Err(RegisterError::DemandOutputConsumed {
                     projection: spec.id.clone(),
                     table: out.clone(),
-                });
-            }
-        }
-        // Leaf rule, other direction: the template may not consume another
-        // dynamic template's output.
-        for input in spec.sources.iter().map(|s| &s.table).chain(spec.reads.iter()) {
-            if let Some(&owner) = self.dyn_owner_by_table.get(input) {
-                return Err(RegisterError::DynamicOutputConsumed {
-                    projection: self.dyn_nodes[owner].spec.id.clone(),
-                    table: input.clone(),
                 });
             }
         }
 
         // Validated — commit.
-        let idx = self.dyn_nodes.len();
+        let idx = self.demand_nodes.len();
         for out in &spec.outputs {
-            self.dyn_owner_by_table.insert(out.clone(), idx);
+            self.demand_owner_by_table.insert(out.clone(), idx);
         }
         for r in &spec.reads {
-            self.dyn_reads_by_table.entry(r.clone()).or_default().push(idx);
+            self.demand_reads_by_table.entry(r.clone()).or_default().push(idx);
         }
-        self.dyn_nodes.push(DynNode { spec, imp });
+        self.demand_nodes.push(Node { spec, imp });
         self.instances.push(HashMap::new());
         Ok(())
     }
 
-    // ── Dynamic instance lifecycle (§12) ─────────────────────────────
+    // ── On-demand instance lifecycle (§12) ───────────────────────────
 
     /// Activate the instance `(id, name)`: register its footprint in the
     /// instance registry and materialize it from the current local data.

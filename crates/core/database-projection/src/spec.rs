@@ -7,14 +7,51 @@ use sql_engine::storage::{CellValue, ZSet};
 /// One rendered output row: target table name + cells in schema order.
 pub type OutputRow = (String, Vec<CellValue>);
 
-/// A partitioned source table. Changes to it dirty the partition values
-/// extracted from `partition_column`; the rows of a partition are handed
-/// to `project` as inputs.
+/// One source table with the equality bindings that scope its rows to one
+/// instance key: `(column index, key component index)` — a row belongs to
+/// the instance iff `row[col] == key[comp]` for every binding.
+///
+/// A data-presence source ([`Lifecycle::DataPresence`]) binds exactly its
+/// partition column to key component 0. An on-demand source may bind any
+/// columns against any components of the compound name; an empty bind list
+/// means every row belongs to every instance (table scan).
 #[derive(Debug, Clone)]
-pub struct PartitionedSource {
+pub struct ProjectionSource {
     pub table: String,
-    /// Column index of the partition within this table's rows.
-    pub partition_column: usize,
+    pub bind: Vec<(usize, usize)>,
+}
+
+impl ProjectionSource {
+    /// The data-presence shape: the partition column bound to key
+    /// component 0.
+    pub fn partitioned(table: impl Into<String>, partition_column: usize) -> Self {
+        Self { table: table.into(), bind: vec![(partition_column, 0)] }
+    }
+
+    /// The partition column of a data-presence source — `Some(col)` iff
+    /// the bind list is exactly `[(col, 0)]`. Registration enforces this
+    /// shape for [`Lifecycle::DataPresence`] specs.
+    pub fn partition_column(&self) -> Option<usize> {
+        match self.bind.as_slice() {
+            [(col, 0)] => Some(*col),
+            _ => None,
+        }
+    }
+}
+
+/// What brings instances of a projection into existence (§9 vs §12). The
+/// fold and render contract is identical in both — only the lifecycle of
+/// the instances differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// One instance per partition value present in the source rows; the
+    /// key has ONE component (the partition value). An instance appears
+    /// with the first source row and disappears with the last.
+    DataPresence,
+    /// Instances are activated/deactivated by compound name at runtime
+    /// (refcounted); zero source rows is a valid ACTIVE state with an
+    /// empty render. Outputs are DAG leaves (v1, §12).
+    OnDemand,
 }
 
 /// Static description of a projection, produced once at registration.
@@ -22,10 +59,11 @@ pub struct PartitionedSource {
 pub struct ProjectionSpec {
     /// Unique id (used in errors, debug output and — later — slot identity).
     pub id: String,
-    /// Partitioned sources: the tables this projection derives FROM.
-    pub sources: Vec<PartitionedSource>,
+    pub lifecycle: Lifecycle,
+    /// The tables this projection derives FROM, with their key bindings.
+    pub sources: Vec<ProjectionSource>,
     /// Read-only render inputs, available through [`ReadCtx`]. Any change
-    /// to one of these re-renders ALL live partitions (coarse by design — v1).
+    /// to one of these re-renders ALL live instances (coarse by design — v1).
     pub reads: Vec<String>,
     /// Output tables. Owned exclusively by this projection; nothing else
     /// may write them.
@@ -35,11 +73,14 @@ pub struct ProjectionSpec {
 /// A materialized view defined as a Rust function.
 ///
 /// `project` must be PURE: deterministic, no IO, no clock, no RNG, no
-/// global state. It is called per partition with the current rows of
+/// global state. It is called per instance with the current rows of
 /// every source; its return value fully replaces the previous render of
-/// that partition. It is NOT called for partitions whose sources hold
-/// zero rows — data presence is the lifecycle (the engine clears the
-/// partition's output).
+/// that instance. `key` is the instance identity: `[partition]` (one
+/// component) under [`Lifecycle::DataPresence`], the compound activation
+/// name under [`Lifecycle::OnDemand`]. It is NOT called while the sources
+/// hold zero rows for the instance — the engine renders empty; what
+/// differs by lifecycle is whether the instance itself survives that
+/// (demand: yes, data presence: no).
 ///
 /// `cache` is an execution memo, never an input: the returned rows must
 /// be a pure function of `(inputs, ctx)` alone — an empty cache must
@@ -49,7 +90,7 @@ pub trait Projection {
 
     fn project(
         &self,
-        partition: &CellValue,
+        key: &[CellValue],
         inputs: &Inputs,
         ctx: &ReadCtx<'_>,
         cache: &mut FoldCache,
@@ -131,7 +172,7 @@ pub trait RowReader {
     fn all_rows(&self, table: &str) -> Vec<Vec<CellValue>>;
 
     /// All live rows of `table` whose cells equal `keys` at every listed
-    /// column — the gather primitive of dynamic instances (§12). The
+    /// column — the gather primitive of on-demand instances (§12). The
     /// default implementation scans; hosts with indexes should override
     /// (see `DatabaseHost`).
     fn rows_matching(&self, table: &str, keys: &[(usize, CellValue)]) -> Vec<Vec<CellValue>> {

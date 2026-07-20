@@ -1,13 +1,14 @@
-//! Demand-driven projection instances (design doc §12).
+//! On-demand projection instances (design doc §12).
 //!
-//! A [`DynamicProjection`] is a template; an **instance** is (template id,
-//! compound name). Instances are activated and deactivated at runtime —
-//! materialized while observed, evicted at refcount 0. The instance's
-//! footprint (equality bindings between source columns and name components)
-//! compiles to the same [`OptimizedReactiveCondition`] structure that query
-//! subscriptions use, so the engine can route mutations to affected
-//! instances through the shared candidates→verify machinery without any
-//! change to `sql-engine`.
+//! A [`Lifecycle::OnDemand`](crate::Lifecycle::OnDemand) projection is a
+//! template; an **instance** is (projection id, compound name). Instances
+//! are activated and deactivated at runtime — materialized while observed,
+//! evicted at refcount 0. The instance's footprint (the spec's equality
+//! bindings between source columns and name components) compiles to the
+//! same [`OptimizedReactiveCondition`] structure that query subscriptions
+//! use, so the engine can route mutations to affected instances through
+//! the shared candidates→verify machinery without any change to
+//! `sql-engine`.
 
 use sql_engine::planner::reactive::{
     OptimizedReactiveCondition, ReactiveLookupKey, ReactiveLookupStrategy,
@@ -16,54 +17,12 @@ use sql_engine::planner::shared::plan::{ColumnRef, PlanFilterPredicate};
 use sql_engine::storage::CellValue;
 use sql_parser::ast::Value;
 
-use crate::spec::{FoldCache, Inputs, OutputRow, ReadCtx};
+use crate::spec::ProjectionSpec;
 
 /// The compound unique name of one instance — a single composite
 /// identifier (e.g. `[Str("account"), Str("carol")]`), not a list of
 /// independent slices.
 pub type InstanceName = Vec<CellValue>;
-
-/// One source table of a dynamic template with its equality bindings:
-/// `(column index, name component index)`. A row belongs to the instance
-/// iff `row[col] == name[comp]` for every binding.
-#[derive(Debug, Clone)]
-pub struct FootprintSource {
-    pub table: String,
-    pub bind: Vec<(usize, usize)>,
-}
-
-/// Static description of a dynamic template, produced once at registration.
-#[derive(Debug, Clone)]
-pub struct DynamicSpec {
-    /// Unique id across static AND dynamic projections.
-    pub id: String,
-    pub sources: Vec<FootprintSource>,
-    /// Read-only render inputs; any change re-renders ALL active instances
-    /// of the template (coarse by design, like the static path — v1).
-    pub reads: Vec<String>,
-    /// Output tables, owned exclusively by this template. Dynamic outputs
-    /// are DAG leaves: nothing may consume them (v1).
-    pub outputs: Vec<String>,
-}
-
-/// A materialized view template whose instances are activated on demand.
-///
-/// `project` has the same contract as [`crate::Projection::project`]:
-/// PURE, called with the current rows of every footprint source for the
-/// instance, its return value fully replaces the previous render. Unlike
-/// the static path it IS called (and stays active) when the sources hold
-/// zero rows for the instance — demand is the lifecycle, not data presence.
-pub trait DynamicProjection {
-    fn spec(&self) -> DynamicSpec;
-
-    fn project(
-        &self,
-        name: &[CellValue],
-        inputs: &Inputs,
-        ctx: &ReadCtx<'_>,
-        cache: &mut FoldCache,
-    ) -> Result<Vec<OutputRow>, String>;
-}
 
 /// `CellValue` → `ast::Value` for condition construction. Total: every
 /// name component has a value form (no placeholders involved).
@@ -85,7 +44,7 @@ pub fn cell_to_value(cell: &CellValue) -> Value {
 /// Returns an error if a binding references a name component that the
 /// given name does not have.
 pub fn compile_footprint(
-    spec: &DynamicSpec,
+    spec: &ProjectionSpec,
     name: &[CellValue],
 ) -> Result<Vec<OptimizedReactiveCondition>, String> {
     let mut conditions = Vec::with_capacity(spec.sources.len());
@@ -93,7 +52,7 @@ pub fn compile_footprint(
         for &(_, comp) in &source.bind {
             if comp >= name.len() {
                 return Err(format!(
-                    "template '{}': binding references name component {comp}, \
+                    "projection '{}': binding references name component {comp}, \
                      but name '{}' has only {} components",
                     spec.id,
                     display_name(name),
