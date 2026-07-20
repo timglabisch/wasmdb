@@ -5,14 +5,18 @@
 //!
 //! ```text
 //!   PostEntry command  ──append──▶  ledger_log  ──fold──▶  balance
-//!   (Deposit/Withdraw)              (event log)  (BalanceFold) (derived)
+//!   (Deposit/Withdraw)   EntryPosted  (event log)  (BalanceFold) (derived)
 //! ```
 //!
+//! - A `PostEntry` command is a *request*; its optimistic effect is to
+//!   append one `EntryPosted` event to the log (its `execute_optimistic`
+//!   builds the row directly via `sync::append`). The command is not the
+//!   log row — the same append could be triggered by an HTTP API or an
+//!   MCP tool. Appending is an effect, not identity.
 //! - `ledger_log` (`#[projection_row]`) is the append-only event log:
-//!   one row per posted entry, `command_id` PK, partitioned by `account`.
-//!   A `PostEntry` command's whole optimistic effect is appending its own
-//!   row (design §4.4) — no hand-written derivation.
-//! - `BalanceFold` (`#[projection]`) folds each account's rows into a
+//!   one row per posted entry, `command_id` PK, partitioned by `account`,
+//!   the `EntryPosted` event in its payload.
+//! - `BalanceFold` (`#[projection]`) folds each account's events into a
 //!   running balance and writes the derived `balance` table. The engine
 //!   maintains it at the notify chokepoint, incrementally (design §9.3).
 //!

@@ -45,7 +45,7 @@ function useLedger(): LedgerRow[] {
       account: account as string,
       seq: seq as number,
       committed: (committed as number) !== 0,
-      // The payload IS the event: the RPC form of the PostEntry command.
+      // The payload is the EntryPosted event: { amount_cents }.
       amountCents: (JSON.parse(payload as string) as { amount_cents: number }).amount_cents,
     }),
   );

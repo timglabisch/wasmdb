@@ -2,14 +2,14 @@
 //! `command_id` and the partition column (inferred — no attribute
 //! argument); the macro appends `seq`, `committed` and `payload`,
 //! expands to a full `#[row]` and implements `tables::ProjectionLog`.
-//! `#[rpc_command(append_to = ...)]` with a `#[partition]` field marker
-//! fills exactly the generated shape.
+//! A hand-written append (`sync::append::{next_seq, append_row}` +
+//! `rpc_command::payload_json`) fills exactly the generated shape.
 
 use database::Database;
 use rpc_command::rpc_command;
 use sql_engine::storage::CellValue;
 use sql_engine::DbTable;
-use sync::command::Command;
+use sync::append::{append_row, next_seq};
 use tables::ProjectionLog;
 use tables_storage::{projection, projection_row, row};
 
@@ -19,12 +19,24 @@ pub struct DraftLog {
     pub doc_id: i64,
 }
 
-#[rpc_command(append_to = DraftLog)]
+/// The event carried in a `DraftLog` row's payload. A plain `#[rpc_command]`
+/// (a serializable request shape) — the log rows are appended by hand below.
+#[rpc_command]
 pub struct SetLinePrice {
     pub id: i64,
-    #[partition]
     pub doc_id: i64,
     pub price_cents: i64,
+}
+
+/// Append one event to `DraftLog` by hand — the pattern that replaced the
+/// generated `append_to` impl: provisional per-partition `seq`,
+/// `committed = 0` (off-chain), payload = the event's RPC form.
+fn append(db: &mut Database, command_id: i64, doc_id: i64, price_cents: i64) {
+    let partition = CellValue::from(doc_id);
+    let seq = next_seq::<DraftLog>(db, DraftLog::PARTITION_COLUMN, &partition).unwrap();
+    let payload =
+        rpc_command::payload_json(&SetLinePrice { id: command_id, doc_id, price_cents }).unwrap();
+    append_row(db, DraftLog { command_id, doc_id, seq, committed: 0, payload }).unwrap();
 }
 
 #[test]
@@ -63,16 +75,12 @@ fn log_row_roundtrips_through_cells() {
 }
 
 #[test]
-fn append_to_fills_the_generated_shape() {
+fn hand_written_append_fills_the_generated_shape() {
     let mut db = Database::new();
     db.register_table::<DraftLog>().unwrap();
 
-    SetLinePrice { id: 100, doc_id: 1, price_cents: 1500 }
-        .execute_optimistic(&mut db)
-        .unwrap();
-    SetLinePrice { id: 101, doc_id: 1, price_cents: 900 }
-        .execute_optimistic(&mut db)
-        .unwrap();
+    append(&mut db, 100, 1, 1500);
+    append(&mut db, 101, 1, 900);
 
     let t = db.table(DraftLog::TABLE).unwrap();
     let ncols = t.schema.columns.len();

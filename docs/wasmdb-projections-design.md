@@ -241,25 +241,49 @@ Output-Tabellen sind aus dem Aufruf nicht ableitbar: sie werden im
 Attribut deklariert (`outputs(...)`), damit die Registrierung
 Ownership + DAG prüfen kann, bevor je gerendert wird.
 
-### 4.4 Command-Seite: `append_to` (rpc-command-Familie)
+### 4.4 Command-Seite: Append im hand-geschriebenen `execute_optimistic`
 
 ```rust
-#[rpc_command(append_to = InvoiceDraftEvent)]
+#[rpc_command]
 pub struct SetLinePrice {
     pub id: Uuid,
-    #[partition]
     pub doc_id: Uuid,
     pub line_id: Uuid,
     pub price_cents: i64,
 }
+
+impl Command for SetLinePrice {
+    fn execute_optimistic(&self, db: &mut Database) -> Result<ZSet, CommandError> {
+        // Das Event, das im Log landet — ein eigener, serialisierbarer Typ,
+        // NICHT das Command selbst.
+        let event = LinePriceSet { line_id: self.line_id, price_cents: self.price_cents };
+        let partition = CellValue::from(self.doc_id);
+        let seq = sync::append::next_seq::<InvoiceDraftEvent>(
+            db, InvoiceDraftEvent::PARTITION_COLUMN, &partition)?;
+        sync::append::append_row(db, InvoiceDraftEvent {
+            command_id: self.id,
+            doc_id: self.doc_id,
+            seq,
+            committed: 0,
+            payload: rpc_command::payload_json(&event)?,
+        })
+    }
+}
 ```
 
-Der Enum-Macro emittiert den `execute_optimistic`-Arm: Row bauen
-(`command_id = id`, Partitionswert aus dem `#[partition]`-Feld,
-provisorische seq = max(seq der Partition)+1, `committed = false`,
-payload = serialisierte RPC-Form), Insert, +1-Row-ZSet zurück. Commands ohne `append_to` (CRUD-Vertical) behalten ihre Hand-Impl —
-Kriterium für die Doku: *Tabellen mit genau einem Schreiber darf das Command
-direkt schreiben; abgeleitete Tabellen nie.*
+Ein Command ist eine *Anfrage*, keine Log-Row. Das Anhängen eines Events an
+den Log ist eine Wirkung, die das Command in seinem `execute_optimistic`
+ausführt — über `sync::append::{next_seq, append_row}` +
+`rpc_command::payload_json`: Row bauen (`command_id = id`, Partitionswert,
+provisorische seq = max(seq der Partition)+1, `committed = false`, payload =
+serialisierte Event-Form), Insert, +1-Row-ZSet zurück.
+
+Das frühere `#[rpc_command(append_to = LogRow)]` + `#[partition]`-Marker
+verschmolz Command und Log-Row zu einem und wurde entfernt — der Weg ist nie
+gut: derselbe Append kann aus einem HTTP-API oder MCP-Tool kommen, nicht nur
+aus einem RPC-Command, und das geloggte *Event* ist nicht dasselbe wie das
+*Command*. Kriterium unverändert: *Tabellen mit genau einem Schreiber darf
+das Command direkt schreiben; abgeleitete Tabellen nie.*
 
 Log-Row-Schema (Konvention, als `#[row]` im Produkt):
 `(command_id PK, <partition>, seq, committed, payload[, parent, chain_hash])`.
@@ -881,7 +905,10 @@ unverändert.
 - `crates/core/database/src/execute/apply.rs` — `apply_zset`-Semantik.
 - `crates/requirements/src/store/slot.rs` — SlotKind/Lifecycle/Status.
 - `crates/tables/tables-codegen/src/emit.rs` — `register_all_tables`-Muster.
-- `crates/rpc-command/rpc-command/src/lib.rs` — Macro-Familie für `append_to`.
+- `crates/rpc-command/rpc-command/src/lib.rs` — Macro-Familie
+  (`#[rpc_command]`, `#[rpc_command_enum]`) + `payload_json`.
+- `crates/sync/sync/src/append.rs` — Append-Primitive (`next_seq`,
+  `append_row`) für hand-geschriebene `execute_optimistic`.
 - `crates/sync/sync-client/src/wasm/mod.rs` — `define_wasm_api!`.
 - `examples/invoice-demo/` — Referenz-DX (BlurInput → patch → execute;
   `shared/domain/*/command/*.rs`; `frontend/apps/wasm/src/lib.rs`).

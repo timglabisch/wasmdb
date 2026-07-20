@@ -1,12 +1,14 @@
-//! The standard optimistic execution for event-append commands.
+//! Building blocks for the optimistic execution of event-append commands.
 //!
-//! An event-append command's entire optimistic effect is ONE new row in
+//! An event-append command's whole optimistic effect is ONE new row in
 //! its log table (`docs/wasmdb-projections-design.md` §4.4): derived
 //! state is the projection engine's job, and because every command is
 //! its own disjoint row, the sync layer's invert-based reconcile stays
-//! correct. `#[rpc_command(append_to = <LogRow>)]` with a `#[partition]`
-//! field marker emits an `execute_optimistic` built from these helpers;
-//! hand-written commands can use them directly.
+//! correct. A command hand-writes `execute_optimistic` and appends its
+//! event through these helpers (`next_seq` + `append_row`, with
+//! `rpc_command::payload_json` for the payload) — appending is an effect
+//! the command performs, not its identity, so the same call can come from
+//! any trigger (an HTTP API, an MCP tool).
 
 use database::Database;
 use sql_engine::storage::{CellValue, ZSet};

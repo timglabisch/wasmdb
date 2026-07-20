@@ -3,8 +3,7 @@ use tables::ProjectionLog;
 use tables_storage::projection;
 
 use super::balance::Balance;
-use super::command::post_entry::PostEntry;
-use super::ledger_log::LedgerLog;
+use super::ledger_log::{EntryPosted, LedgerLog};
 
 /// The fold state for one account's ledger. The projection is implemented
 /// ON its state type (the cqrs-es Aggregate idiom): `apply` replays one
@@ -21,12 +20,13 @@ pub struct BalanceFold {
 
 #[projection(outputs(Balance))]
 impl BalanceFold {
-    /// Replay one ledger event. The row's `payload` is the RPC form of
-    /// the `PostEntry` that produced it — decode it back and accumulate.
+    /// Replay one ledger event. The `account` is a structural column of
+    /// the log row (the partition); the signed amount is the `EntryPosted`
+    /// event carried in the payload — decode it and accumulate.
     fn apply(&mut self, row: &LedgerLog) -> Result<(), String> {
-        let entry: PostEntry = row.decode()?;
-        self.account = entry.account;
-        self.balance_cents += entry.amount_cents;
+        let event: EntryPosted = row.decode()?;
+        self.account = row.account.clone();
+        self.balance_cents += event.amount_cents;
         self.entries += 1;
         Ok(())
     }

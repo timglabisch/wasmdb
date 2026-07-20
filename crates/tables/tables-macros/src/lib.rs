@@ -357,7 +357,7 @@ pub fn projection(args: TokenStream, input: TokenStream) -> TokenStream {
 /// The struct declares only `command_id` (i64 or Uuid — becomes the PK)
 /// and ONE further field: the partition column, the log's stream
 /// identity. The macro appends the bookkeeping columns `seq: i64`,
-/// `committed: i64` and `payload: String` (the command's RPC form),
+/// `committed: i64` and `payload: String` (the event's RPC form),
 /// expands to a full `#[row]`, and implements `tables::ProjectionLog`
 /// (PARTITION_COLUMN + the fold helpers
 /// `decode`/`is_committed`/`in_fold_order`). Event content lives in the
@@ -373,9 +373,10 @@ pub fn projection(args: TokenStream, input: TokenStream) -> TokenStream {
 /// //   command_id (PK), doc_id, seq, committed, payload
 /// ```
 ///
-/// `#[rpc_command(append_to = DraftLog)]` plus a `#[partition]` marker on
-/// the command field fills exactly this shape — the former hand-written
-/// convention row is generated code now.
+/// A command hand-writes `execute_optimistic` and fills exactly this
+/// shape through `sync::append::{next_seq, append_row}` +
+/// `rpc_command::payload_json` — appending an event is an effect the
+/// command performs, not the command's identity.
 #[proc_macro_attribute]
 pub fn projection_row(args: TokenStream, input: TokenStream) -> TokenStream {
     let item = parse_macro_input!(input as syn::Item);

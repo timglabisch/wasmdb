@@ -15,12 +15,13 @@
 
 pub use rpc_command_derive::{rpc_command, rpc_command_enum};
 
-/// Serialize a command into its wire-shaped JSON payload string. Used by
-/// the `append_to`-generated `execute_optimistic` to fill the log row's
-/// `payload` column — the log stores the RPC form of the command, so
-/// server and client can both fold it.
-pub fn payload_json<T: serde::Serialize>(command: &T) -> Result<String, String> {
-    serde_json::to_string(command).map_err(|e| format!("serialize command payload: {e}"))
+/// Serialize an event into its wire-shaped JSON payload string. A
+/// hand-written `execute_optimistic` uses it to fill a projection log
+/// row's `payload` column (alongside `sync::append::{next_seq,
+/// append_row}`): the log stores the RPC form of the event, so server and
+/// client can both fold it.
+pub fn payload_json<T: serde::Serialize>(event: &T) -> Result<String, String> {
+    serde_json::to_string(event).map_err(|e| format!("serialize event payload: {e}"))
 }
 
 /// One auto-filled field of a command: the field name (snake_case, as in

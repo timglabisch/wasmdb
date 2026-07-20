@@ -14,10 +14,14 @@ automatically from an append-only event log.
 - **`#[projection_row]`** (`shared/domain/src/ledger/ledger_log.rs`) — the
   append-only event log `ledger_log`. You declare only the identity
   (`command_id` PK + the `account` partition); the macro generates the
-  `seq` / `committed` / `payload` bookkeeping.
-- **`#[rpc_command(append_to = LedgerLog)]`** (`.../command/post_entry.rs`)
-  — a command whose entire optimistic effect is appending its own log row.
-  No hand-written derivation.
+  `seq` / `committed` / `payload` bookkeeping. The payload holds the
+  domain event `EntryPosted`.
+- **`#[rpc_command]`** (`.../command/post_entry.rs`) — `PostEntry` is a
+  *request*, not a log row. Its `execute_optimistic` builds the log row
+  directly (`sync::append::{next_seq, append_row}` + `payload_json`) and
+  appends an `EntryPosted` event. Appending is an effect the command
+  performs, not the command's identity — so any other entry point (an HTTP
+  API, an MCP tool) can perform the same append.
 - **`#[projection]`** (`.../balance_fold.rs`) — `BalanceFold` is
   implemented *on its own state type* (the cqrs-es Aggregate idiom):
   `apply` replays one log row, `render` projects the accumulated state

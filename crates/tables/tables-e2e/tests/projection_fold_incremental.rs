@@ -23,10 +23,11 @@ pub struct DraftLog {
     pub doc_id: i64,
 }
 
-#[rpc_command(append_to = DraftLog)]
+/// The event carried in a `DraftLog` row's payload. A plain `#[rpc_command]`
+/// (a serializable request shape); the fixture builds log rows directly.
+#[rpc_command]
 pub struct SetLinePrice {
     pub id: i64,
-    #[partition]
     pub doc_id: i64,
     pub price_cents: i64,
 }

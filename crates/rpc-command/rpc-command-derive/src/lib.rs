@@ -13,56 +13,24 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{parse_macro_input, Expr, Fields, Ident, ItemEnum, ItemStruct, Lit, LitStr, Meta, Token};
+use syn::{parse_macro_input, Expr, Fields, ItemEnum, ItemStruct, Lit, LitStr, Meta, Token};
 
 // ── #[rpc_command] ────────────────────────────────────────────────────────
 
-/// Optional struct-level argument: `append_to = <LogRowType>`. When
-/// present, the macro also emits the standard event-append `impl Command`
-/// (see `sync::append`); the field carrying the log's partition value is
-/// marked `#[partition]` on the struct.
-struct CommandArgs {
-    append_to: Option<syn::Path>,
-}
-
-impl Parse for CommandArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut append_to: Option<syn::Path> = None;
-        while !input.is_empty() {
-            let ident: Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            match ident.to_string().as_str() {
-                "append_to" => append_to = Some(input.parse()?),
-                "key" => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        "rpc_command: `key = ...` was replaced by a `#[partition]` \
-                         field marker — mark the field that carries the log's \
-                         partition value",
-                    ));
-                }
-                other => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        format!(
-                            "rpc_command: unknown key `{other}` — expected \
-                             `append_to = <LogRowType>`"
-                        ),
-                    ));
-                }
-            }
-            if input.is_empty() {
-                break;
-            }
-            let _: Token![,] = input.parse()?;
-        }
-        Ok(Self { append_to })
-    }
-}
-
+/// `#[rpc_command]` takes no arguments. It adds the standard derive bundle
+/// and emits the `__RPC_COMMAND_SPEC` the enum-level macro consumes.
+///
+/// A command is a *request*, not a log row. Appending an event to a
+/// projection log is an effect a command performs in a hand-written
+/// `execute_optimistic` — via `sync::append::{next_seq, append_row}` plus
+/// `rpc_command::payload_json` — not something a macro argument fuses into
+/// the command's identity. (The retired `append_to = <LogRow>` did the
+/// latter; it is gone, and so is the `#[partition]` field marker.)
 #[proc_macro_attribute]
 pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as CommandArgs);
+    if let Some(err) = reject_command_args(attr) {
+        return err;
+    }
     let mut s = parse_macro_input!(item as ItemStruct);
     let struct_name = s.ident.clone();
     let struct_name_str = struct_name.to_string();
@@ -70,7 +38,6 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut input_fields: Vec<String> = Vec::new();
     let mut auto_fields: Vec<(String, String)> = Vec::new();
-    let mut partition_fields: Vec<Ident> = Vec::new();
 
     for f in s.fields.iter_mut() {
         let name = match &f.ident {
@@ -85,7 +52,6 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         };
         let mut default_expr: Option<String> = None;
-        let mut is_partition = false;
         let mut err: Option<syn::Error> = None;
         f.attrs.retain(|a| {
             if a.path().is_ident("client_default") {
@@ -101,7 +67,12 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
                 ));
                 true
             } else if a.path().is_ident("partition") {
-                is_partition = true;
+                err = Some(syn::Error::new_spanned(
+                    a,
+                    "rpc_command: `#[partition]` was removed together with `append_to` — \
+                     a command is not a log row. Append events by hand in \
+                     `execute_optimistic` using `sync::append::{next_seq, append_row}`.",
+                ));
                 false
             } else {
                 true
@@ -110,33 +81,10 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
         if let Some(e) = err {
             return e.to_compile_error().into();
         }
-        if is_partition {
-            partition_fields.push(f.ident.clone().expect("named field checked above"));
-        }
         match default_expr {
             Some(e) => auto_fields.push((name, e)),
             None => input_fields.push(name),
         }
-    }
-
-    if args.append_to.is_none() {
-        if let Some(marked) = partition_fields.first() {
-            return syn::Error::new_spanned(
-                marked,
-                "rpc_command: `#[partition]` only applies to `append_to` commands",
-            )
-            .to_compile_error()
-            .into();
-        }
-    }
-    if args.append_to.is_some() && partition_fields.len() != 1 {
-        return syn::Error::new_spanned(
-            &s.ident,
-            "rpc_command: `append_to` needs exactly one `#[partition]` field — \
-             the field that carries the log's partition value",
-        )
-        .to_compile_error()
-        .into();
     }
 
     let camel_lit = LitStr::new(&camel_fn, proc_macro2::Span::call_site());
@@ -155,51 +103,6 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
         .collect();
 
     let export_path_lit = ts_export_path_lit();
-
-    // The event-append optimistic impl (design §4.4): the command's whole
-    // optimistic effect is ONE log row — command_id = self.id, the
-    // `#[partition]` field, a provisional seq, committed = 0 (off-chain
-    // until the server assigns the authoritative seq), payload = the
-    // command's RPC form as JSON. A log row type not matching this shape
-    // fails to compile at the struct literal below, naming the missing
-    // field — including a `#[partition]` marker on a field the log does
-    // not have. The shape is what `#[projection_row]` generates (M6a).
-    let command_impl = match &args.append_to {
-        Some(log_row) => {
-            let partition = &partition_fields[0];
-            let partition_lit =
-                LitStr::new(&partition.to_string(), proc_macro2::Span::call_site());
-            quote! {
-                impl ::sync::command::Command for #struct_name {
-                    fn execute_optimistic(
-                        &self,
-                        db: &mut ::database::Database,
-                    ) -> ::core::result::Result<
-                        ::sync::zset::ZSet,
-                        ::sync::command::CommandError,
-                    > {
-                        let __partition_cell: ::sql_engine::storage::CellValue =
-                            ::core::convert::From::from(
-                                ::core::clone::Clone::clone(&self.#partition),
-                            );
-                        let __payload = ::rpc_command::payload_json(self)
-                            .map_err(::sync::command::CommandError::ExecutionFailed)?;
-                        let __seq = ::sync::append::next_seq::<#log_row>(
-                            db, #partition_lit, &__partition_cell,
-                        )?;
-                        ::sync::append::append_row(db, #log_row {
-                            command_id: ::core::clone::Clone::clone(&self.id),
-                            #partition: ::core::clone::Clone::clone(&self.#partition),
-                            seq: __seq,
-                            committed: 0,
-                            payload: __payload,
-                        })
-                    }
-                }
-            }
-        }
-        None => quote! {},
-    };
 
     let expanded = quote! {
         #[derive(
@@ -224,10 +127,30 @@ pub fn rpc_command(attr: TokenStream, item: TokenStream) -> TokenStream {
                     auto: &[#( (#auto_name_lits, #auto_expr_lits) ),*],
                 };
         }
-
-        #command_impl
     };
     expanded.into()
+}
+
+/// `#[rpc_command]` takes no arguments. Rejects any — with a pointed
+/// message for the retired `append_to = ...` and `key = ...`.
+fn reject_command_args(attr: TokenStream) -> Option<TokenStream> {
+    let ts = proc_macro2::TokenStream::from(attr);
+    if ts.is_empty() {
+        return None;
+    }
+    let head = ts.to_string();
+    let head = head.trim_start();
+    let msg = if head.starts_with("append_to") {
+        "rpc_command: `append_to` was removed. A command is a request, not a \
+         log row — write `execute_optimistic` by hand and append the event via \
+         `sync::append::{next_seq, append_row}` + `rpc_command::payload_json`."
+    } else if head.starts_with("key") {
+        "rpc_command: `key = ...` was removed — commands hand-write \
+         `execute_optimistic`; the partition lives on the log row, not the command."
+    } else {
+        "rpc_command: takes no arguments"
+    };
+    Some(syn::Error::new_spanned(&ts, msg).to_compile_error().into())
 }
 
 // ── #[rpc_command_enum] ───────────────────────────────────────────────────
