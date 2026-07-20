@@ -100,3 +100,18 @@ button.chip { padding: .2rem .6rem; color: #56607a; }
 .quick { font-size: .72rem; color: #9aa3b2; }
 button.chip.foreign { border-color: #7a5cc0; color: #7a5cc0; }
 .repair-status { font-size: .74rem; color: #7a5cc0; }
+
+/* Demand projection panel (design §12) */
+.hint { color: #56607a; font-size: .78rem; line-height: 1.5; margin: 0 0 .6rem; max-width: 78ch; }
+button.chip.active { border-color: #1a7f4b; color: #1a7f4b; background: #e6f4ec; }
+.activity-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: baseline;
+  padding: .45rem .5rem;
+  margin-top: .5rem;
+  border: 1px solid #eceef3;
+  border-radius: 4px;
+  font-size: .85rem;
+}

@@ -1,4 +1,11 @@
-import { bootstrap, execute, nextId, repairChain } from '@wasmdb/client';
+import {
+  activateProjection,
+  bootstrap,
+  deactivateProjection,
+  execute,
+  nextId,
+  repairChain,
+} from '@wasmdb/client';
 import { postEntry } from 'projection-demo-generated/ProjectionDemoCommandFactories';
 
 /**
@@ -31,4 +38,19 @@ export async function foreignWriteCarol(): Promise<number> {
   const res = await fetch('/foreign-write', { method: 'POST' });
   if (!res.ok) throw new Error(`foreign-write failed: ${res.status}`);
   return bootstrap('ledger_log');
+}
+
+/**
+ * Activate the demand-driven `activity` instance for one account (design
+ * §12): the engine materializes `account_activity` for exactly this
+ * account from local data and keeps it in sync until deactivated. The
+ * instance name is ONE compound identifier — `['account', <name>]`.
+ */
+export function activateAccountActivity(account: string): void {
+  activateProjection('activity', ['account', account]);
+}
+
+/** Release the account's `activity` instance; its output row is retracted. */
+export function deactivateAccountActivity(account: string): void {
+  deactivateProjection('activity', ['account', account]);
 }

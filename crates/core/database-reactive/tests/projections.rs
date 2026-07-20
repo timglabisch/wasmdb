@@ -315,3 +315,179 @@ fn replace_data_resets_and_rederives() {
     assert_eq!(totals_rows(&rdb), vec![vec![i64v(7), i64v(3)]]);
     assert!(rdb.take_projection_events().is_empty());
 }
+
+// ── Dynamic instances (§12): activate/deactivate through the reactive DB ─
+
+use database_projection::{DynamicProjection, DynamicSpec, FootprintSource};
+
+const DDL_DYN: &str = "CREATE TABLE events (
+        command_id I64 NOT NULL PRIMARY KEY,
+        doc_id I64 NOT NULL,
+        seq I64 NOT NULL,
+        val I64 NOT NULL,
+        INDEX idx_doc (doc_id)
+    );
+    CREATE TABLE totals (
+        doc_id I64 NOT NULL PRIMARY KEY,
+        amount I64 NOT NULL
+    );
+    CREATE TABLE doc_activity (
+        doc_id I64 NOT NULL PRIMARY KEY,
+        entries I64 NOT NULL,
+        amount I64 NOT NULL
+    );";
+
+/// events(command_id, doc_id, seq, val) → doc_activity(doc_id, entries,
+/// amount), demand-activated per document. Name = [Str("doc"), I64(<id>)]:
+/// component 0 is a namespace discriminator, component 1 binds doc_id.
+struct DocActivity;
+
+impl DynamicProjection for DocActivity {
+    fn spec(&self) -> DynamicSpec {
+        DynamicSpec {
+            id: "doc_activity".into(),
+            sources: vec![FootprintSource { table: "events".into(), bind: vec![(1, 1)] }],
+            reads: vec![],
+            outputs: vec!["doc_activity".into()],
+        }
+    }
+
+    fn project(
+        &self,
+        name: &[CellValue],
+        inputs: &Inputs,
+        _ctx: &ReadCtx<'_>,
+        _cache: &mut FoldCache,
+    ) -> Result<Vec<OutputRow>, String> {
+        let rows = inputs.rows("events");
+        let mut sum = 0i64;
+        for row in rows {
+            let CellValue::I64(v) = row[3] else {
+                return Err("val must be I64".into());
+            };
+            sum += v;
+        }
+        Ok(vec![(
+            "doc_activity".to_string(),
+            vec![name[1].clone(), i64v(rows.len() as i64), i64v(sum)],
+        )])
+    }
+}
+
+fn dynamic_setup() -> ReactiveDatabase {
+    let mut db = Database::new();
+    db.execute_ddl(DDL_DYN).unwrap();
+    let mut rdb = ReactiveDatabase::from_database(db);
+    let mut engine = ProjectionEngine::new();
+    engine.register(Box::new(Totals)).unwrap();
+    engine.register_dynamic(Box::new(DocActivity)).unwrap();
+    rdb.install_projections(engine);
+    rdb
+}
+
+fn doc_name(doc: i64) -> Vec<CellValue> {
+    vec![CellValue::Str("doc".into()), i64v(doc)]
+}
+
+fn activity_rows(rdb: &ReactiveDatabase) -> Vec<Vec<CellValue>> {
+    let t = rdb.db().table("doc_activity").unwrap();
+    let ncols = t.schema.columns.len();
+    let mut rows: Vec<Vec<CellValue>> = t
+        .row_ids()
+        .map(|r| (0..ncols).map(|c| t.get(r, c)).collect())
+        .collect();
+    rows.sort();
+    rows
+}
+
+#[test]
+fn activate_materializes_and_notifies_output_subscribers() {
+    let mut rdb = dynamic_setup();
+    rdb.apply_zset(&event_zset(100, 1, 0, 10)).unwrap();
+    rdb.apply_zset(&event_zset(101, 2, 0, 5)).unwrap();
+
+    let (_handle, sub_id) = rdb
+        .subscribe("SELECT REACTIVE(doc_activity.doc_id) AS inv, doc_activity.amount FROM doc_activity")
+        .unwrap();
+
+    rdb.activate_projection("doc_activity", doc_name(1)).unwrap();
+
+    // Exactly the named instance materialized; doc 2 stays out.
+    assert_eq!(activity_rows(&rdb), vec![vec![i64v(1), i64v(1), i64v(10)]]);
+    assert!(rdb.take_projection_events().is_empty());
+
+    // The activation delta reached the output-table subscription.
+    let n = rdb.next_dirty().expect("subscription must be dirty after activate");
+    assert_eq!(n.sub_id, sub_id);
+    assert!(rdb.next_dirty().is_none());
+}
+
+#[test]
+fn source_mutation_updates_instance_in_one_notification() {
+    let mut rdb = dynamic_setup();
+    rdb.apply_zset(&event_zset(100, 1, 0, 10)).unwrap();
+    rdb.activate_projection("doc_activity", doc_name(1)).unwrap();
+    while rdb.next_dirty().is_some() {}
+
+    let (_handle, sub_id) = rdb
+        .subscribe("SELECT REACTIVE(doc_activity.doc_id) AS inv, doc_activity.amount FROM doc_activity")
+        .unwrap();
+
+    rdb.execute_mut("INSERT INTO events (command_id, doc_id, seq, val) VALUES (101, 1, 1, 32)")
+        .unwrap();
+
+    // Source and derived instance are consistent within ONE cycle.
+    assert_eq!(activity_rows(&rdb), vec![vec![i64v(1), i64v(2), i64v(42)]]);
+    let n = rdb.next_dirty().expect("one notification");
+    assert_eq!(n.sub_id, sub_id);
+    assert!(rdb.next_dirty().is_none(), "no second wave");
+
+    // Static projection derived in the same pass, untouched by dynamics.
+    assert_eq!(totals_rows(&rdb), vec![vec![i64v(1), i64v(42)]]);
+}
+
+#[test]
+fn deactivate_retracts_and_notifies() {
+    let mut rdb = dynamic_setup();
+    rdb.apply_zset(&event_zset(100, 1, 0, 10)).unwrap();
+    rdb.activate_projection("doc_activity", doc_name(1)).unwrap();
+    while rdb.next_dirty().is_some() {}
+
+    let (_handle, sub_id) = rdb
+        .subscribe("SELECT REACTIVE(doc_activity.doc_id) AS inv, doc_activity.amount FROM doc_activity")
+        .unwrap();
+
+    rdb.deactivate_projection("doc_activity", &doc_name(1)).unwrap();
+
+    assert!(activity_rows(&rdb).is_empty());
+    let n = rdb.next_dirty().expect("retraction must notify");
+    assert_eq!(n.sub_id, sub_id);
+
+    // Unknown instance is an embedder error.
+    assert!(rdb.deactivate_projection("doc_activity", &doc_name(1)).is_err());
+}
+
+#[test]
+fn replace_data_rematerializes_active_instances() {
+    let mut rdb = dynamic_setup();
+    rdb.apply_zset(&event_zset(100, 1, 0, 10)).unwrap();
+    rdb.activate_projection("doc_activity", doc_name(1)).unwrap();
+    assert_eq!(activity_rows(&rdb), vec![vec![i64v(1), i64v(1), i64v(10)]]);
+
+    // Wholesale replacement with different contents for doc 1.
+    let mut other = Database::new();
+    other.execute_ddl(DDL_DYN).unwrap();
+    other.apply_zset(&event_zset(500, 1, 0, 7)).unwrap();
+    other.apply_zset(&event_zset(501, 1, 1, 3)).unwrap();
+    rdb.replace_data(&other);
+    rdb.notify_all();
+
+    // The activation survived the swap; the render reflects the new data.
+    assert_eq!(activity_rows(&rdb), vec![vec![i64v(1), i64v(2), i64v(10)]]);
+    assert!(rdb.take_projection_events().is_empty());
+
+    // And it is still live: a new event keeps flowing in.
+    rdb.execute_mut("INSERT INTO events (command_id, doc_id, seq, val) VALUES (502, 1, 2, 5)")
+        .unwrap();
+    assert_eq!(activity_rows(&rdb), vec![vec![i64v(1), i64v(3), i64v(15)]]);
+}

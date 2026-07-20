@@ -10,16 +10,30 @@
 
 #[cfg(target_arch = "wasm32")]
 mod app {
+    use projection_demo_domain::ledger::activity_fold::ActivityFold;
     use projection_demo_domain::ProjectionDemoCommand;
 
     mod generated {
         include!(concat!(env!("OUT_DIR"), "/generated.rs"));
     }
 
+    /// The generated engine (static `#[projection]` folds) plus the
+    /// hand-registered dynamic `activity` template (design §12 — codegen
+    /// does not pick `#[dynamic_projection]` impls up, so the wrapper adds
+    /// it here). Instances are driven from JS via `projection_activate` /
+    /// `projection_deactivate`.
+    fn projections() -> sync_client::database_projection::ProjectionEngine {
+        let mut engine = generated::register_all_projections();
+        engine
+            .register_dynamic(Box::new(ActivityFold::default()))
+            .expect("register dynamic projection ActivityFold");
+        engine
+    }
+
     sync_client::define_wasm_api!(
         command = ProjectionDemoCommand,
         setup_db = generated::register_all_tables,
         register_requirements = generated::register_all_requirements,
-        projections = generated::register_all_projections,
+        projections = projections,
     );
 }

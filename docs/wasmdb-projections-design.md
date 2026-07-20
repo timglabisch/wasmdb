@@ -1099,3 +1099,76 @@ der Parent-Zeiger.
 `command_id: Uuid` (die Parent-Links referenzieren es) — ein `i64`-`command_id`
 ist ein Kompilierfehler mit gezielter Meldung. `seq` entfällt ersatzlos (kein
 Debug-/Anzeigefeld).
+
+## 12. Demand-getriebene Projektions-Instanzen (activate/disable)
+
+**Status:** UMGESETZT (inkl. `#[dynamic_projection]`-Macro: derselbe
+`apply`/`render`-Fold-Vertrag wie `#[projection]`, geteilter Shim inkl.
+Committed-Prefix-Memo; Footprint via `bind(spalte = namens_komponente)`).
+Ausbaustufen: Codegen-Registrierung der Templates, Uuid-Namen über JS,
+Server-Fetch. Vollständige Handoff-Checkliste mit Code-Ankern:
+`docs/wasmdb-dynamic-projections-plan.md`. Demo: „Account detail"-Panel in
+`examples/projection-demo` (`ActivityFold` → `account_activity`).
+
+### 12.1 Problem & Kernidee
+
+Der statische Pfad materialisiert nach **data presence**: eine Partition
+existiert im Output, sobald ihre Source-Rows lokal liegen (§4). Bei 10k
+Entities, von denen der Nutzer eines anklickt, ist das falsch herum — alles
+wird gefaltet, obwohl nur eines beobachtet wird.
+
+Dynamische Projektionen drehen den Lifecycle auf **demand**: Eine
+**Instanz** = (Template-Id, Verbund-Name) wird explizit aktiviert
+(`activate("activity", ['account', 'carol'])`) und deaktiviert. Der Name ist
+EIN eindeutiger zusammengesetzter Bezeichner (`Vec<CellValue>`), kein Array
+mehrerer Slices. Aktivierung refcountet; bei 0 werden die Output-Rows
+zurückgezogen und das Memo verworfen. Source-Rows bleiben liegen
+(Cache-Policy, bewusst v1).
+
+Die Form der Projektion bleibt die heutige: Fold bekommt jede Source-Row
+der Instanz, schreibt in eine owned Tabelle. Nur WANN materialisiert wird,
+ändert sich.
+
+### 12.2 Footprint & Routing
+
+Pro Source-Tabelle deklariert das Template Gleichheits-Bindings
+`(spalten_idx, namens_komponenten_idx)` — eine Row gehört zur Instanz, wenn
+`row[col] == name[comp]` für alle Bindings. Das kompiliert zu exakt der
+Condition-Struktur der Query-Subscriptions (`OptimizedReactiveCondition`:
+IndexLookup-Composite-Key + Verify-AND-Kette). Die Engine hält dafür eine
+**eigene** `SubscriptionRegistry`-Instanz; `sql-engine` wird als
+Routing-Bibliothek benutzt und braucht **null Änderungen**.
+
+Routing-Kosten hängen an der Zahl der Key-*Shapes*, nicht der Instanzen:
+10k aktive Instanzen mit gleichem Footprint-Muster kosten pro Mutation eine
+Hash-Probe (Reverse-Index), nicht 10k Checks.
+
+### 12.3 Identifikation vs. Auflösung
+
+Der Split ist derselbe wie bei Query-Subscriptions — nur die Auflösung
+unterscheidet sich:
+
+|  | Query-Subscription | Dynamische Projektions-Instanz |
+|---|---|---|
+| Identifikation (WER ist betroffen) | `on_zset`: Reverse-Index-Probe → Verify auf der Row | identisch (dieselbe freie Funktion, eigene Registry) |
+| Auflösung (WAS ist das neue Ergebnis) | lazy — Consumer führt sein volles SELECT erneut aus | eager im Derive-Pass — Row-Gather (`rows_matching`), memoisierter Fold (`FoldCache`), `multiset_diff` gegen `last_render` |
+| Ergebnis-Kanal | DirtySet → Pull-API | Delta in DERSELBEN Notification wie der Auslöser (same-batch atomicity) |
+
+### 12.4 Regeln (v1)
+
+- **DAG-Blätter:** Outputs dynamischer Templates dürfen nicht Source/Read
+  irgendeiner Projektion sein (Registrierung lehnt ab). Ihre Sources DÜRFEN
+  statische Outputs sein — sie laufen nach dem statischen Topo-Pass über
+  das akkumulierte Delta.
+- **`reads` grob wie statisch:** Änderung an einer Read-Tabelle re-rendert
+  alle aktiven Instanzen des Templates.
+- **Leerer Footprint bei activate ⇒ Instanz bleibt AKTIV** mit leerem
+  Render (demand, nicht data-presence) — ein späterer Insert materialisiert.
+- **Kein Server-Fetch in der Engine:** materialisiert wird über lokale
+  Daten; fehlende Rows holen ist Sache der sync-Schicht (Stufe 3).
+- **activate/deactivate dispatchen ihr Delta direkt an die Subscriber**,
+  NICHT durch `notify()` — deren Derive-Pass würde auf einem Delta laufen,
+  das owned Tables berührt (guard).
+- **`replace_data` überlebt Instanzen:** Registrierungen und Refcounts
+  liegen in der Engine, `reset_and_rederive` re-materialisiert alle aktiven
+  Instanzen aus den neuen Source-Daten.

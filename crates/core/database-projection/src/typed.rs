@@ -35,6 +35,23 @@ pub fn partition_column_index<R: DbTable>(partition: &str) -> usize {
         })
 }
 
+/// Resolve the column index of a footprint-bound column in `R`'s schema
+/// (§12). Called at `spec()` construction inside `#[dynamic_projection]`'s
+/// shim; a missing column is a wiring error in the registering product, so
+/// it panics with a pointed message rather than surfacing per-derive.
+pub fn column_index<R: DbTable>(column: &str) -> usize {
+    R::schema()
+        .columns
+        .iter()
+        .position(|c| c.name == column)
+        .unwrap_or_else(|| {
+            panic!(
+                "dynamic projection source table '{}' has no bound column '{column}'",
+                R::TABLE
+            )
+        })
+}
+
 /// Memo of the fold over a partition's COMMITTED prefix (§9.3 / §11):
 /// `state` is the fold of exactly the committed rows whose command ids are
 /// `committed_ids`, in server-chain order (from `ROOT_PARENT` forward).

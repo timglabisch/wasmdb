@@ -33,6 +33,9 @@ ts-rs = { version = "12", features = ["serde-compat"] }
 [dev-dependencies]
 database = { workspace = true, features = ["borsh"] }
 database-projection = { workspace = true }
+# Host test of the demand-driven `activity` template against the real
+# `ReactiveDatabase` (`tests/dynamic_projection.rs`). Dev-only.
+database-reactive = { workspace = true }
 sql-engine = { workspace = true, features = ["borsh", "serde"] }
 sync = { workspace = true }
 # Host-drives the real gap-repair core (`missing_parents`) against the demo

@@ -28,15 +28,22 @@
 //! database-reactive`. The `kernel` modules ([`spec`], [`diff`],
 //! [`engine`]) are database-free and programmed against [`RowReader`] /
 //! [`ProjectionHost`]; [`db_host`] adapts the real [`database::Database`].
+//! For demand-driven instances (§12, [`dynamic`]) the engine additionally
+//! uses `sql_engine::reactive` as a routing library — identification of
+//! affected instances shares the candidates→verify machinery with query
+//! subscriptions (via the engine's OWN registry), resolution stays the
+//! engine's gather + memoized fold + diff.
 
 mod diff;
 mod engine;
 mod spec;
 
 pub mod db_host;
+pub mod dynamic;
 pub mod typed;
 
 pub use diff::multiset_diff;
+pub use dynamic::{DynamicProjection, DynamicSpec, FootprintSource, InstanceName};
 pub use engine::{DeriveFailure, DeriveOutcome, ProjectionEngine, RegisterError};
 pub use spec::{
     FoldCache, Inputs, OutputRow, OwnershipViolation, PartitionedSource, Projection,

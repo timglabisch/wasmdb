@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { bootstrap, useQuery, useWasm } from '@wasmdb/client';
 import { DebugToolbar } from '@wasmdb/debug-toolbar';
-import { post, foreignWriteCarol } from './commands';
+import {
+  activateAccountActivity,
+  deactivateAccountActivity,
+  post,
+  foreignWriteCarol,
+} from './commands';
 import './index.css';
 
 // ── Derived read model: `balance`, maintained by BalanceFold ─────────
@@ -192,6 +197,122 @@ function Ledger({ rows }: { rows: LedgerRow[] }) {
 
 const ACCOUNTS = ['alice', 'bob', 'carol'];
 
+// ── Demand projection: `account_activity`, activated per account (§12) ─
+
+interface ActivityRow {
+  account: string;
+  deposits: number;
+  withdrawals: number;
+  largestCents: number;
+}
+
+// The toggles survive F5 in localStorage; the wasm-side instances do NOT
+// (client memory) — the panel re-activates the stored accounts on mount
+// once the bootstrap has run.
+const ACTIVITY_STORAGE_KEY = 'projection-demo.activity-active';
+
+function loadActiveAccounts(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ACTIVITY_STORAGE_KEY) ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** One activated instance: holds the activation for its lifetime and
+ *  renders the materialized `account_activity` row reactively. */
+function ActivityInstance({ account, booted }: { account: string; booted: boolean }) {
+  // Activate after the bootstrap so the initial fold sees the pulled
+  // history; deactivate (refcounted, retracts the row) on unmount/toggle.
+  useEffect(() => {
+    if (!booted) return;
+    activateAccountActivity(account);
+    return () => deactivateAccountActivity(account);
+  }, [account, booted]);
+
+  const rows = useQuery<ActivityRow>(
+    'SELECT REACTIVE(account_activity.account), account_activity.account,' +
+      ' account_activity.deposits, account_activity.withdrawals, account_activity.largest_cents' +
+      ' FROM account_activity WHERE account_activity.account = :account',
+    // col 0 is the REACTIVE(...) marker that binds the subscription; skip it.
+    ([, acct, deposits, withdrawals, largestCents]) => ({
+      account: acct as string,
+      deposits: deposits as number,
+      withdrawals: withdrawals as number,
+      largestCents: largestCents as number,
+    }),
+    { account },
+  );
+  const row = rows[0];
+
+  return (
+    <div className="activity-card">
+      <span className="acct">{account}</span>
+      {row ? (
+        <>
+          <span className="muted">
+            {row.deposits} deposit{row.deposits === 1 ? '' : 's'} ·{' '}
+            {row.withdrawals} withdrawal{row.withdrawals === 1 ? '' : 's'}
+          </span>
+          <span className={`amount ${row.largestCents < 0 ? 'neg' : 'pos'}`}>
+            largest {euro(row.largestCents)}
+          </span>
+        </>
+      ) : (
+        <span className="muted">materializing…</span>
+      )}
+    </div>
+  );
+}
+
+function AccountDetail({ booted }: { booted: boolean }) {
+  const [active, setActive] = useState<string[]>(loadActiveAccounts);
+
+  useEffect(() => {
+    localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(active));
+  }, [active]);
+
+  const toggle = (account: string) =>
+    setActive((prev) =>
+      prev.includes(account) ? prev.filter((a) => a !== account) : [...prev, account],
+    );
+
+  return (
+    <section className="panel">
+      <h2>
+        Account detail{' '}
+        <small>
+          demand projection — table <code>account_activity</code>, one activated{' '}
+          <strong>ActivityFold</strong> instance per toggle
+        </small>
+      </h2>
+      <p className="hint">
+        Unlike <code>balance</code> (data presence: every account with local rows is
+        materialized), this table only holds accounts whose instance is <em>activated</em> —
+        the 10k-entities case in miniature. Toggle an account to materialize it on demand;
+        toggling off retracts its row.
+      </p>
+      <div className="row quick">
+        {ACCOUNTS.map((a) => (
+          <button
+            key={a}
+            className={`chip ${active.includes(a) ? 'active' : ''}`}
+            onClick={() => toggle(a)}
+          >
+            {active.includes(a) ? '◉' : '○'} {a}
+          </button>
+        ))}
+      </div>
+      {active.length === 0 ? (
+        <p className="empty">no instance activated — nothing is materialized</p>
+      ) : (
+        active.map((a) => <ActivityInstance key={a} account={a} booted={booted} />)
+      )}
+    </section>
+  );
+}
+
 function Controls() {
   const [account, setAccount] = useState('alice');
   const [amount, setAmount] = useState('10.00');
@@ -281,7 +402,7 @@ function Controls() {
 // The reactive body is its own component so its `useQuery` hooks first mount
 // *after* wasm is ready — a subscription created before the boot completes
 // never binds (and never retries).
-function Dashboard() {
+function Dashboard({ booted }: { booted: boolean }) {
   const balances = useBalances();
   const ledger = useLedger();
 
@@ -301,6 +422,7 @@ function Dashboard() {
         <Balances rows={balances} />
         <Ledger rows={ledger} />
       </div>
+      <AccountDetail booted={booted} />
       {import.meta.env.DEV && <DebugToolbar />}
     </main>
   );
@@ -323,5 +445,5 @@ export default function App() {
 
   if (!ready) return <div className="loading">loading wasm…</div>;
 
-  return <Dashboard />;
+  return <Dashboard booted={booted} />;
 }

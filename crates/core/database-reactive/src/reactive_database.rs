@@ -11,7 +11,7 @@ use sql_engine::reactive::execute::on_zset;
 use sql_engine::reactive::registry::SubscriptionRegistry;
 use sql_engine::reactive::{SubscriptionHandle, SubscriptionId, SubscriptionKey};
 use sql_engine::schema::TableSchema;
-use sql_engine::storage::ZSet;
+use sql_engine::storage::{CellValue, ZSet};
 use sql_parser::ast::Statement;
 
 use crate::dirty_notification::DirtyNotification;
@@ -155,6 +155,43 @@ impl ReactiveDatabase {
     /// pin/unpin `SlotKind::Projected` slots) by applying them in order.
     pub fn take_projection_events(&mut self) -> Vec<ProjectionEvent> {
         std::mem::take(&mut self.projection_events)
+    }
+
+    /// Activate a dynamic projection instance (§12): materialize
+    /// `(id, name)` from the current local data and keep it in sync until
+    /// the matching `deactivate_projection`. Repeated activation refcounts.
+    /// The instance's delta goes straight to the subscribers — it touches
+    /// only projection-owned tables and must not re-enter the derive pass.
+    pub fn activate_projection(&mut self, id: &str, name: Vec<CellValue>) -> Result<(), DbError> {
+        let Some(engine) = self.projections.as_mut() else {
+            return Err(DbError::Projection("no projection engine installed".into()));
+        };
+        let outcome = {
+            let mut host = DatabaseHost::new(&mut self.db);
+            engine.activate(id, &name, &mut host).map_err(DbError::Projection)?
+        };
+        let delta = self.absorb_outcome_bookkeeping(outcome);
+        if !delta.is_empty() {
+            self.dispatch_to_subscribers(&delta);
+        }
+        Ok(())
+    }
+
+    /// Release one activation of `(id, name)`. The last release retracts
+    /// the instance's output rows and notifies subscribers.
+    pub fn deactivate_projection(&mut self, id: &str, name: &[CellValue]) -> Result<(), DbError> {
+        let Some(engine) = self.projections.as_mut() else {
+            return Err(DbError::Projection("no projection engine installed".into()));
+        };
+        let outcome = {
+            let mut host = DatabaseHost::new(&mut self.db);
+            engine.deactivate(id, name, &mut host).map_err(DbError::Projection)?
+        };
+        let delta = self.absorb_outcome_bookkeeping(outcome);
+        if !delta.is_empty() {
+            self.dispatch_to_subscribers(&delta);
+        }
+        Ok(())
     }
 
     /// Fold a derive outcome into failure/recovery bookkeeping. Returns the
@@ -433,7 +470,15 @@ impl ReactiveDatabase {
         // stay consistent regardless of who is watching.
         let combined = self.derive_pass(zset);
         let zset = combined.as_ref().unwrap_or(zset);
+        self.dispatch_to_subscribers(zset);
+    }
 
+    /// Registry routing + dirty marking + wake — the second half of
+    /// `notify()`. `activate_projection`/`deactivate_projection` call ONLY
+    /// this with their delta: it touches projection-owned tables
+    /// exclusively and must never re-enter `derive_pass` (whose
+    /// `guard_external` debug-assert would fire).
+    fn dispatch_to_subscribers(&mut self, zset: &ZSet) {
         if self.subscriptions.is_empty() {
             return;
         }

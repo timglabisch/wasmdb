@@ -60,6 +60,35 @@ impl RowReader for DatabaseHost<'_> {
             .map(|r| (0..ncols).map(|c| t.get(r, c)).collect())
             .collect()
     }
+
+    fn rows_matching(&self, table: &str, keys: &[(usize, CellValue)]) -> Vec<Vec<CellValue>> {
+        let Some(t) = self.db.table(table) else {
+            return Vec::new();
+        };
+        let ncols = t.schema.columns.len();
+        if keys.iter().any(|(col, _)| *col >= ncols) {
+            return Vec::new();
+        }
+        let cells_of = |r: usize| (0..ncols).map(|c| t.get(r, c)).collect::<Vec<_>>();
+        let matches = |r: usize| keys.iter().all(|(col, v)| t.get(r, *col) == *v);
+
+        // Narrow via a single-column index on the first key when one
+        // exists; the remaining keys stay as filters.
+        if let Some(&(first_col, ref first_val)) = keys.first() {
+            if let Some(idx) = t.index_for_column(first_col) {
+                let Some(ids) = idx.lookup_eq(std::slice::from_ref(first_val)) else {
+                    return Vec::new();
+                };
+                return ids
+                    .iter()
+                    .filter(|&&r| !t.is_deleted(r) && matches(r))
+                    .map(|&r| cells_of(r))
+                    .collect();
+            }
+        }
+
+        t.row_ids().filter(|&r| matches(r)).map(cells_of).collect()
+    }
 }
 
 impl ProjectionHost for DatabaseHost<'_> {

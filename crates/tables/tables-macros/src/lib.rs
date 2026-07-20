@@ -352,6 +352,56 @@ pub fn projection(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
+/// `#[dynamic_projection(outputs(RowA, ...), bind(col = comp, ...),
+/// reads(RowB, ...), id = "...")]` on an inherent impl block declares a
+/// demand-driven projection TEMPLATE (design doc §12) — the dynamic
+/// counterpart of `#[projection]`, with the SAME fold contract: the impl
+/// target is the state, `apply(&mut self, row: &LogRow)` replays one row,
+/// `render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` emits the outputs.
+/// The shim (committed-prefix memo, fold order, pending tail) is shared
+/// with `#[projection]`; only the lifecycle differs — an instance
+/// `(id, name)` materializes on `activate` and is evicted by the last
+/// `deactivate`, not by data presence.
+///
+/// `bind(col = comp, ...)` declares the instance footprint: source rows
+/// belong to the instance `name` iff `row[col] == name[comp]` for every
+/// binding (`col` is a column of the log row, `comp` an index into the
+/// compound instance name). An empty/omitted `bind` means every row of
+/// the source belongs to every instance (table scan).
+///
+/// ```ignore
+/// #[derive(Default, Clone)]
+/// pub struct ActivityFold { account: String, deposits: i64 }
+///
+/// #[dynamic_projection(id = "activity", outputs(AccountActivity), bind(account = 1))]
+/// impl ActivityFold {
+///     fn apply(&mut self, row: &LedgerLog) -> Result<(), String> { ... }
+///     fn render(&self, ctx: &RenderCtx<'_>, out: &mut Out) -> Result<(), String> { ... }
+/// }
+/// ```
+///
+/// Unlike `#[projection]`, codegen does NOT auto-register templates —
+/// pass them by hand next to the generated statics:
+/// `engine.register_dynamic(Box::new(ActivityFold::default()))`.
+#[proc_macro_attribute]
+pub fn dynamic_projection(args: TokenStream, input: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(input as syn::Item);
+    let result = match item {
+        syn::Item::Impl(imp) => match syn::parse::<DynamicProjectionArgs>(args) {
+            Ok(a) => expand_dynamic_projection(imp, a),
+            Err(e) => Err(e),
+        },
+        other => Err(Error::new_spanned(
+            &other,
+            "#[dynamic_projection] goes on an inherent impl block (the fold state)",
+        )),
+    };
+    match result {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
 /// `#[projection_row]` on a struct declares a projection's event LOG —
 /// the row shape behind it, mirroring `#[row]` for tables (M6a/§9.6/§11).
 /// The struct declares only `command_id` (`Uuid` — becomes the PK, the
@@ -584,123 +634,86 @@ fn parse_path_list(input: ParseStream) -> syn::Result<Vec<syn::Path>> {
     Ok(paths.into_iter().collect())
 }
 
+struct DynamicProjectionArgs {
+    id: Option<String>,
+    outputs: Vec<syn::Path>,
+    reads: Vec<syn::Path>,
+    /// Footprint bindings `(source column name, name component index)`.
+    bind: Vec<(String, usize)>,
+}
+
+impl Parse for DynamicProjectionArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut id: Option<String> = None;
+        let mut outputs: Option<Vec<syn::Path>> = None;
+        let mut reads: Option<Vec<syn::Path>> = None;
+        let mut bind: Option<Vec<(String, usize)>> = None;
+
+        while !input.is_empty() {
+            let ident: Ident = input.parse()?;
+            match ident.to_string().as_str() {
+                "id" => {
+                    let _: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    id = Some(lit.value());
+                }
+                "outputs" => outputs = Some(parse_path_list(input)?),
+                "reads" => reads = Some(parse_path_list(input)?),
+                "bind" => bind = Some(parse_bind_list(input)?),
+                other => {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        format!(
+                            "dynamic_projection: unknown key `{other}` — expected \
+                             `id`, `outputs`, `reads`, `bind`"
+                        ),
+                    ));
+                }
+            }
+            if input.is_empty() {
+                break;
+            }
+            let _: Token![,] = input.parse()?;
+        }
+
+        let outputs = outputs.filter(|o| !o.is_empty()).ok_or_else(|| {
+            syn::Error::new(
+                input.span(),
+                "dynamic_projection: missing `outputs(RowType, ...)`",
+            )
+        })?;
+        Ok(Self {
+            id,
+            outputs,
+            reads: reads.unwrap_or_default(),
+            bind: bind.unwrap_or_default(),
+        })
+    }
+}
+
+/// `bind(account = 1, region = 0)` — `column = name component index`.
+fn parse_bind_list(input: ParseStream) -> syn::Result<Vec<(String, usize)>> {
+    let content;
+    syn::parenthesized!(content in input);
+    let mut out = Vec::new();
+    while !content.is_empty() {
+        let col: Ident = content.parse()?;
+        let _: Token![=] = content.parse()?;
+        let comp: syn::LitInt = content.parse()?;
+        out.push((col.to_string(), comp.base10_parse::<usize>()?));
+        if content.is_empty() {
+            break;
+        }
+        let _: Token![,] = content.parse()?;
+    }
+    Ok(out)
+}
+
 fn expand_projection(
     input: syn::ItemImpl,
     args: ProjectionArgs,
 ) -> syn::Result<TokenStream2> {
-    if input.trait_.is_some() {
-        return Err(Error::new_spanned(
-            &input,
-            "#[projection] goes on an inherent impl block, not a trait impl",
-        ));
-    }
-    if !input.generics.params.is_empty() {
-        return Err(Error::new_spanned(
-            &input.generics,
-            "#[projection] does not support generics",
-        ));
-    }
-    let Type::Path(TypePath { path, .. }) = input.self_ty.as_ref() else {
-        return Err(Error::new_spanned(
-            &input.self_ty,
-            "#[projection] impl type must be a plain identifier",
-        ));
-    };
-    let name = path
-        .get_ident()
-        .cloned()
-        .ok_or_else(|| {
-            Error::new_spanned(path, "#[projection] impl type must be a plain identifier")
-        })?;
-
-    if input
-        .items
-        .iter()
-        .any(|item| matches!(item, syn::ImplItem::Fn(f) if f.sig.ident == "project"))
-    {
-        return Err(Error::new_spanned(
-            &input,
-            "#[projection]: `project` was removed — THE contract is the fold: \
-             `apply(&mut self, row: &LogRow)` + \
-             `render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` \
-             on the state type",
-        ));
-    }
-
-    let find_fn = |fn_name: &str| {
-        input.items.iter().find_map(|item| match item {
-            syn::ImplItem::Fn(f) if f.sig.ident == fn_name => Some(f),
-            _ => None,
-        })
-    };
-    let (apply_fn, render_fn) = match (find_fn("apply"), find_fn("render")) {
-        (Some(apply), Some(render)) => (apply, render),
-        (Some(_), None) => {
-            return Err(Error::new_spanned(
-                &input,
-                "#[projection]: `apply` without `render` — a projection needs both",
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(Error::new_spanned(
-                &input,
-                "#[projection]: `render` without `apply` — a projection needs both",
-            ));
-        }
-        (None, None) => {
-            return Err(Error::new_spanned(
-                &input,
-                "#[projection] impl needs \
-                 `fn apply(&mut self, row: &LogRow)` + \
-                 `fn render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` — \
-                 the impl target is the fold state",
-            ));
-        }
-    };
-
-    // The impl target IS the state; `apply` carries the log row type.
-    let apply_err = || {
-        Error::new_spanned(
-            &apply_fn.sig,
-            "#[projection]: `apply` must take `&mut self, row: &LogRow` — \
-             `self` is the fold state, the row is the generated log row \
-             (the parent-link chain is fold input, §11)",
-        )
-    };
-    let mut apply_args = apply_fn.sig.inputs.iter();
-    let row_ty = match (apply_args.next(), apply_args.next(), apply_args.next()) {
-        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(row)), None) => {
-            if recv.reference.is_none() || recv.mutability.is_none() {
-                return Err(apply_err());
-            }
-            shared_ref_elem(&row.ty).ok_or_else(apply_err)?
-        }
-        _ => return Err(apply_err()),
-    };
-
-    // `render`'s param types are enforced by rustc at the shim's call
-    // site; check the shape here for a pointed message.
-    let render_err = || {
-        Error::new_spanned(
-            &render_fn.sig,
-            "#[projection]: `render` must take \
-             `&self, ctx: &RenderCtx<'_>, out: &mut Out`",
-        )
-    };
-    let mut render_args = render_fn.sig.inputs.iter();
-    match (
-        render_args.next(),
-        render_args.next(),
-        render_args.next(),
-        render_args.next(),
-    ) {
-        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(_)), Some(FnArg::Typed(_)), None) => {
-            if recv.reference.is_none() || recv.mutability.is_some() {
-                return Err(render_err());
-            }
-        }
-        _ => return Err(render_err()),
-    }
+    let (name, row_ty) = fold_impl_parts(&input, "projection")?;
 
     let id_lit = LitStr::new(
         &args.id.unwrap_or_else(|| pascal_to_snake(&name.to_string())),
@@ -708,6 +721,7 @@ fn expand_projection(
     );
     let outputs = &args.outputs;
     let reads = &args.reads;
+    let shim = fold_shim_body(&name, &row_ty);
 
     Ok(quote! {
         #input
@@ -743,57 +757,257 @@ fn expand_projection(
                 ::std::vec::Vec<::database_projection::OutputRow>,
                 ::std::string::String,
             > {
-                // §9.4 contract bound: the snapshot below clones the state.
-                fn __state_contract<T: ::core::default::Default + ::core::clone::Clone>() {}
-                __state_contract::<#name>();
-
-                let __rows: ::std::vec::Vec<#row_ty> =
-                    ::database_projection::typed::decode_rows(
-                        inputs.rows(<#row_ty as ::sql_engine::DbTable>::TABLE),
-                    )?;
-                let __ordered = <#row_ty as ::tables::ProjectionLog>::in_fold_order(&__rows);
-                let __committed_len = __ordered
-                    .iter()
-                    .take_while(|__r| <#row_ty as ::tables::ProjectionLog>::is_committed(__r))
-                    .count();
-                let __committed_ids: ::std::vec::Vec<::sql_engine::storage::Uuid> =
-                    __ordered[..__committed_len]
-                        .iter()
-                        .map(|__r| <#row_ty as ::tables::ProjectionLog>::command_id(__r))
-                        .collect();
-
-                // §9.3/§11 execution: resume from the committed-prefix memo
-                // when the current committed id list still extends it; a
-                // reorder/drift, delete or first run folds from zero.
-                let (mut __state, __start): (#name, usize) = match cache
-                    .get::<::database_projection::typed::FoldSnapshot<#name>>()
-                {
-                    ::core::option::Option::Some(__snap)
-                        if __committed_ids.starts_with(&__snap.committed_ids) =>
-                    {
-                        (__snap.state.clone(), __snap.committed_ids.len())
-                    }
-                    _ => (::core::default::Default::default(), 0),
-                };
-                for __row in &__ordered[__start..__committed_len] {
-                    __state.apply(__row)?;
-                }
-                if __start < __committed_len {
-                    cache.put(::database_projection::typed::FoldSnapshot {
-                        committed_ids: __committed_ids,
-                        state: __state.clone(),
-                    });
-                }
-                for __row in &__ordered[__committed_len..] {
-                    __state.apply(__row)?;
-                }
-                let __ctx = ::database_projection::typed::RenderCtx::new(ctx);
-                let mut __out = ::database_projection::typed::Out::new();
-                __state.render(&__ctx, &mut __out)?;
-                ::core::result::Result::Ok(__out.into_rows())
+                #shim
             }
         }
     })
+}
+
+/// `#[dynamic_projection]` (§12): same fold contract and shim as
+/// `#[projection]`, but the emitted trait is
+/// `database_projection::DynamicProjection` and the spec carries the
+/// instance footprint (`bind`) instead of a partition column.
+fn expand_dynamic_projection(
+    input: syn::ItemImpl,
+    args: DynamicProjectionArgs,
+) -> syn::Result<TokenStream2> {
+    let (name, row_ty) = fold_impl_parts(&input, "dynamic_projection")?;
+
+    let id_lit = LitStr::new(
+        &args.id.unwrap_or_else(|| pascal_to_snake(&name.to_string())),
+        proc_macro2::Span::call_site(),
+    );
+    let outputs = &args.outputs;
+    let reads = &args.reads;
+    let bind_cols: Vec<LitStr> = args
+        .bind
+        .iter()
+        .map(|(col, _)| LitStr::new(col, proc_macro2::Span::call_site()))
+        .collect();
+    let bind_comps: Vec<usize> = args.bind.iter().map(|&(_, comp)| comp).collect();
+    let shim = fold_shim_body(&name, &row_ty);
+
+    Ok(quote! {
+        #input
+
+        impl ::database_projection::DynamicProjection for #name {
+            fn spec(&self) -> ::database_projection::DynamicSpec {
+                ::database_projection::DynamicSpec {
+                    id: #id_lit.into(),
+                    sources: ::std::vec![
+                        ::database_projection::FootprintSource {
+                            table: <#row_ty as ::sql_engine::DbTable>::TABLE.into(),
+                            bind: ::std::vec![
+                                #( (
+                                    ::database_projection::typed::column_index::<#row_ty>(#bind_cols),
+                                    #bind_comps
+                                ) ),*
+                            ],
+                        }
+                    ],
+                    reads: ::std::vec![
+                        #( <#reads as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                    outputs: ::std::vec![
+                        #( <#outputs as ::sql_engine::DbTable>::TABLE.into() ),*
+                    ],
+                }
+            }
+
+            fn project(
+                &self,
+                _name: &[::sql_engine::storage::CellValue],
+                inputs: &::database_projection::Inputs,
+                ctx: &::database_projection::ReadCtx<'_>,
+                cache: &mut ::database_projection::FoldCache,
+            ) -> ::core::result::Result<
+                ::std::vec::Vec<::database_projection::OutputRow>,
+                ::std::string::String,
+            > {
+                #shim
+            }
+        }
+    })
+}
+
+/// Validate the shared `#[projection]`/`#[dynamic_projection]` impl shape
+/// and return `(state type, log row type)`. THE contract is the fold: the
+/// impl target is the state, `apply(&mut self, row: &LogRow)` replays one
+/// row, `render(&self, ctx, out)` emits the outputs.
+fn fold_impl_parts(input: &syn::ItemImpl, attr: &str) -> syn::Result<(Ident, Type)> {
+    if input.trait_.is_some() {
+        return Err(Error::new_spanned(
+            input,
+            format!("#[{attr}] goes on an inherent impl block, not a trait impl"),
+        ));
+    }
+    if !input.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &input.generics,
+            format!("#[{attr}] does not support generics"),
+        ));
+    }
+    let Type::Path(TypePath { path, .. }) = input.self_ty.as_ref() else {
+        return Err(Error::new_spanned(
+            &input.self_ty,
+            format!("#[{attr}] impl type must be a plain identifier"),
+        ));
+    };
+    let name = path.get_ident().cloned().ok_or_else(|| {
+        Error::new_spanned(path, format!("#[{attr}] impl type must be a plain identifier"))
+    })?;
+
+    if input
+        .items
+        .iter()
+        .any(|item| matches!(item, syn::ImplItem::Fn(f) if f.sig.ident == "project"))
+    {
+        return Err(Error::new_spanned(
+            input,
+            format!(
+                "#[{attr}]: `project` is reserved (the generated shim) — THE \
+                 contract is the fold: `apply(&mut self, row: &LogRow)` + \
+                 `render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` \
+                 on the state type"
+            ),
+        ));
+    }
+
+    let find_fn = |fn_name: &str| {
+        input.items.iter().find_map(|item| match item {
+            syn::ImplItem::Fn(f) if f.sig.ident == fn_name => Some(f),
+            _ => None,
+        })
+    };
+    let (apply_fn, render_fn) = match (find_fn("apply"), find_fn("render")) {
+        (Some(apply), Some(render)) => (apply, render),
+        (Some(_), None) => {
+            return Err(Error::new_spanned(
+                input,
+                format!("#[{attr}]: `apply` without `render` — a projection needs both"),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(Error::new_spanned(
+                input,
+                format!("#[{attr}]: `render` without `apply` — a projection needs both"),
+            ));
+        }
+        (None, None) => {
+            return Err(Error::new_spanned(
+                input,
+                format!(
+                    "#[{attr}] impl needs \
+                     `fn apply(&mut self, row: &LogRow)` + \
+                     `fn render(&self, ctx: &RenderCtx<'_>, out: &mut Out)` — \
+                     the impl target is the fold state"
+                ),
+            ));
+        }
+    };
+
+    // The impl target IS the state; `apply` carries the log row type.
+    let apply_err = || {
+        Error::new_spanned(
+            &apply_fn.sig,
+            format!(
+                "#[{attr}]: `apply` must take `&mut self, row: &LogRow` — \
+                 `self` is the fold state, the row is the generated log row \
+                 (the parent-link chain is fold input, §11)"
+            ),
+        )
+    };
+    let mut apply_args = apply_fn.sig.inputs.iter();
+    let row_ty = match (apply_args.next(), apply_args.next(), apply_args.next()) {
+        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(row)), None) => {
+            if recv.reference.is_none() || recv.mutability.is_none() {
+                return Err(apply_err());
+            }
+            shared_ref_elem(&row.ty).ok_or_else(apply_err)?
+        }
+        _ => return Err(apply_err()),
+    };
+
+    // `render`'s param types are enforced by rustc at the shim's call
+    // site; check the shape here for a pointed message.
+    let render_err = || {
+        Error::new_spanned(
+            &render_fn.sig,
+            format!("#[{attr}]: `render` must take `&self, ctx: &RenderCtx<'_>, out: &mut Out`"),
+        )
+    };
+    let mut render_args = render_fn.sig.inputs.iter();
+    match (
+        render_args.next(),
+        render_args.next(),
+        render_args.next(),
+        render_args.next(),
+    ) {
+        (Some(FnArg::Receiver(recv)), Some(FnArg::Typed(_)), Some(FnArg::Typed(_)), None) => {
+            if recv.reference.is_none() || recv.mutability.is_some() {
+                return Err(render_err());
+            }
+        }
+        _ => return Err(render_err()),
+    }
+
+    Ok((name, row_ty))
+}
+
+/// The shared fold shim (§9.3/§11.3), emitted as the `project` body of
+/// both trait impls: decode → fold order → committed-prefix memo →
+/// apply committed tail-first-resume + pendings → render.
+fn fold_shim_body(name: &Ident, row_ty: &Type) -> TokenStream2 {
+    quote! {
+        // §9.4 contract bound: the snapshot below clones the state.
+        fn __state_contract<T: ::core::default::Default + ::core::clone::Clone>() {}
+        __state_contract::<#name>();
+
+        let __rows: ::std::vec::Vec<#row_ty> =
+            ::database_projection::typed::decode_rows(
+                inputs.rows(<#row_ty as ::sql_engine::DbTable>::TABLE),
+            )?;
+        let __ordered = <#row_ty as ::tables::ProjectionLog>::in_fold_order(&__rows);
+        let __committed_len = __ordered
+            .iter()
+            .take_while(|__r| <#row_ty as ::tables::ProjectionLog>::is_committed(__r))
+            .count();
+        let __committed_ids: ::std::vec::Vec<::sql_engine::storage::Uuid> =
+            __ordered[..__committed_len]
+                .iter()
+                .map(|__r| <#row_ty as ::tables::ProjectionLog>::command_id(__r))
+                .collect();
+
+        // §9.3/§11 execution: resume from the committed-prefix memo
+        // when the current committed id list still extends it; a
+        // reorder/drift, delete or first run folds from zero.
+        let (mut __state, __start): (#name, usize) = match cache
+            .get::<::database_projection::typed::FoldSnapshot<#name>>()
+        {
+            ::core::option::Option::Some(__snap)
+                if __committed_ids.starts_with(&__snap.committed_ids) =>
+            {
+                (__snap.state.clone(), __snap.committed_ids.len())
+            }
+            _ => (::core::default::Default::default(), 0),
+        };
+        for __row in &__ordered[__start..__committed_len] {
+            __state.apply(__row)?;
+        }
+        if __start < __committed_len {
+            cache.put(::database_projection::typed::FoldSnapshot {
+                committed_ids: __committed_ids,
+                state: __state.clone(),
+            });
+        }
+        for __row in &__ordered[__committed_len..] {
+            __state.apply(__row)?;
+        }
+        let __ctx = ::database_projection::typed::RenderCtx::new(ctx);
+        let mut __out = ::database_projection::typed::Out::new();
+        __state.render(&__ctx, &mut __out)?;
+        ::core::result::Result::Ok(__out.into_rows())
+    }
 }
 
 /// `&T` (shared) → `Some(T)`, anything else → `None`.

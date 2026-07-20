@@ -3,9 +3,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use sql_engine::execute::Params;
+use sql_engine::reactive::execute::on_zset;
+use sql_engine::reactive::registry::SubscriptionRegistry;
+use sql_engine::reactive::SubscriptionId;
 use sql_engine::storage::{CellValue, ZSet};
 
 use crate::diff::multiset_diff;
+use crate::dynamic::{compile_footprint, display_name, DynamicProjection, DynamicSpec, InstanceName};
 use crate::spec::{
     FoldCache, Inputs, OutputRow, OwnershipViolation, Projection, ProjectionHost, ProjectionSpec,
     ReadCtx,
@@ -21,6 +26,10 @@ pub enum RegisterError {
     OutputIsOwnInput { projection: String, table: String },
     /// The projection graph would contain a cycle (ids in no particular order).
     Cycle(Vec<String>),
+    /// A dynamic template's output would be consumed as a source/read —
+    /// dynamic outputs are DAG leaves (v1, §12). `projection` is the
+    /// template owning the output.
+    DynamicOutputConsumed { projection: String, table: String },
 }
 
 impl std::fmt::Display for RegisterError {
@@ -34,6 +43,11 @@ impl std::fmt::Display for RegisterError {
                 write!(f, "projection '{projection}' uses its own output table '{table}' as input")
             }
             RegisterError::Cycle(ids) => write!(f, "projection graph has a cycle among: {ids:?}"),
+            RegisterError::DynamicOutputConsumed { projection, table } => write!(
+                f,
+                "dynamic output table '{table}' of '{projection}' may not be consumed — \
+                 dynamic projections are DAG leaves"
+            ),
         }
     }
 }
@@ -71,8 +85,24 @@ struct Node {
     imp: Box<dyn Projection>,
 }
 
+struct DynNode {
+    spec: DynamicSpec,
+    imp: Box<dyn DynamicProjection>,
+}
+
+/// Bookkeeping of one ACTIVE dynamic instance (§12). Exists from the first
+/// `activate` to the `deactivate` that drops the refcount to 0.
+struct InstanceState {
+    refcount: u32,
+    /// Registration in the engine's own `instance_registry`.
+    sub_id: SubscriptionId,
+    /// Execution memo, same contract as the static per-partition memo.
+    cache: FoldCache,
+    /// Rows of the last applied render.
+    last_render: Vec<OutputRow>,
+}
+
 /// Registry + per-partition bookkeeping + the derive pass.
-#[derive(Default)]
 pub struct ProjectionEngine {
     nodes: Vec<Node>,
     /// Output table → owning node index.
@@ -93,6 +123,42 @@ pub struct ProjectionEngine {
     /// Lifecycle mirrors `live_partitions`: dropped with the partition,
     /// cleared on `reset_and_rederive`.
     fold_caches: Vec<HashMap<CellValue, FoldCache>>,
+
+    // ── Dynamic templates & instances (§12) ──────────────────────────
+    dyn_nodes: Vec<DynNode>,
+    /// Output table → owning dynamic node index.
+    dyn_owner_by_table: HashMap<String, usize>,
+    /// Read table → dynamic node indices (coarse re-render trigger).
+    dyn_reads_by_table: HashMap<String, Vec<usize>>,
+    /// The engine's OWN registry for instance footprints — identification
+    /// shares the candidates→verify machinery with query subscriptions,
+    /// but the registry instance (and thus the id namespace) is private.
+    instance_registry: SubscriptionRegistry,
+    /// Registry id → (dynamic node index, instance name).
+    sub_to_instance: HashMap<SubscriptionId, (usize, InstanceName)>,
+    /// Per dynamic node: name → state of the active instance.
+    instances: Vec<HashMap<InstanceName, InstanceState>>,
+}
+
+impl Default for ProjectionEngine {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            owner_by_table: HashMap::new(),
+            sources_by_table: HashMap::new(),
+            reads_by_table: HashMap::new(),
+            topo: Vec::new(),
+            last_render: Vec::new(),
+            live_partitions: Vec::new(),
+            fold_caches: Vec::new(),
+            dyn_nodes: Vec::new(),
+            dyn_owner_by_table: HashMap::new(),
+            dyn_reads_by_table: HashMap::new(),
+            instance_registry: SubscriptionRegistry::new(),
+            sub_to_instance: HashMap::new(),
+            instances: Vec::new(),
+        }
+    }
 }
 
 impl ProjectionEngine {
@@ -101,16 +167,22 @@ impl ProjectionEngine {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.nodes.is_empty() && self.dyn_nodes.is_empty()
     }
 
     pub fn projection_ids(&self) -> impl Iterator<Item = &str> {
-        self.nodes.iter().map(|n| n.spec.id.as_str())
+        self.nodes
+            .iter()
+            .map(|n| n.spec.id.as_str())
+            .chain(self.dyn_nodes.iter().map(|n| n.spec.id.as_str()))
     }
 
     /// Tables owned by any projection (exclusively engine-written).
     pub fn owned_tables(&self) -> impl Iterator<Item = &str> {
-        self.owner_by_table.keys().map(|t| t.as_str())
+        self.owner_by_table
+            .keys()
+            .map(|t| t.as_str())
+            .chain(self.dyn_owner_by_table.keys().map(|t| t.as_str()))
     }
 
     /// Register a projection. Validates id uniqueness, output ownership
@@ -118,7 +190,9 @@ impl ProjectionEngine {
     pub fn register(&mut self, imp: Box<dyn Projection>) -> Result<(), RegisterError> {
         let spec = imp.spec();
 
-        if self.nodes.iter().any(|n| n.spec.id == spec.id) {
+        if self.nodes.iter().any(|n| n.spec.id == spec.id)
+            || self.dyn_nodes.iter().any(|n| n.spec.id == spec.id)
+        {
             return Err(RegisterError::DuplicateId(spec.id));
         }
         for out in &spec.outputs {
@@ -128,12 +202,28 @@ impl ProjectionEngine {
                     owner: self.nodes[owner].spec.id.clone(),
                 });
             }
+            if let Some(&owner) = self.dyn_owner_by_table.get(out) {
+                return Err(RegisterError::OutputAlreadyOwned {
+                    table: out.clone(),
+                    owner: self.dyn_nodes[owner].spec.id.clone(),
+                });
+            }
             let is_own_input = spec.sources.iter().any(|s| &s.table == out)
                 || spec.reads.iter().any(|r| r == out);
             if is_own_input {
                 return Err(RegisterError::OutputIsOwnInput {
                     projection: spec.id.clone(),
                     table: out.clone(),
+                });
+            }
+        }
+        // Leaf rule (§12): a static projection may not consume a dynamic
+        // template's output.
+        for input in spec.sources.iter().map(|s| &s.table).chain(spec.reads.iter()) {
+            if let Some(&owner) = self.dyn_owner_by_table.get(input) {
+                return Err(RegisterError::DynamicOutputConsumed {
+                    projection: self.dyn_nodes[owner].spec.id.clone(),
+                    table: input.clone(),
                 });
             }
         }
@@ -168,6 +258,173 @@ impl ProjectionEngine {
         Ok(())
     }
 
+    /// Register a dynamic template (§12). Like [`Self::register`] the
+    /// validation runs BEFORE any mutation. Dynamic outputs are DAG
+    /// leaves: nothing (static or dynamic) may consume them, and the
+    /// template itself may not consume another dynamic template's output.
+    /// Its sources MAY be static outputs — instances run after the static
+    /// topo pass over the accumulated delta.
+    pub fn register_dynamic(&mut self, imp: Box<dyn DynamicProjection>) -> Result<(), RegisterError> {
+        let spec = imp.spec();
+
+        if self.nodes.iter().any(|n| n.spec.id == spec.id)
+            || self.dyn_nodes.iter().any(|n| n.spec.id == spec.id)
+        {
+            return Err(RegisterError::DuplicateId(spec.id));
+        }
+        for out in &spec.outputs {
+            if let Some(&owner) = self.owner_by_table.get(out) {
+                return Err(RegisterError::OutputAlreadyOwned {
+                    table: out.clone(),
+                    owner: self.nodes[owner].spec.id.clone(),
+                });
+            }
+            if let Some(&owner) = self.dyn_owner_by_table.get(out) {
+                return Err(RegisterError::OutputAlreadyOwned {
+                    table: out.clone(),
+                    owner: self.dyn_nodes[owner].spec.id.clone(),
+                });
+            }
+            let is_own_input = spec.sources.iter().any(|s| &s.table == out)
+                || spec.reads.iter().any(|r| r == out);
+            if is_own_input {
+                return Err(RegisterError::OutputIsOwnInput {
+                    projection: spec.id.clone(),
+                    table: out.clone(),
+                });
+            }
+            // Leaf rule: no existing projection may already consume the
+            // new template's output tables.
+            let consumed = self
+                .nodes
+                .iter()
+                .map(|n| (&n.spec.sources, &n.spec.reads))
+                .any(|(sources, reads)| {
+                    sources.iter().any(|s| &s.table == out) || reads.iter().any(|r| r == out)
+                })
+                || self.dyn_nodes.iter().any(|n| {
+                    n.spec.sources.iter().any(|s| &s.table == out)
+                        || n.spec.reads.iter().any(|r| r == out)
+                });
+            if consumed {
+                return Err(RegisterError::DynamicOutputConsumed {
+                    projection: spec.id.clone(),
+                    table: out.clone(),
+                });
+            }
+        }
+        // Leaf rule, other direction: the template may not consume another
+        // dynamic template's output.
+        for input in spec.sources.iter().map(|s| &s.table).chain(spec.reads.iter()) {
+            if let Some(&owner) = self.dyn_owner_by_table.get(input) {
+                return Err(RegisterError::DynamicOutputConsumed {
+                    projection: self.dyn_nodes[owner].spec.id.clone(),
+                    table: input.clone(),
+                });
+            }
+        }
+
+        // Validated — commit.
+        let idx = self.dyn_nodes.len();
+        for out in &spec.outputs {
+            self.dyn_owner_by_table.insert(out.clone(), idx);
+        }
+        for r in &spec.reads {
+            self.dyn_reads_by_table.entry(r.clone()).or_default().push(idx);
+        }
+        self.dyn_nodes.push(DynNode { spec, imp });
+        self.instances.push(HashMap::new());
+        Ok(())
+    }
+
+    // ── Dynamic instance lifecycle (§12) ─────────────────────────────
+
+    /// Activate the instance `(id, name)`: register its footprint in the
+    /// instance registry and materialize it from the current local data.
+    /// A second `activate` on a live instance only bumps its refcount and
+    /// returns an empty outcome. An instance whose footprint matches zero
+    /// rows stays ACTIVE with an empty render — demand is the lifecycle,
+    /// not data presence.
+    pub fn activate(
+        &mut self,
+        id: &str,
+        name: &[CellValue],
+        host: &mut dyn ProjectionHost,
+    ) -> Result<DeriveOutcome, String> {
+        let t = self
+            .dyn_nodes
+            .iter()
+            .position(|n| n.spec.id == id)
+            .ok_or_else(|| format!("unknown dynamic projection '{id}'"))?;
+
+        if let Some(state) = self.instances[t].get_mut(name) {
+            state.refcount += 1;
+            return Ok(DeriveOutcome::default());
+        }
+
+        let conditions = compile_footprint(&self.dyn_nodes[t].spec, name)?;
+        let sub_id = self
+            .instance_registry
+            .subscribe(&conditions, &[], &Params::new())
+            .map_err(|e| format!("footprint registration failed: {e:?}"))?;
+        self.sub_to_instance.insert(sub_id, (t, name.to_vec()));
+        self.instances[t].insert(
+            name.to_vec(),
+            InstanceState {
+                refcount: 1,
+                sub_id,
+                cache: FoldCache::default(),
+                last_render: Vec::new(),
+            },
+        );
+
+        let mut outcome = DeriveOutcome::default();
+        self.recompute_instance_into(t, name, host, &mut outcome);
+        Ok(outcome)
+    }
+
+    /// Release one activation of `(id, name)`. At refcount 0 the instance
+    /// is evicted: footprint deregistered, output rows retracted, memo
+    /// dropped. Deactivating an unknown instance is an error (a
+    /// programming error of the embedder, not a runtime condition).
+    pub fn deactivate(
+        &mut self,
+        id: &str,
+        name: &[CellValue],
+        host: &mut dyn ProjectionHost,
+    ) -> Result<DeriveOutcome, String> {
+        let t = self
+            .dyn_nodes
+            .iter()
+            .position(|n| n.spec.id == id)
+            .ok_or_else(|| format!("unknown dynamic projection '{id}'"))?;
+        let state = self.instances[t]
+            .get_mut(name)
+            .ok_or_else(|| format!("instance '{}' of '{id}' is not active", display_name(name)))?;
+
+        if state.refcount > 1 {
+            state.refcount -= 1;
+            return Ok(DeriveOutcome::default());
+        }
+
+        // Last reference: retract the render, then drop all state. On a
+        // failed retraction the instance stays fully active.
+        let retraction = multiset_diff(&[], &state.last_render);
+        if !retraction.is_empty() {
+            host.apply_delta(&retraction)?;
+        }
+        let state = self.instances[t].remove(name).expect("just found it");
+        self.sub_to_instance.remove(&state.sub_id);
+        self.instance_registry.unsubscribe(state.sub_id);
+
+        Ok(DeriveOutcome {
+            delta: retraction,
+            // Clears a pinned failure of this instance at the embedder.
+            succeeded: vec![(id.to_string(), display_name(name))],
+            ..DeriveOutcome::default()
+        })
+    }
+
     /// Reject external batches that touch owned tables. Call BEFORE
     /// applying an external batch — derived tables are written exclusively
     /// by the engine.
@@ -177,6 +434,12 @@ impl ProjectionEngine {
                 return Err(OwnershipViolation {
                     table: entry.table.clone(),
                     owner: self.nodes[owner].spec.id.clone(),
+                });
+            }
+            if let Some(&owner) = self.dyn_owner_by_table.get(&entry.table) {
+                return Err(OwnershipViolation {
+                    table: entry.table.clone(),
+                    owner: self.dyn_nodes[owner].spec.id.clone(),
                 });
             }
         }
@@ -191,7 +454,7 @@ impl ProjectionEngine {
     pub fn derive(&mut self, batch: &ZSet, host: &mut dyn ProjectionHost) -> DeriveOutcome {
         let n = self.nodes.len();
         let mut outcome = DeriveOutcome::default();
-        if n == 0 || batch.is_empty() {
+        if batch.is_empty() || (n == 0 && self.sub_to_instance.is_empty()) {
             return outcome;
         }
 
@@ -231,7 +494,146 @@ impl ProjectionEngine {
                 }
             }
         }
+
+        // Dynamic pass (§12): runs AFTER the static topo loop so instance
+        // footprints see the accumulated delta (external + derived) —
+        // static outputs may be dynamic sources. Leaf rule: dynamic deltas
+        // cascade nowhere, so one pass suffices.
+        self.dynamic_pass(batch, &mut outcome, host);
         outcome
+    }
+
+    /// Identify affected instances via the instance registry, recompute
+    /// them in deterministic order, append their deltas to the outcome.
+    fn dynamic_pass(
+        &mut self,
+        batch: &ZSet,
+        outcome: &mut DeriveOutcome,
+        host: &mut dyn ProjectionHost,
+    ) {
+        // Guard: `on_zset` builds tracing spans (a row clone per mutation)
+        // even against an empty registry — without active instances the
+        // dynamic path must cost one branch, nothing more.
+        if self.sub_to_instance.is_empty() {
+            return;
+        }
+
+        let mut affected: HashSet<(usize, InstanceName)> = HashSet::new();
+        for zset in [batch, &outcome.delta] {
+            if zset.is_empty() {
+                continue;
+            }
+            for sub_id in on_zset(&self.instance_registry, zset).keys() {
+                if let Some(inst) = self.sub_to_instance.get(sub_id) {
+                    affected.insert(inst.clone());
+                }
+            }
+            // Read tables are coarse (like the static path): a hit
+            // re-renders every active instance of the template.
+            for entry in &zset.entries {
+                if let Some(list) = self.dyn_reads_by_table.get(&entry.table) {
+                    for &t in list {
+                        for name in self.instances[t].keys() {
+                            affected.insert((t, name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut ordered: Vec<(usize, InstanceName)> = affected.into_iter().collect();
+        ordered.sort();
+        for (t, name) in ordered {
+            self.recompute_instance_into(t, &name, host, outcome);
+        }
+    }
+
+    /// Recompute one instance and fold the result into an outcome —
+    /// shared by `activate`, the dynamic pass and `reset_and_rederive`.
+    fn recompute_instance_into(
+        &mut self,
+        t: usize,
+        name: &[CellValue],
+        host: &mut dyn ProjectionHost,
+        outcome: &mut DeriveOutcome,
+    ) {
+        match self.recompute_instance(t, name, host) {
+            Ok(delta) => {
+                outcome
+                    .succeeded
+                    .push((self.dyn_nodes[t].spec.id.clone(), display_name(name)));
+                if !delta.is_empty() {
+                    outcome.delta.extend(delta);
+                }
+            }
+            Err(message) => outcome.failures.push(DeriveFailure {
+                projection: self.dyn_nodes[t].spec.id.clone(),
+                partition: Some(display_name(name)),
+                message,
+            }),
+        }
+    }
+
+    /// Recompute one active instance: gather its footprint rows, run the
+    /// pure function with the instance memo, diff against `last_render`,
+    /// apply the delta through the host. On error the previous output
+    /// stays untouched (no partial render).
+    fn recompute_instance(
+        &mut self,
+        t: usize,
+        name: &[CellValue],
+        host: &mut dyn ProjectionHost,
+    ) -> Result<ZSet, String> {
+        let (sources, reads, outputs) = {
+            let spec = &self.dyn_nodes[t].spec;
+            (spec.sources.clone(), spec.reads.clone(), spec.outputs.clone())
+        };
+
+        let mut tables = Vec::with_capacity(sources.len());
+        let mut total = 0usize;
+        for s in &sources {
+            let keys: Vec<(usize, CellValue)> =
+                s.bind.iter().map(|&(col, comp)| (col, name[comp].clone())).collect();
+            let rows = host.rows_matching(&s.table, &keys);
+            total += rows.len();
+            tables.push((s.table.clone(), rows));
+        }
+
+        let new_render: Vec<OutputRow> = if total == 0 {
+            // The instance stays active (demand, not data presence), but
+            // the memo dies with the last source row — a later insert
+            // re-folds from zero.
+            if let Some(state) = self.instances[t].get_mut(name) {
+                state.cache = FoldCache::default();
+            }
+            Vec::new()
+        } else {
+            let inputs = Inputs { tables };
+            let ctx = ReadCtx { reader: &*host, allowed: &reads };
+            let state = self.instances[t]
+                .get_mut(name)
+                .expect("recompute of an instance without state");
+            let rendered = self.dyn_nodes[t].imp.project(name, &inputs, &ctx, &mut state.cache)?;
+            for (table, _) in &rendered {
+                if !outputs.iter().any(|o| o == table) {
+                    return Err(format!("rendered into undeclared output table '{table}'"));
+                }
+            }
+            rendered
+        };
+
+        let state = self.instances[t]
+            .get_mut(name)
+            .expect("recompute of an instance without state");
+        let delta = multiset_diff(&new_render, &state.last_render);
+        if !delta.is_empty() {
+            host.apply_delta(&delta)?;
+        }
+        let state = self.instances[t]
+            .get_mut(name)
+            .expect("recompute of an instance without state");
+        state.last_render = new_render;
+        Ok(delta)
     }
 
     /// Drop all derived state and rebuild every output table from the
@@ -242,8 +644,13 @@ impl ProjectionEngine {
     pub fn reset_and_rederive(&mut self, host: &mut dyn ProjectionHost) -> DeriveOutcome {
         let mut outcome = DeriveOutcome::default();
 
-        // 1. Clear every owned table (whatever the replacement put there).
-        let mut owned: Vec<&String> = self.owner_by_table.keys().collect();
+        // 1. Clear every owned table (whatever the replacement put there) —
+        // static AND dynamic outputs.
+        let mut owned: Vec<&String> = self
+            .owner_by_table
+            .keys()
+            .chain(self.dyn_owner_by_table.keys())
+            .collect();
         owned.sort();
         let mut teardown = ZSet::new();
         for table in owned {
@@ -272,6 +679,14 @@ impl ProjectionEngine {
         // new reality by coincidence while the row contents differ.
         for caches in &mut self.fold_caches {
             caches.clear();
+        }
+        // Dynamic instances survive the swap (registrations + refcounts
+        // live in the engine), but their memos and renders are stale.
+        for states in &mut self.instances {
+            for state in states.values_mut() {
+                state.cache = FoldCache::default();
+                state.last_render.clear();
+            }
         }
 
         // 2. Re-derive every partition present in any source, in topo order.
@@ -304,6 +719,20 @@ impl ProjectionEngine {
                     }),
                 }
             }
+        }
+
+        // 3. Re-materialize every ACTIVE dynamic instance from the new
+        // source contents (which include the freshly derived static
+        // outputs — dynamic sources may be static outputs).
+        let mut active: Vec<(usize, InstanceName)> = self
+            .instances
+            .iter()
+            .enumerate()
+            .flat_map(|(t, states)| states.keys().map(move |name| (t, name.clone())))
+            .collect();
+        active.sort();
+        for (t, name) in active {
+            self.recompute_instance_into(t, &name, host, &mut outcome);
         }
         outcome
     }
@@ -397,8 +826,8 @@ fn display_partition(partition: &CellValue) -> String {
     }
 }
 
-/// Canonical hyphenated form (8-4-4-4-12) without pulling sql-parser in.
-fn format_uuid(bytes: &[u8; 16]) -> String {
+/// Canonical hyphenated form (8-4-4-4-12).
+pub(crate) fn format_uuid(bytes: &[u8; 16]) -> String {
     let h: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!(
         "{}{}{}{}-{}{}-{}{}-{}{}-{}{}{}{}{}{}",

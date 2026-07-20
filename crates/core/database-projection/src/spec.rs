@@ -129,6 +129,17 @@ pub trait RowReader {
 
     /// All live rows of `table`. Unknown tables yield an empty vec.
     fn all_rows(&self, table: &str) -> Vec<Vec<CellValue>>;
+
+    /// All live rows of `table` whose cells equal `keys` at every listed
+    /// column — the gather primitive of dynamic instances (§12). The
+    /// default implementation scans; hosts with indexes should override
+    /// (see `DatabaseHost`).
+    fn rows_matching(&self, table: &str, keys: &[(usize, CellValue)]) -> Vec<Vec<CellValue>> {
+        self.all_rows(table)
+            .into_iter()
+            .filter(|row| keys.iter().all(|(col, v)| row.get(*col) == Some(v)))
+            .collect()
+    }
 }
 
 /// Full storage host: read access plus delta application. The engine

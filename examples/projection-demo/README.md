@@ -64,6 +64,21 @@ automatically from an append-only event log.
   `unknown_ids` keeps a re-bootstrap idempotent (never re-applies a held
   head); `sync::protocol::{FetchRows,Heads}{Request,Response}` are the wire.
 
+- **Demand projection** (design §12) — the “Account detail” panel drives
+  the *dynamic* counterpart to `BalanceFold`: `ActivityFold`
+  (`.../activity_fold.rs`, a `#[dynamic_projection]` in the same
+  `apply`/`render` idiom as `BalanceFold`, registered by hand
+  next to the generated statics in `frontend/apps/wasm/src/lib.rs`) folds
+  ONE account's log rows into `account_activity` — but only while that
+  account's instance is **activated**. `balance` materializes every account
+  whose rows are locally present (data presence); `account_activity` only
+  holds what you toggled on (demand) — the 10k-entities case in miniature:
+  don't materialize everything, materialize the thing you clicked. A toggle
+  calls `activateProjection('activity', ['account', <name>])`
+  (`@wasmdb/client`) with the instance's compound unique name; toggling off
+  retracts the row (refcounted). Instances live in wasm memory, so after F5
+  the panel re-activates the stored toggles once `bootstrap` ran.
+
 The derived `balance` table is a normal reactive table: the React UI just
 `useQuery`s it and re-renders when the projection writes to it.
 
@@ -94,3 +109,7 @@ wasm loops: it proves gap-repair converges, and that a bootstrap from an
 *empty* client reconstructs every balance from the server's heads —
 including a re-bootstrap after a `/foreign-write` that pulls new rows in
 without double-counting the already-held partitions.
+`tests/dynamic_projection.rs` proves the demand path against the real
+`ReactiveDatabase`: activate materializes exactly the named account,
+foreign rows keep the instance in sync, deactivate retracts, and a
+`replace_data` rebuild re-materializes active instances.

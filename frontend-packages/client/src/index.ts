@@ -85,6 +85,16 @@ export interface WasmSyncApi {
    * fetch-by-PK endpoint wire it.
    */
   bootstrap?(table: string, headsPath: string, fetchPath: string): Promise<number>;
+  /**
+   * Activate a dynamic projection instance (design §12): materialize
+   * `(id, name)` from the current local data and keep it in sync until the
+   * matching `projection_deactivate`. `name` is the instance's compound
+   * unique name, e.g. `['account', 'carol']`. Repeated activation
+   * refcounts. Optional: only apps registering dynamic templates wire it.
+   */
+  projection_activate?(id: string, name: (string | number)[]): void;
+  /** Release one activation; the last release retracts the output rows. */
+  projection_deactivate?(id: string, name: (string | number)[]): void;
 
   // ── Requirements API (typed-deps useQuery overload) ─────────────
   /**
@@ -290,6 +300,31 @@ export function bootstrap(
   const w = wasm();
   if (!w.bootstrap) return Promise.resolve(0);
   return w.bootstrap(table, headsPath, fetchPath);
+}
+
+/**
+ * Activate a dynamic projection instance (design §12). `name` is the
+ * instance's compound unique name (ONE composite identifier), e.g.
+ * `['account', 'carol']` — string components map to engine strings,
+ * integer numbers to I64. Materializes the instance from local data and
+ * keeps it in sync until `deactivateProjection`; repeated activation
+ * refcounts. No-op when the wasm module doesn't expose the export.
+ */
+export function activateProjection(id: string, name: (string | number)[]): void {
+  const w = wasm();
+  if (!w.projection_activate) return;
+  w.projection_activate(id, name);
+}
+
+/**
+ * Release one activation of `(id, name)`. The last release retracts the
+ * instance's output rows (subscribers on the output table see the delta).
+ * No-op when the wasm module doesn't expose the export.
+ */
+export function deactivateProjection(id: string, name: (string | number)[]): void {
+  const w = wasm();
+  if (!w.projection_deactivate) return;
+  w.projection_deactivate(id, name);
 }
 
 // ── React hooks ───────────────────────────────────────────────────

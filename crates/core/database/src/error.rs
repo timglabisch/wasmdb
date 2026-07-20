@@ -11,6 +11,9 @@ pub enum DbError {
     /// The table is owned by a projection (derived table) — external
     /// writes are rejected; only the projection engine may write it.
     OwnedByProjection { table: String, owner: String },
+    /// A projection-engine operation failed (e.g. activating an unknown
+    /// dynamic projection or deactivating a non-active instance).
+    Projection(String),
 }
 
 impl std::fmt::Display for DbError {
@@ -25,6 +28,7 @@ impl std::fmt::Display for DbError {
                 f,
                 "table '{table}' is owned by projection '{owner}' — external writes are not allowed"
             ),
+            DbError::Projection(msg) => write!(f, "projection error: {msg}"),
         }
     }
 }

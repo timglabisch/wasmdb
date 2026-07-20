@@ -287,6 +287,63 @@ async fn walk_gap_to_root(table: &str, fetch_path: &str) -> Result<usize, JsErro
     Ok(backfilled)
 }
 
+/// Activate a dynamic projection instance (design §12): materialize
+/// `(id, name)` from the current local data and keep it in sync until the
+/// matching [`projection_deactivate`]. `name` is the instance's compound
+/// unique name as a JS array, e.g. `['account', 'carol']`. Repeated
+/// activation refcounts.
+#[wasm_bindgen]
+pub fn projection_activate(id: String, name: JsValue) -> Result<(), JsError> {
+    let name = js_to_instance_name(name)?;
+    with_client_dyn(|client| client.db_mut().activate_projection(&id, name))
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    // The activation ran a fold — surface any failure/recovery events the
+    // same way the confirm/repair paths do.
+    crate::wasm::req_bindings::drain_projection_events();
+    Ok(())
+}
+
+/// Release one activation of `(id, name)`. The last release retracts the
+/// instance's output rows.
+#[wasm_bindgen]
+pub fn projection_deactivate(id: String, name: JsValue) -> Result<(), JsError> {
+    let name = js_to_instance_name(name)?;
+    with_client_dyn(|client| client.db_mut().deactivate_projection(&id, &name))
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    crate::wasm::req_bindings::drain_projection_events();
+    Ok(())
+}
+
+/// Convert a JS array of name components into an engine instance name:
+/// integer `number` → `CellValue::I64`, `string` → `CellValue::Str`.
+/// Uuid components are stage 2 (an explicit form, no string sniffing).
+fn js_to_instance_name(name: JsValue) -> Result<Vec<CellValue>, JsError> {
+    let arr = name
+        .dyn_ref::<js_sys::Array>()
+        .ok_or_else(|| JsError::new("projection instance name must be an array"))?;
+    let mut out = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        let v = arr.get(i);
+        if let Some(s) = v.as_string() {
+            out.push(CellValue::Str(s));
+            continue;
+        }
+        if let Some(n) = v.as_f64() {
+            if !n.is_finite() || n.fract() != 0.0 {
+                return Err(JsError::new(&format!(
+                    "name component {i} must be an integer, got {n}"
+                )));
+            }
+            out.push(CellValue::I64(n as i64));
+            continue;
+        }
+        return Err(JsError::new(&format!(
+            "name component {i} has unsupported type (expected string or integer)"
+        )));
+    }
+    Ok(out)
+}
+
 /// Convert a JS object `{ name: value, ... }` into `Params`. Accepts:
 /// - `number` (integer) → `ParamValue::Int`
 /// - `string` matching the canonical UUID form → `ParamValue::Uuid`
